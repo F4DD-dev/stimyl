@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Стимул — мой прогресс</title>
+  <script src="https://st.max.ru/js/max-web-app.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f3efe6;
+      --ink: #1d1a16;
+      --muted: #6d655c;
+      --card: #fffdf8;
+      --line: #e4dccf;
+      --mastered: #1f6b45;
+      --practice: #8a5a12;
+      --repeat: #8d2f2f;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    main { max-width: 640px; margin: 0 auto; padding: 28px 20px 48px; }
+    h1 { font-size: 28px; margin: 0 0 4px; }
+    p { color: var(--muted); line-height: 1.45; }
+    section {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 16px 18px;
+      margin-top: 16px;
+    }
+    h2 { font-size: 16px; margin: 0 0 10px; }
+    li { margin: 8px 0; }
+    .status { font-weight: 650; }
+    .status[data-status="mastered"] { color: var(--mastered); }
+    .status[data-status="needs_practice"] { color: var(--practice); }
+    .status[data-status="repeat"] { color: var(--repeat); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Стимул</h1>
+    <p id="lead">Мой прогресс</p>
+    <div id="content">Открываю прогресс…</div>
+  </main>
+  <script>
+    const labels = {
+      mastered: "усвоено",
+      needs_practice: "нужна практика",
+      repeat: "повторить"
+    };
+
+    function esc(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[ch]));
+    }
+
+    function render(data) {
+      const items = data.topics.map((topic) => {
+        if (!topic.status) return `<li>${esc(topic.title)}: нет попыток</li>`;
+        const percent = topic.correct_percent == null ? "" : `, ${topic.correct_percent}%`;
+        return `<li>${esc(topic.title)}: <span class="status" data-status="${esc(topic.status)}">${labels[topic.status]}${percent}</span></li>`;
+      }).join("");
+      document.querySelector("#lead").textContent = data.display_name;
+      document.querySelector("#content").innerHTML = `
+        <section>
+          <h2>Сейчас</h2>
+          <p>Серия: ${Number(data.streak_days) || 0} дн. Заданий: ${Number(data.completed_tasks) || 0}.</p>
+          <p>${esc(data.next_step || "Выбери тему в чате с ботом.")}</p>
+        </section>
+        <section>
+          <h2>Темы</h2>
+          <ul>${items}</ul>
+        </section>`;
+    }
+
+    async function main() {
+      if (window.WebApp && window.WebApp.ready) window.WebApp.ready();
+      const params = new URLSearchParams(location.hash.slice(1));
+      const initData = (window.WebApp && window.WebApp.initData) || params.get("initData") || "";
+      if (initData) {
+        const login = await fetch("/api/session", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          credentials: "same-origin",
+          body: JSON.stringify({init_data: initData})
+        });
+        if (!login.ok) {
+          document.querySelector("#content").textContent = "Не удалось войти. Откройте прогресс из MAX.";
+          return;
+        }
+      }
+      const response = await fetch("/api/student/progress", {credentials: "same-origin"});
+      if (!response.ok) {
+        document.querySelector("#content").textContent = "Откройте свой прогресс из чата MAX.";
+        return;
+      }
+      render(await response.json());
+    }
+
+    main();
+  </script>
+</body>
+</html>
