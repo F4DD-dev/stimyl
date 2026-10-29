@@ -1,9 +1,11 @@
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.health import router as health_router
 from app.api.pages import router as pages_router
@@ -19,6 +21,13 @@ from app.max_client.base import NullSender
 from app.max_client.client import MaxClient
 
 logger = logging.getLogger(__name__)
+
+
+class AssetFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -65,4 +74,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(teacher_router)
     app.include_router(student_router)
     app.include_router(pages_router)
+    web = Path(__file__).resolve().parent / "web"
+    app.mount("/assets", AssetFiles(directory=web), name="assets")
     return app

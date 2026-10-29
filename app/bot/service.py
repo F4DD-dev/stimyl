@@ -23,6 +23,7 @@ from app.domain.progress import STATUS_LABEL, TopicProgress, choose_next, streak
 from app.domain.report import StateFact, TopicColumn, build_report
 from app.domain.status import Thresholds, TopicStatus, correct_ratio, decide_status
 from app.domain.training import (
+    SUBMISSION_UNAVAILABLE,
     Action,
     ButtonSpec,
     PhotoOnly,
@@ -31,6 +32,8 @@ from app.domain.training import (
     StudentText,
     TrainState,
     Turn,
+    present_state,
+    present_turn,
     reduce_turn,
 )
 from app.llm.explainer import Explainer
@@ -471,10 +474,151 @@ async def student_progress(session: AsyncSession, user: User, settings: Settings
     completed = await session.scalar(
         select(func.count()).select_from(Attempt).where(Attempt.user_id == user.id)
     )
+    class_title = await session.scalar(
+        select(SchoolClass.title)
+        .join(Enrollment, Enrollment.class_id == SchoolClass.id)
+        .where(Enrollment.user_id == user.id)
+    )
     return {
         "display_name": user.display_name,
+        "class_title": class_title,
         "streak_days": streak(days, _today(settings)),
         "completed_tasks": int(completed or 0),
         "topics": payload_topics,
         "next_step": step.label if step else None,
+        "next_topic": step.topic_title if step else None,
     }
+
+
+def _iso(moment: datetime) -> str:
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return moment.isoformat()
+
+
+async def current_lesson(session: AsyncSession, user: User) -> dict:
+    topics = await _topics(session)
+    id_to_title = {topic.id: topic.title for topic in topics}
+    _row, state = await _load_state(session, user, id_to_title)
+    return present_state(state)
+
+
+async def student_history(session: AsyncSession, user: User) -> dict:
+    session_rows = (
+        await session.execute(
+            select(
+                LearningSession.id,
+                LearningSession.mode,
+                LearningSession.created_at,
+                Topic.title,
+            )
+            .outerjoin(Topic, Topic.id == LearningSession.topic_id)
+            .where(LearningSession.user_id == user.id)
+            .order_by(LearningSession.id.desc())
+            .limit(30)
+        )
+    ).all()
+    attempt_rows = (
+        await session.execute(
+            select(Attempt.session_id, Attempt.correct).where(Attempt.user_id == user.id)
+        )
+    ).all()
+    buckets: dict[int, list[bool]] = {}
+    for session_id, correct in attempt_rows:
+        buckets.setdefault(session_id, []).append(bool(correct))
+    items = []
+    for row_id, mode, created_at, title in session_rows:
+        flags = buckets.get(row_id, [])
+        items.append(
+            {
+                "mode": mode,
+                "topic": title,
+                "created_at": _iso(created_at),
+                "answered": len(flags),
+                "correct_count": sum(1 for flag in flags if flag),
+            }
+        )
+    return {"sessions": items}
+
+
+async def student_turn(
+    session: AsyncSession,
+    user: User,
+    settings: Settings,
+    explainer: Explainer,
+    *,
+    text: str | None = None,
+    action: str | None = None,
+    topic: str | None = None,
+    photo: bool = False,
+) -> dict:
+    """Training turn for the mini-app. Submission is refused without storing the text."""
+    topics = await _topics(session)
+    title_to_id = {item.title: item.id for item in topics}
+    id_to_title = {item.id: item.title for item in topics}
+    row, state = await _load_state(session, user, id_to_title)
+    if row is not None and row.mode == "submission":
+        return {
+            "ok": False,
+            "code": "submission_unavailable",
+            "detail": SUBMISSION_UNAVAILABLE,
+        }
+    if row is None:
+        row = _new_session(user)
+        session.add(row)
+        await session.flush()
+    state.mode = "training"
+    cleaned = (text or "").strip()
+    if action:
+        event = Action(action, topic)
+    elif cleaned:
+        event = StudentText(cleaned)
+    elif photo:
+        event = PhotoOnly()
+    else:
+        return {"ok": False, "code": "empty", "detail": "Напишите вопрос или выберите действие."}
+    turn = reduce_turn(state, event)
+    await _apply_explainer(turn, explainer)
+    _save_state(row, turn.state, title_to_id)
+    if cleaned and not action:
+        _add_message(session, row, "student", cleaned, "private")
+    status_line = None
+    review_title = None
+    if turn.attempt:
+        topic_id = title_to_id.get(turn.attempt.topic_title)
+        if topic_id is not None:
+            now = datetime.now(UTC)
+            session.add(
+                Attempt(
+                    user_id=user.id,
+                    topic_id=topic_id,
+                    session_id=row.id,
+                    mode="training",
+                    prompt=turn.attempt.prompt[:500],
+                    expected=turn.attempt.expected[:64],
+                    answer=turn.attempt.answer[:200],
+                    correct=turn.attempt.correct,
+                    feedback=turn.attempt.feedback[:1000],
+                    created_at=now,
+                )
+            )
+            await session.flush()
+            await _recompute(
+                session,
+                user.id,
+                topic_id,
+                _today(settings),
+                Thresholds(settings.status_repeat_below, settings.status_mastered_from),
+            )
+            status_line, review_title = await _progress_line(session, user.id, settings, topic_id)
+    for reply in turn.replies:
+        _add_message(session, row, "bot", reply.text, "private")
+    view = present_turn(turn, status_line)
+    if review_title and not any(item.get("topic") == review_title for item in view["actions"]):
+        view["actions"] = [
+            *view["actions"],
+            {"action": "review", "label": "Разобрать следующий шаг", "topic": review_title},
+        ]
+    view["photo_received"] = photo
+    view["photo_note"] = "Фото получили. Страницу не решаем." if photo else None
+    return view

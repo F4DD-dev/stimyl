@@ -194,3 +194,94 @@ def _grade(state: TrainState, answer: str) -> Turn:
         [Reply(feedback, buttons=(ButtonSpec("Ещё задание", "again"),))],
         attempt=draft,
     )
+
+
+SUBMISSION_UNAVAILABLE = (
+    "Сдача появится, когда учитель отправит работу. Личный вопрос учителю не передаётся."
+)
+
+
+def present_turn(turn: Turn, status_line: str | None = None) -> dict:
+    """Lesson payload for the student. Never includes the reference answer."""
+    reply = turn.replies[-1] if turn.replies else None
+    lead = reply.lead if reply else ""
+    body = reply.body if reply else ""
+    explanation = None
+    example = None
+    task = None
+    feedback = None
+    notice = None
+    if turn.attempt is not None:
+        feedback = lead or None
+        task = turn.attempt.prompt or None
+    elif reply is not None and reply.replaceable_lead:
+        explanation = lead or None
+        if body.startswith("Пример."):
+            example = body.split("Пример.", 1)[1].strip() or None
+        elif body:
+            example = body
+    elif turn.state.step == "check":
+        if lead.startswith("Задание."):
+            task = lead.split("Задание.", 1)[1].strip() or None
+        else:
+            task = lead or None
+    else:
+        notice = lead or None
+    actions = [
+        {"action": spec.action, "label": spec.text, "topic": spec.topic_title}
+        for spec in (reply.buttons if reply else ())
+    ]
+    return {
+        "ok": True,
+        "mode": turn.state.mode,
+        "step": turn.state.step,
+        "topic": turn.state.topic_title,
+        "explanation": explanation,
+        "example": example,
+        "task": task,
+        "feedback": feedback,
+        "correct": None if turn.attempt is None else turn.attempt.correct,
+        "given": None if turn.attempt is None else turn.attempt.answer,
+        "actions": actions,
+        "notice": notice,
+        "status_line": status_line,
+        "awaiting_answer": turn.state.step == "check" and bool(turn.state.pending_answer),
+        "photo_received": False,
+        "photo_note": None,
+    }
+
+
+def present_state(state: TrainState) -> dict:
+    if state.mode == "submission" and state.step != "check":
+        view = _blank_lesson(state)
+        view["notice"] = "Открыта сдача. Новую страницу здесь не разбираю."
+        return view
+    material = topic_by_title(state.topic_title or "")
+    if state.step == "explain" and material is not None:
+        clone = TrainState(**asdict(state))
+        return present_turn(Turn(clone, [_explain_reply(material, clone.example_index)]))
+    if state.step == "check" and state.pending_prompt:
+        clone = TrainState(**asdict(state))
+        return present_turn(Turn(clone, [Reply(f"Задание. {clone.pending_prompt}")]))
+    return _blank_lesson(state)
+
+
+def _blank_lesson(state: TrainState) -> dict:
+    return {
+        "ok": True,
+        "mode": state.mode,
+        "step": "idle",
+        "topic": state.topic_title,
+        "explanation": None,
+        "example": None,
+        "task": None,
+        "feedback": None,
+        "correct": None,
+        "given": None,
+        "actions": [],
+        "notice": None,
+        "status_line": None,
+        "awaiting_answer": False,
+        "photo_received": False,
+        "photo_note": None,
+    }

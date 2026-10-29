@@ -12,6 +12,7 @@ dependencies = [
     "alembic>=1.14",
     "pydantic-settings>=2.6",
     "httpx>=0.28",
+    "python-multipart>=0.0.18",
     "tzdata>=2024.1",
 ]
 
@@ -31,7 +32,7 @@ build-backend = "setuptools.build_meta"
 include = ["app*"]
 
 [tool.setuptools.package-data]
-app = ["web/*.html"]
+app = ["web/**/*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

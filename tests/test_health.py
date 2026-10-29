@@ -9,10 +9,14 @@ async def test_head_on_the_front_page_is_allowed(api):
     assert response.status_code == 200
 
 
-async def test_cabinet_shows_the_test_line(api):
+async def test_cabinet_is_the_teacher_app(api):
     response = await api.client.get("/cabinet")
     assert response.status_code == 200
-    assert "Стимул на связи" in response.text
+    assert 'data-entry="teacher"' in response.text
+    assert "/assets/js/app.js" in response.text
+    assert "Стимул на связи" not in response.text
+    head = await api.client.head("/cabinet")
+    assert head.status_code == 200
 
 
 async def test_health_and_ready(api):

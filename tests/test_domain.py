@@ -2,10 +2,19 @@ from datetime import date, timedelta
 
 from app.domain.answers import answers_match
 from app.domain.curriculum import detect_topic
+from app.domain.drafts import build_check_draft
 from app.domain.progress import TopicProgress, choose_next, streak
 from app.domain.report import StateFact, TopicColumn, build_report
 from app.domain.status import TopicStatus, decide_status
-from app.domain.training import Action, PhotoOnly, StudentText, TrainState, reduce_turn
+from app.domain.training import (
+    Action,
+    PhotoOnly,
+    StudentText,
+    TrainState,
+    present_state,
+    present_turn,
+    reduce_turn,
+)
 from app.llm.explainer import mistake_prompt, topic_prompt
 
 
@@ -51,6 +60,31 @@ def test_wrong_practice_feedback_omits_the_reference():
     assert graded.attempt.correct is False
     assert graded.attempt.expected == "5"
     assert "5" not in graded.replies[0].text
+
+
+def test_public_view_hides_the_reference():
+    opened = reduce_turn(TrainState(), StudentText("линейные уравнения"))
+    practiced = reduce_turn(opened.state, Action("to_practice"))
+    graded = reduce_turn(practiced.state, StudentText("нет"))
+    view = present_turn(graded)
+    assert view["correct"] is False
+    assert "5" not in str(view)
+    assert "pending_answer" not in view
+    assert "reference" not in view
+    snapshot = present_state(practiced.state)
+    assert snapshot["awaiting_answer"] is True
+    assert snapshot["task"]
+    assert "5" not in str(snapshot)
+
+
+def test_check_draft_comes_from_the_bank_and_is_not_stored():
+    draft = build_check_draft("Дроби", "Проверить общий знаменатель", 4, "normal", "class", [])
+    assert draft is not None
+    assert draft["persisted"] is False
+    assert draft["source"] == "bank"
+    assert draft["items"][0]["reference"] == "1/2"
+    assert draft["note"]
+    assert build_check_draft("История", "Цель", 1, "easy", "class", []) is None
 
 
 def test_submission_does_not_solve_a_page():

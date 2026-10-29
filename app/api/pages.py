@@ -5,29 +5,24 @@ from fastapi.responses import HTMLResponse
 
 router = APIRouter()
 _WEB = Path(__file__).resolve().parents[1] / "web"
-_TEST_PAGE = """<!DOCTYPE html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Стимул</title>
-</head>
-<body>
-  <h1>Стимул на связи</h1>
-  <p>Тест мини-приложения.</p>
-</body>
-</html>
-"""
 
 
-def _test_page() -> HTMLResponse:
-    return HTMLResponse(_TEST_PAGE)
+def _page(entry: str) -> HTMLResponse:
+    html = (_WEB / "index.html").read_text(encoding="utf-8")
+    html = html.replace('data-entry="auto"', f'data-entry="{entry}"', 1)
+    return HTMLResponse(html)
 
 
-router.add_api_route("/", _test_page, methods=["GET", "HEAD"], response_class=HTMLResponse)
-router.add_api_route("/cabinet", _test_page, methods=["GET", "HEAD"], response_class=HTMLResponse)
+@router.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def root() -> HTMLResponse:
+    return _page("auto")
 
 
-@router.get("/student", response_class=HTMLResponse)
+@router.api_route("/cabinet", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def cabinet() -> HTMLResponse:
+    return _page("teacher")
+
+
+@router.api_route("/student", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def student() -> HTMLResponse:
-    return HTMLResponse((_WEB / "student.html").read_text(encoding="utf-8"))
+    return _page("student")
