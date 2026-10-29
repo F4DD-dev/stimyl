@@ -11,8 +11,14 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "db"}
+
 
 def prepare_database_url(url: str) -> tuple[str, dict[str, object]]:
+    if url.startswith("postgres://"):
+        url = "postgresql+asyncpg://" + url.removeprefix("postgres://")
+    elif url.startswith("postgresql://"):
+        url = "postgresql+asyncpg://" + url.removeprefix("postgresql://")
     if not url.startswith("postgresql"):
         return url, {}
     parsed = make_url(url)
@@ -21,7 +27,9 @@ def prepare_database_url(url: str) -> tuple[str, dict[str, object]]:
         _query_text(query.pop("sslmode", "")).lower() or _query_text(query.pop("ssl", "")).lower()
     )
     query.pop("ssl", None)
-    connect_args: dict[str, object] = {"timeout": 3}
+    if not mode and (parsed.host or "") not in _LOCAL_HOSTS:
+        mode = "require"
+    connect_args: dict[str, object] = {"timeout": 10}
     if mode and mode != "disable":
         context = ssl.create_default_context()
         if mode not in {"verify-ca", "verify-full"}:

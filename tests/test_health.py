@@ -30,7 +30,7 @@ async def test_health_and_ready(api):
 
 async def test_ready_hides_database_errors():
     settings = Settings(
-        database_url="postgresql+asyncpg://user:leak-me-please@127.0.0.1:1/stimul",
+        database_url="",
         session_secret="session-secret",
     )
     application = create_app(settings)
@@ -38,9 +38,13 @@ async def test_ready_hides_database_errors():
         transport = ASGITransport(app=application)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get("/ready")
+            session = await client.get("/api/session")
     assert response.status_code == 503
     assert "leak-me-please" not in response.text
+    assert "leak-me-please" not in session.text
     assert "Traceback" not in response.text
+    assert session.status_code == 503
+    assert session.json()["detail"] == "База сейчас недоступна. Попробуйте ещё раз."
 
 
 async def test_validation_error_does_not_echo_the_body(api):

@@ -6,7 +6,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import SQLAlchemyError
 
+from app.api.deps import DATABASE_DOWN
 from app.api.health import router as health_router
 from app.api.pages import router as pages_router
 from app.api.session import router as session_router
@@ -65,6 +67,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def unhandled(_request: Request, exc: Exception) -> JSONResponse:
         if isinstance(exc, HTTPException):
             return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+        if isinstance(exc, SQLAlchemyError):
+            logger.error("database error: %s", type(exc).__name__)
+            return JSONResponse({"detail": DATABASE_DOWN}, status_code=503)
         logger.error("unhandled error: %s", type(exc).__name__)
         return JSONResponse({"detail": "error"}, status_code=500)
 

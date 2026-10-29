@@ -7,9 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import User
 from app.security.cookies import COOKIE_NAME, read_cookie
 
+DATABASE_DOWN = "База сейчас недоступна. Попробуйте ещё раз."
+
 
 async def db_session(request: Request) -> AsyncIterator[AsyncSession]:
     factory = request.app.state.session_factory
+    if factory is None:
+        raise HTTPException(status_code=503, detail=DATABASE_DOWN)
     async with factory() as session:
         yield session
 
