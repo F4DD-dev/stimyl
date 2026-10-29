@@ -20,10 +20,12 @@ _TEST_PAGE = """<!DOCTYPE html>
 """
 
 
-@router.get("/", response_class=HTMLResponse)
-@router.get("/cabinet", response_class=HTMLResponse)
-async def cabinet() -> HTMLResponse:
+def _test_page() -> HTMLResponse:
     return HTMLResponse(_TEST_PAGE)
+
+
+router.add_api_route("/", _test_page, methods=["GET", "HEAD"], response_class=HTMLResponse)
+router.add_api_route("/cabinet", _test_page, methods=["GET", "HEAD"], response_class=HTMLResponse)
 
 
 @router.get("/student", response_class=HTMLResponse)

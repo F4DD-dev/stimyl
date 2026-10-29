@@ -4,6 +4,11 @@ from app.core.config import Settings
 from app.main import create_app
 
 
+async def test_head_on_the_front_page_is_allowed(api):
+    response = await api.client.head("/")
+    assert response.status_code == 200
+
+
 async def test_cabinet_shows_the_test_line(api):
     response = await api.client.get("/cabinet")
     assert response.status_code == 200
