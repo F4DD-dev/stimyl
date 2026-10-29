@@ -27,9 +27,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        engine = make_engine(settings.database_url)
+        engine = make_engine(settings.database_url) if settings.database_url else None
         app.state.engine = engine
-        app.state.session_factory = make_session_factory(engine)
+        app.state.session_factory = make_session_factory(engine) if engine is not None else None
         created_sender = False
         if getattr(app.state, "sender", None) is None:
             if settings.max_token:
@@ -42,7 +42,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
         if created_sender:
             await app.state.sender.aclose()
-        await engine.dispose()
+        if engine is not None:
+            await engine.dispose()
 
     app = FastAPI(title="Стимул", lifespan=lifespan)
     app.state.settings = settings

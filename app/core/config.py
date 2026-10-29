@@ -19,7 +19,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    database_url: str
+    database_url: str = ""
     max_token: str | None = None
     max_webhook_secret: str | None = None
     max_webhook_url: str | None = None

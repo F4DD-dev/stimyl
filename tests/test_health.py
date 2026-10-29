@@ -4,6 +4,12 @@ from app.core.config import Settings
 from app.main import create_app
 
 
+async def test_cabinet_shows_the_test_line(api):
+    response = await api.client.get("/cabinet")
+    assert response.status_code == 200
+    assert "Стимул на связи" in response.text
+
+
 async def test_health_and_ready(api):
     health = await api.client.get("/health")
     ready = await api.client.get("/ready")
