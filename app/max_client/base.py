@@ -18,8 +18,13 @@ class NullSender:
     ) -> None:
         return None
 
-    async def answer_callback(self, callback_id: str, notification: str | None = None) -> None:
-        return None
+    async def answer_callback(
+        self,
+        callback_id: str,
+        notification: str | None = None,
+        text: str | None = None,
+    ) -> bool:
+        return False
 
     async def aclose(self) -> None:
         return None

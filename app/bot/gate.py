@@ -136,6 +136,7 @@ async def open_gate(
         replies.append(
             GateReply("Кабинет: нажми кнопку, пришлю код.", (("Войти в кабинет", WEB_LOGIN),))
         )
+        return GateOutcome(user, replies, True)
     return GateOutcome(user, replies, False)
 
 

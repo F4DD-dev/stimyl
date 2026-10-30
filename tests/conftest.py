@@ -35,8 +35,24 @@ class MemorySender:
             }
         )
 
-    async def answer_callback(self, callback_id: str, notification: str | None = None) -> None:
+    async def answer_callback(
+        self,
+        callback_id: str,
+        notification: str | None = None,
+        text: str | None = None,
+    ) -> bool:
         self.callbacks.append(callback_id)
+        if not text:
+            return False
+        self.sent.append(
+            {
+                "user_id": "",
+                "chat_id": None,
+                "text": text,
+                "buttons": [],
+            }
+        )
+        return True
 
     async def aclose(self) -> None:
         return None

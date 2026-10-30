@@ -52,18 +52,19 @@ async def process_update(
         return
     if incoming.dedup_key and await _seen(session, incoming.dedup_key):
         if incoming.callback_id:
-            await sender.answer_callback(incoming.callback_id, None)
+            await sender.answer_callback(incoming.callback_id, notification="Уже обработано")
         return
     if incoming.dedup_key:
         session.add(InboundEvent(dedup_key=incoming.dedup_key))
         await session.flush()
-    if incoming.callback_id:
-        await sender.answer_callback(incoming.callback_id, None)
 
     outcome = await open_gate(session, incoming, settings)
+    acked = False
     if outcome.replies:
-        await _deliver_plain(sender, incoming, outcome.replies)
+        acked = await _show_gate(sender, incoming, outcome.replies)
     if outcome.stop or outcome.user is None:
+        if incoming.callback_id and not acked:
+            await sender.answer_callback(incoming.callback_id, notification="Готово")
         return
     user = outcome.user
     if incoming.kind == "photo" and not settings.feature_photo:
@@ -124,6 +125,8 @@ async def process_update(
     for reply in turn.replies:
         _add_message(session, row, "bot", reply.text, visibility)
     await _deliver(sender, incoming, turn.replies, title_to_id)
+    if incoming.callback_id and not acked:
+        await sender.answer_callback(incoming.callback_id, notification="Готово")
 
 
 async def _seen(session: AsyncSession, key: str) -> bool:
@@ -358,6 +361,17 @@ async def _deliver(
             text=reply.text,
             buttons=buttons,
         )
+
+
+async def _show_gate(sender: object, incoming: Incoming, replies: list[GateReply]) -> bool:
+    """Показать ответ входа. На кнопке сначала меняем её сообщение, иначе шлём новое."""
+    text = "\n\n".join(reply.text for reply in replies if reply.text)
+    if incoming.callback_id and text:
+        shown = await sender.answer_callback(incoming.callback_id, text=text)
+        if shown:
+            return True
+    await _deliver_plain(sender, incoming, replies)
+    return False
 
 
 async def _deliver_plain(sender: object, incoming: Incoming, replies: list[GateReply]) -> None:

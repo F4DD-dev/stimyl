@@ -22,7 +22,7 @@ from app.domain.accounts import (
     delete_user_data,
     set_blocked,
 )
-from tests.support import auth_as, message, post_update, sign_init_data
+from tests.support import auth_as, callback, message, post_update, sign_init_data
 
 
 def _started(user_id: int, name: str, payload: str | None = None) -> dict:
@@ -143,6 +143,36 @@ async def test_teacher_code_is_single_use_and_student_cannot_open_the_cabinet(se
 
     await post_update(api, message(900002, "Алексей", "Войти в кабинет", "code-student"))
     assert "учител" in api.memory.sent[-1]["text"].casefold()
+
+
+async def test_cabinet_button_returns_a_code(seeded):
+    api = seeded
+    await post_update(api, callback(900001, "Марина", "cb-web", "web_login"))
+    assert api.memory.callbacks == ["cb-web"]
+    found = re.search(r"\d{6}", api.memory.sent[-1]["text"])
+    assert found is not None
+
+
+async def test_cabinet_button_sends_a_message_when_callback_answer_fails(seeded):
+    api = seeded
+
+    class SilentCallback:
+        def __init__(self) -> None:
+            self.sent: list[dict] = []
+
+        async def send_text(self, *, user_id: str, chat_id: int | None, text: str, buttons: list) -> None:
+            self.sent.append({"text": text})
+
+        async def answer_callback(self, callback_id: str, notification: str | None = None, text: str | None = None) -> bool:
+            return False
+
+        async def aclose(self) -> None:
+            return None
+
+    sender = SilentCallback()
+    api.app.state.sender = sender
+    await post_update(api, callback(900001, "Марина", "cb-web-fail", "web_login"))
+    assert re.search(r"\d{6}", sender.sent[-1]["text"])
 
 
 async def test_login_attempt_limit(seeded):

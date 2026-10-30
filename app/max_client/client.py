@@ -57,12 +57,27 @@ class MaxClient:
                     body["attachments"] = attachment
                 await self._post("/messages", params=params, json=body)
 
-    async def answer_callback(self, callback_id: str, notification: str | None = None) -> None:
-        body: dict[str, str] = {}
+    async def answer_callback(
+        self,
+        callback_id: str,
+        notification: str | None = None,
+        text: str | None = None,
+    ) -> bool:
+        """Подтвердить нажатие. text заменяет сообщение с кнопкой. False — не удалось."""
+        body: dict[str, object] = {}
+        if text:
+            body["message"] = {"text": text[:TEXT_LIMIT]}
         if notification:
-            body["notification"] = notification
-        async with self._lock:
-            await self._post("/answers", params={"callback_id": callback_id}, json=body)
+            body["notification"] = notification[:180]
+        if not body:
+            body["notification"] = "Готово"
+        try:
+            async with self._lock:
+                await self._post("/answers", params={"callback_id": callback_id}, json=body)
+        except Exception as exc:
+            logger.error("callback answer failed: %s", type(exc).__name__)
+            return False
+        return True
 
     async def subscribe(self, url: str, secret: str | None) -> None:
         body: dict[str, object] = {
@@ -108,8 +123,18 @@ class MaxClient:
 def _raise_for_status(response: httpx.Response) -> None:
     if response.is_success:
         return
-    logger.error("max api failed status=%s", response.status_code)
+    logger.error("max api failed status=%s code=%s", response.status_code, _error_code(response))
     response.raise_for_status()
+
+
+def _error_code(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except Exception:
+        return ""
+    if isinstance(payload, dict) and isinstance(payload.get("code"), str):
+        return payload["code"][:80]
+    return ""
 
 
 def _chunks(text: str, size: int = TEXT_LIMIT) -> list[str]:
