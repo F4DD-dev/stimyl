@@ -1,11 +1,23 @@
 import asyncio
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.db.models import ClassTeacher, Enrollment, SchoolClass, Subject, Topic, User
+from app.db.models import (
+    AuthIdentity,
+    ClassTeacher,
+    Consent,
+    Enrollment,
+    School,
+    SchoolClass,
+    Subject,
+    Topic,
+    User,
+)
 from app.db.session import make_engine, make_session_factory
+from app.domain.accounts import POLICY_VERSION, find_identity
 from app.domain.curriculum import DEMO_CLASS_TITLE, DEMO_SUBJECT_TITLE, TOPICS
 
 DEMO_TEACHER = ("900001", "Марина Сергеевна")
@@ -18,9 +30,18 @@ DEMO_STUDENTS = (
 
 
 async def seed(session: AsyncSession, teacher_max_user_id: str | None = None) -> None:
-    school = await _class(session)
+    await seed_topics(session)
+    await seed_demo_people(session, teacher_max_user_id)
+
+
+async def seed_topics(session: AsyncSession) -> None:
     subject = await _subject(session)
     await _topics(session, subject)
+
+
+async def seed_demo_people(session: AsyncSession, teacher_max_user_id: str | None = None) -> None:
+    school = await _school(session)
+    school_class = await _class(session, school)
     teacher_ids = {DEMO_TEACHER[0]}
     if teacher_max_user_id:
         teacher_ids.add(teacher_max_user_id)
@@ -28,21 +49,37 @@ async def seed(session: AsyncSession, teacher_max_user_id: str | None = None) ->
     if teacher_max_user_id and teacher_max_user_id != DEMO_TEACHER[0]:
         await _ensure_user(session, teacher_max_user_id, "Учитель", "teacher")
     for max_id, name in ((DEMO_TEACHER[0], DEMO_TEACHER[1]),):
-        await _link_teacher(session, school, max_id)
+        await _link_teacher(session, school_class, max_id)
     if teacher_max_user_id:
-        await _link_teacher(session, school, teacher_max_user_id)
+        await _link_teacher(session, school_class, teacher_max_user_id)
     for max_id, name in DEMO_STUDENTS:
         if max_id in teacher_ids:
             continue
         await _ensure_user(session, max_id, name, "student")
-        await _enroll(session, school, max_id)
+        await _enroll(session, school_class, max_id)
 
 
-async def _class(session: AsyncSession) -> SchoolClass:
+async def _school(session: AsyncSession) -> School:
+    found = await session.scalar(select(School).where(School.title == "Демо-школа"))
+    if found is not None:
+        return found
+    found = School(title="Демо-школа", created_at=datetime.now(UTC))
+    session.add(found)
+    await session.flush()
+    return found
+
+
+async def _class(session: AsyncSession, school: School) -> SchoolClass:
     found = await session.scalar(select(SchoolClass).where(SchoolClass.title == DEMO_CLASS_TITLE))
     if found is not None:
         return found
-    found = SchoolClass(title=DEMO_CLASS_TITLE)
+    found = SchoolClass(
+        school_id=school.id,
+        title=DEMO_CLASS_TITLE,
+        join_key="8b-demo",
+        join_code="8BDEMO",
+        timezone="Europe/Moscow",
+    )
     session.add(found)
     await session.flush()
     return found
@@ -71,20 +108,36 @@ async def _topics(session: AsyncSession, subject: Subject) -> None:
 
 
 async def _ensure_user(session: AsyncSession, max_id: str, name: str, role: str) -> User:
-    found = await session.scalar(select(User).where(User.max_user_id == max_id))
-    if found is None:
-        found = User(max_user_id=max_id, display_name=name, role=role)
+    identity = await find_identity(session, "max", max_id)
+    if identity is None:
+        now = datetime.now(UTC)
+        found = User(
+            display_name=name,
+            role=role,
+            status="active",
+            created_at=now,
+            last_seen_at=now,
+        )
         session.add(found)
         await session.flush()
+        session.add(
+            AuthIdentity(user_id=found.id, provider="max", external_id=max_id, created_at=now)
+        )
+        session.add(Consent(user_id=found.id, policy_version=POLICY_VERSION, accepted_at=now))
+        await session.flush()
         return found
-    if role == "teacher" and found.role != "teacher":
+    found = await session.get(User, identity.user_id)
+    if found is not None and role == "teacher" and found.role != "teacher":
         found.role = "teacher"
         await session.flush()
+    if found is None:
+        raise RuntimeError("identity without user")
     return found
 
 
 async def _link_teacher(session: AsyncSession, school: SchoolClass, max_id: str) -> None:
-    user = await session.scalar(select(User).where(User.max_user_id == max_id))
+    identity = await find_identity(session, "max", max_id)
+    user = await session.get(User, identity.user_id) if identity is not None else None
     if user is None:
         return
     link = await session.scalar(
@@ -104,7 +157,8 @@ async def _link_teacher(session: AsyncSession, school: SchoolClass, max_id: str)
 
 
 async def _enroll(session: AsyncSession, school: SchoolClass, max_id: str) -> None:
-    user = await session.scalar(select(User).where(User.max_user_id == max_id))
+    identity = await find_identity(session, "max", max_id)
+    user = await session.get(User, identity.user_id) if identity is not None else None
     if user is None or user.role != "student":
         return
     found = await session.scalar(
@@ -124,7 +178,9 @@ async def _run() -> None:
     engine = make_engine(settings.database_url)
     factory = make_session_factory(engine)
     async with factory() as session:
-        await seed(session, settings.teacher_max_user_id)
+        await seed_topics(session)
+        if settings.seed_demo:
+            await seed_demo_people(session, settings.teacher_max_user_id)
         await session.commit()
     await engine.dispose()
 

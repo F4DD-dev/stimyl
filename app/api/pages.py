@@ -3,6 +3,8 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 
+from app.domain.account_copy import POLICY_STUB
+
 router = APIRouter()
 _WEB = Path(__file__).resolve().parents[1] / "web"
 
@@ -26,3 +28,14 @@ async def cabinet() -> HTMLResponse:
 @router.api_route("/student", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def student() -> HTMLResponse:
     return _page("student")
+
+
+@router.api_route("/privacy", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def privacy() -> HTMLResponse:
+    body = (
+        "<!DOCTYPE html><html lang=\"ru\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        "<title>Политика</title></head><body><main>"
+        f"<p>{POLICY_STUB}</p></main></body></html>"
+    )
+    return HTMLResponse(body)

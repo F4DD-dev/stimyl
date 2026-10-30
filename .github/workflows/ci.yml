@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: stimul
+          POSTGRES_PASSWORD: stimul
+          POSTGRES_DB: stimul
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U stimul -d stimul"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: ruff check app tests
+      - run: pytest
+      - name: migrations on empty postgres
+        env:
+          DATABASE_URL: postgresql+asyncpg://stimul:stimul@localhost:5432/stimul
+        run: |
+          alembic upgrade head
+          alembic downgrade -1
+          alembic upgrade head
+      - name: pip-audit
+        continue-on-error: true
+        run: |
+          pip install pip-audit
+          pip-audit

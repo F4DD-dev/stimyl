@@ -17,20 +17,43 @@ from app.db.base import Base
 
 
 class User(Base):
+    """Человек в продукте. Идентификатор MAX лежит в auth_identities, не здесь."""
+
     __tablename__ = "users"
-    __table_args__ = (CheckConstraint("role IN ('student', 'teacher')", name="ck_users_role"),)
+    __table_args__ = (
+        CheckConstraint("role IN ('student', 'teacher', 'admin')", name="ck_users_role"),
+        CheckConstraint("status IN ('pending', 'active', 'blocked')", name="ck_users_status"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    max_user_id: Mapped[str] = mapped_column(String(64), unique=True)
     role: Mapped[str] = mapped_column(String(16))
     display_name: Mapped[str] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class School(Base):
+    __tablename__ = "schools"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class SchoolClass(Base):
     __tablename__ = "classes"
+    __table_args__ = (
+        UniqueConstraint("school_id", "title", name="uq_classes_school_title"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    title: Mapped[str] = mapped_column(String(64), unique=True)
+    school_id: Mapped[int] = mapped_column(ForeignKey("schools.id"))
+    title: Mapped[str] = mapped_column(String(64))
+    join_key: Mapped[str] = mapped_column(String(128), unique=True)
+    join_code: Mapped[str] = mapped_column(String(16), unique=True)
+    timezone: Mapped[str] = mapped_column(String(64), default="Europe/Moscow")
 
 
 class ClassTeacher(Base):
@@ -166,3 +189,125 @@ class RuntimeFlag(Base):
 
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     value: Mapped[str] = mapped_column(String(256))
+
+
+class AuthIdentity(Base):
+    """Вход через провайдера. provider=max — user_id из апдейта бота."""
+
+    __tablename__ = "auth_identities"
+    __table_args__ = (
+        UniqueConstraint("provider", "external_id", name="uq_auth_provider_external"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(32))
+    external_id: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Consent(Base):
+    __tablename__ = "consents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    policy_version: Mapped[str] = mapped_column(String(64))
+    accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class WebLoginCode(Base):
+    __tablename__ = "web_login_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    user_agent: Mapped[str] = mapped_column(String(200))
+    ip: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    action: Mapped[str] = mapped_column(String(64))
+    target_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    detail: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TeacherApplication(Base):
+    __tablename__ = "teacher_applications"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'pending', 'approved', 'rejected')",
+            name="ck_teacher_applications_status",
+        ),
+    )
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    full_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    school_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="draft")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TeacherInvite(Base):
+    __tablename__ = "teacher_invites"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TransferCode(Base):
+    __tablename__ = "transfer_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SignupHint(Base):
+    """Ключ класса до согласия. Это не пользователь."""
+
+    __tablename__ = "signup_hints"
+
+    external_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    start_payload: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class LoginGuard(Base):
+    __tablename__ = "login_guards"
+
+    ip: Mapped[str] = mapped_column(String(64), primary_key=True)
+    failures: Mapped[int] = mapped_column(Integer, default=0)
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))

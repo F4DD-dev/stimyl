@@ -1,6 +1,3 @@
-import time
-
-from app.security.cookies import read_cookie, write_cookie
 from app.security.init_data import validate_init_data
 from tests.support import sign_init_data
 
@@ -19,9 +16,7 @@ def test_init_data_rejects_stale_auth_date():
     assert validate_init_data(raw, token, max_age_seconds=-1) is None
 
 
-def test_cookie_hides_a_tampered_role():
-    value = write_cookie("session-secret", "student", "900002", now=int(time.time()))
-    assert read_cookie("session-secret", value) == ("student", "900002")
-    role, rest = value.split(".", 1)[0], value.split(".", 1)[1]
-    forged = "teacher" + role[len("student") :] + "." + rest
-    assert read_cookie("session-secret", forged) is None
+async def test_unknown_session_cookie_is_rejected(api):
+    api.client.cookies.set("stimul_session", "not-a-real-token")
+    response = await api.client.get("/api/session")
+    assert response.status_code == 401

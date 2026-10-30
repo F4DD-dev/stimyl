@@ -1,11 +1,14 @@
 import logging
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.deps import DATABASE_DOWN
@@ -14,9 +17,10 @@ from app.api.pages import router as pages_router
 from app.api.session import router as session_router
 from app.api.student import router as student_router
 from app.api.teacher import router as teacher_router
+from app.api.web_login import router as web_login_router
 from app.bot.routes import router as webhook_router
 from app.core.config import Settings, get_settings
-from app.core.logging import configure_logging
+from app.core.logging import configure_logging, request_id
 from app.db.session import make_engine, make_session_factory
 from app.llm.explainer import build_explainer
 from app.max_client.base import NullSender
@@ -38,9 +42,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        engine = make_engine(settings.database_url) if settings.database_url else None
+        if not settings.database_url:
+            raise RuntimeError("database is unavailable")
+        lowered = settings.database_url.lower()
+        if "sslmode=require" in lowered or "ssl=require" in lowered:
+            logger.warning("database ssl mode does not verify the server certificate")
+        if settings.session_secret == "change-me":
+            logger.warning("SESSION_SECRET is the default value")
+        engine = make_engine(settings.database_url)
+        try:
+            async with engine.connect() as connection:
+                await connection.execute(text("SELECT 1"))
+        except Exception as exc:
+            await engine.dispose()
+            logger.error("database unavailable at startup: %s", type(exc).__name__)
+            raise RuntimeError("database is unavailable") from None
         app.state.engine = engine
-        app.state.session_factory = make_session_factory(engine) if engine is not None else None
+        app.state.session_factory = make_session_factory(engine)
         created_sender = False
         if getattr(app.state, "sender", None) is None:
             if settings.max_token:
@@ -75,10 +93,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(webhook_router)
+    app.include_router(web_login_router)
     app.include_router(session_router)
     app.include_router(teacher_router)
     app.include_router(student_router)
     app.include_router(pages_router)
+    origins = [item.strip() for item in settings.cors_origins.split(",") if item.strip()]
+    if origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=True,
+            allow_methods=["GET", "POST", "DELETE"],
+            allow_headers=["Content-Type"],
+        )
+
+    @app.middleware("http")
+    async def security_and_request_id(request: Request, call_next):
+        current = uuid.uuid4().hex
+        token = request_id.set(current)
+        try:
+            response = await call_next(request)
+        finally:
+            request_id.reset(token)
+        response.headers["X-Request-ID"] = current
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' https://st.max.ru; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' blob: data:; "
+            "connect-src 'self'; "
+            "base-uri 'self'; "
+            "form-action 'self'"
+        )
+        return response
+
     web = Path(__file__).resolve().parent / "web"
     app.mount("/assets", AssetFiles(directory=web), name="assets")
     return app

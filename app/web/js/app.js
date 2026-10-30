@@ -1,4 +1,4 @@
-import { getHistory, getLesson, getProgress, getSession, openSession } from "./api.js";
+import { getHistory, getLesson, getProgress, getSession, openSession, webLogin } from "./api.js";
 import { previewRole, studentPreview, teacherPreview } from "./preview.js";
 import {
   checkSubmission,
@@ -260,8 +260,20 @@ function renderGate() {
   return `<div class="gate">${brand()}
     <h1>Стимул</h1>
     <p>${esc(store.gateMessage)}</p>
+    ${cabinetLogin()}
     <button class="btn btn-primary" type="button" data-act="retry-auth">Повторить</button>
   </div>`;
+}
+
+function cabinetLogin() {
+  const entry = document.body.dataset.entry || "auto";
+  const cabinet = entry === "teacher" || location.pathname.endsWith("/cabinet");
+  if (!cabinet) return "";
+  return `<form id="web-login-form" class="stack tight">
+    <label class="field-label" for="cabinet-code">Код из бота</label>
+    <input id="cabinet-code" class="field" inputmode="numeric" autocomplete="one-time-code" maxlength="8" aria-label="Код из бота">
+    <button class="btn btn-primary" type="submit">Войти</button>
+  </form>`;
 }
 
 function pageInner() {
@@ -383,6 +395,16 @@ function bind() {
   document.addEventListener("submit", (event) => {
     event.preventDefault();
     if (event.target.id === "answer-form") submitAnswer();
+    if (event.target.id === "web-login-form") {
+      const code = document.querySelector("#cabinet-code")?.value || "";
+      webLogin(code.trim())
+        .then(() => boot())
+        .catch((error) => {
+          store.gate = "auth";
+          store.gateMessage = error.message;
+          refresh();
+        });
+    }
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && event.target.id === "question") {

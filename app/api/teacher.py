@@ -30,9 +30,9 @@ class DraftBody(BaseModel):
     use_material: bool = False
 
 
-async def _report(request: Request, session: AsyncSession):
+async def _report(request: Request, session: AsyncSession, class_id: int | None = None):
     teacher = await user_from_cookie(request, session, "teacher")
-    report = await class_report(session, teacher, request.app.state.settings)
+    report = await class_report(session, teacher, request.app.state.settings, class_id)
     if report is None:
         raise HTTPException(status_code=403, detail="Нет доступа к классу")
     return report
@@ -56,7 +56,9 @@ def _students(report, body: DraftBody) -> list[str]:
     return wanted
 
 
-def _prepare(report, body: DraftBody) -> dict:
+def _prepare(report, body: DraftBody, quiz_enabled: bool) -> dict:
+    if not quiz_enabled:
+        raise HTTPException(status_code=404, detail="Сборка проверок выключена")
     if body.use_material:
         raise HTTPException(status_code=409, detail=MATERIAL_MISSING)
     titles = {topic.title for topic in report.topics}
@@ -78,9 +80,10 @@ def _prepare(report, body: DraftBody) -> dict:
 @router.get("/api/teacher/class")
 async def teacher_class(
     request: Request,
+    class_id: int | None = None,
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    report = await _report(request, session)
+    report = await _report(request, session, class_id)
     return report.as_dict()
 
 
@@ -104,7 +107,7 @@ async def drafts(
     session: AsyncSession = Depends(db_session),
 ) -> dict:
     report = await _report(request, session)
-    return _prepare(report, body)
+    return _prepare(report, body, request.app.state.settings.feature_quiz)
 
 
 @router.post("/api/teacher/assignments", status_code=501)
@@ -114,5 +117,5 @@ async def create_assignment(
     session: AsyncSession = Depends(db_session),
 ) -> None:
     report = await _report(request, session)
-    _prepare(report, body)
+    _prepare(report, body, request.app.state.settings.feature_quiz)
     raise HTTPException(status_code=501, detail=DELIVERY_MISSING)

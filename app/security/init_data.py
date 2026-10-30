@@ -6,7 +6,11 @@ from urllib.parse import parse_qsl
 
 
 def validate_init_data(init_data: str, bot_token: str, max_age_seconds: int = 3600) -> str | None:
-    """Return the MAX user id when initData is valid. Never trust initDataUnsafe."""
+    """Вернуть user.id из подписанного initData.
+
+    Это поле из документации мини-приложения. Его нельзя подставлять
+    в user_id бота, пока живая сверка не подтвердит, что числа равны.
+    """
     pairs = parse_qsl(init_data, keep_blank_values=True)
     hash_values = [value for key, value in pairs if key == "hash"]
     if len(hash_values) != 1:

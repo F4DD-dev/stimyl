@@ -1,16 +1,12 @@
 from sqlalchemy import func, select
 
 from app.db.models import LearningSession, Message
-from tests.support import sign_init_data
+from tests.support import auth_as
 
 
 async def login(api, user_id: int, name: str):
-    response = await api.client.post(
-        "/api/session",
-        json={"init_data": sign_init_data(user_id, api.settings.max_token or "", name)},
-    )
-    assert response.status_code == 200, response.text
-    return response
+    await auth_as(api, str(user_id))
+    return name
 
 
 async def test_pages_and_assets_load(api):

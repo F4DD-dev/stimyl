@@ -64,6 +64,29 @@ def callback(user_id: int, name: str, callback_id: str, payload: str) -> dict:
     }
 
 
+async def auth_as(api: Api, max_user_id: str) -> None:
+    from sqlalchemy import select
+
+    from app.db.models import AuthIdentity, User
+    from app.domain.accounts import open_browser_session
+
+    factory = api.app.state.session_factory
+    async with factory() as session:
+        user = await session.scalar(
+            select(User)
+            .join(AuthIdentity, AuthIdentity.user_id == User.id)
+            .where(
+                AuthIdentity.provider == "max",
+                AuthIdentity.external_id == str(max_user_id),
+                AuthIdentity.revoked_at.is_(None),
+            )
+        )
+        assert user is not None
+        raw = await open_browser_session(session, user, "test", "127.0.0.1", api.settings)
+        await session.commit()
+    api.client.cookies.set("stimul_session", raw)
+
+
 async def post_update(api: Api, payload: dict):
     response = await api.client.post(
         "/webhook",

@@ -76,6 +76,6 @@ class QwenExplainer:
 
 
 def build_explainer(settings: Settings) -> Explainer:
-    if settings.llm_base_url:
+    if settings.feature_llm and settings.llm_base_url:
         return QwenExplainer(settings)
     return NullExplainer()

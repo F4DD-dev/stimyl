@@ -1,9 +1,9 @@
-import logging
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot.gate import GateReply, open_gate
 from app.bot.updates import Incoming, parse_update
 from app.core.config import Settings
 from app.db.models import (
@@ -18,7 +18,7 @@ from app.db.models import (
     TopicState,
     User,
 )
-from app.domain.curriculum import DEMO_CLASS_TITLE
+from app.domain.account_copy import PHOTO_OFF
 from app.domain.progress import STATUS_LABEL, TopicProgress, choose_next, streak
 from app.domain.report import StateFact, TopicColumn, build_report
 from app.domain.status import Thresholds, TopicStatus, correct_ratio, decide_status
@@ -39,8 +39,6 @@ from app.domain.training import (
 from app.llm.explainer import Explainer
 from app.max_client.base import OutboundButton
 
-logger = logging.getLogger(__name__)
-
 
 async def process_update(
     session: AsyncSession,
@@ -59,8 +57,18 @@ async def process_update(
     if incoming.dedup_key:
         session.add(InboundEvent(dedup_key=incoming.dedup_key))
         await session.flush()
+    if incoming.callback_id:
+        await sender.answer_callback(incoming.callback_id, None)
 
-    user = await _ensure_person(session, incoming, settings)
+    outcome = await open_gate(session, incoming, settings)
+    if outcome.replies:
+        await _deliver_plain(sender, incoming, outcome.replies)
+    if outcome.stop or outcome.user is None:
+        return
+    user = outcome.user
+    if incoming.kind == "photo" and not settings.feature_photo:
+        await _deliver_plain(sender, incoming, [GateReply(PHOTO_OFF)])
+        return
     topics = await _topics(session)
     title_to_id = {topic.title: topic.id for topic in topics}
     id_to_title = {topic.id: topic.title for topic in topics}
@@ -69,7 +77,7 @@ async def process_update(
         row = _new_session(user)
         session.add(row)
         await session.flush()
-    if incoming.photo_token or incoming.photo_url:
+    if settings.feature_photo and (incoming.photo_token or incoming.photo_url):
         row.photo_token = incoming.photo_token
         row.photo_url = incoming.photo_url
         row.photo_expires_at = datetime.now(UTC) + timedelta(days=settings.photo_ttl_days)
@@ -115,38 +123,12 @@ async def process_update(
                 )
     for reply in turn.replies:
         _add_message(session, row, "bot", reply.text, visibility)
-    if incoming.callback_id:
-        await sender.answer_callback(incoming.callback_id, None)
     await _deliver(sender, incoming, turn.replies, title_to_id)
 
 
 async def _seen(session: AsyncSession, key: str) -> bool:
     found = await session.scalar(select(InboundEvent.id).where(InboundEvent.dedup_key == key))
     return found is not None
-
-
-async def _ensure_person(session: AsyncSession, incoming: Incoming, settings: Settings) -> User:
-    found = await session.scalar(select(User).where(User.max_user_id == incoming.max_user_id))
-    if found is not None:
-        return found
-    role = (
-        "teacher"
-        if settings.teacher_max_user_id and incoming.max_user_id == settings.teacher_max_user_id
-        else "student"
-    )
-    found = User(max_user_id=incoming.max_user_id, role=role, display_name=incoming.name)
-    session.add(found)
-    await session.flush()
-    school = await session.scalar(select(SchoolClass).where(SchoolClass.title == DEMO_CLASS_TITLE))
-    if school is None:
-        logger.error("demo class is missing")
-        return found
-    if role == "teacher":
-        session.add(ClassTeacher(class_id=school.id, user_id=found.id))
-    else:
-        session.add(Enrollment(class_id=school.id, user_id=found.id))
-    await session.flush()
-    return found
 
 
 async def _topics(session: AsyncSession) -> list[Topic]:
@@ -378,10 +360,27 @@ async def _deliver(
         )
 
 
-async def class_report(session: AsyncSession, teacher: User, settings: Settings):
-    class_id = await session.scalar(
-        select(ClassTeacher.class_id).where(ClassTeacher.user_id == teacher.id)
-    )
+async def _deliver_plain(sender: object, incoming: Incoming, replies: list[GateReply]) -> None:
+    for reply in replies:
+        buttons = [OutboundButton(text, payload) for text, payload in reply.buttons]
+        await sender.send_text(
+            user_id=incoming.max_user_id,
+            chat_id=incoming.chat_id,
+            text=reply.text,
+            buttons=buttons,
+        )
+
+
+async def class_report(
+    session: AsyncSession,
+    teacher: User,
+    settings: Settings,
+    class_id: int | None = None,
+):
+    query = select(ClassTeacher.class_id).where(ClassTeacher.user_id == teacher.id)
+    if class_id is not None:
+        query = query.where(ClassTeacher.class_id == class_id)
+    class_id = await session.scalar(query.order_by(ClassTeacher.class_id))
     if class_id is None:
         return None
     class_title = await session.scalar(select(SchoolClass.title).where(SchoolClass.id == class_id))
@@ -389,7 +388,11 @@ async def class_report(session: AsyncSession, teacher: User, settings: Settings)
         await session.execute(
             select(User.id, User.display_name)
             .join(Enrollment, Enrollment.user_id == User.id)
-            .where(Enrollment.class_id == class_id, User.role == "student")
+            .where(
+                Enrollment.class_id == class_id,
+                User.role == "student",
+                User.deleted_at.is_(None),
+            )
             .order_by(User.id)
         )
     ).all()

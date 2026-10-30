@@ -26,6 +26,16 @@ class Settings(BaseSettings):
     max_root_ca_path: str | None = None
     session_secret: str = "change-me"
     teacher_max_user_id: str | None = None
+    admin_max_ids: str = ""
+    bot_username: str | None = None
+    public_base_url: str | None = None
+    seed_demo: bool = False
+    cors_origins: str = ""
+    feature_photo: bool = True
+    feature_ocr: bool = False
+    feature_quiz: bool = True
+    feature_llm: bool = True
+    training_aggregate_to_teacher: bool = True
     llm_base_url: str | None = None
     llm_api_key: str | None = None
     llm_model: str = "qwen2.5"
@@ -42,6 +52,8 @@ class Settings(BaseSettings):
         "llm_base_url",
         "llm_api_key",
         "teacher_max_user_id",
+        "bot_username",
+        "public_base_url",
         mode="before",
     )
     @classmethod

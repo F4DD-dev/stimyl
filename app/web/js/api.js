@@ -81,6 +81,13 @@ export const openSession = (initData) =>
     body: JSON.stringify({ init_data: initData }),
   });
 
+export const webLogin = (code) =>
+  request("/api/web-login", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ code }),
+  });
+
 export const getProgress = () => request("/api/student/progress");
 export const getHistory = () => request("/api/student/history");
 export const getLesson = () => request("/api/student/lesson");

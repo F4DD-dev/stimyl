@@ -9,11 +9,13 @@ logger = logging.getLogger(__name__)
 
 
 @router.api_route("/health", methods=["GET", "HEAD"])
+@router.api_route("/healthz", methods=["GET", "HEAD"])
 async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @router.get("/ready")
+@router.get("/readyz")
 async def ready(request: Request) -> JSONResponse:
     factory = request.app.state.session_factory
     if factory is None:

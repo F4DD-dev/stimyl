@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 
 from app.db.models import Attempt, LearningSession, Message, User
 from app.db.seed import seed
-from tests.support import button_payload, callback, message, post_update, sign_init_data
+from tests.support import auth_as, button_payload, callback, message, post_update
 
 
 async def test_seed_is_idempotent_and_roster_comes_from_the_database(api):
@@ -73,11 +73,7 @@ async def test_training_updates_status_and_hides_private_text(seeded):
         learning.photo_url = "https://files.example/secret-photo-9f3a"
         await session.commit()
 
-    login = await api.client.post(
-        "/api/session",
-        json={"init_data": sign_init_data(900001, api.settings.max_token or "")},
-    )
-    assert login.status_code == 200
+    await auth_as(api, "900001")
     report = await api.client.get("/api/teacher/class")
     assert report.status_code == 200
     body = report.text
@@ -87,11 +83,7 @@ async def test_training_updates_status_and_hides_private_text(seeded):
     for secret in ("17+4", "СЕКРЕТ-ВОПРОС", "ТАЙНЫЙ-ОТВЕТ", "secret-photo-9f3a"):
         assert secret not in body
 
-    student = await api.client.post(
-        "/api/session",
-        json={"init_data": sign_init_data(900002, api.settings.max_token or "", "Алексей")},
-    )
-    assert student.status_code == 200
+    await auth_as(api, "900002")
     progress = await api.client.get("/api/student/progress", params={"user_id": "900005"})
     assert progress.status_code == 200
     progress_body = progress.text

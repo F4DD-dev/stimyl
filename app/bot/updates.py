@@ -13,6 +13,7 @@ class Incoming:
     payload: str | None = None
     photo_token: str | None = None
     photo_url: str | None = None
+    start_payload: str | None = None
 
 
 def parse_update(update: dict) -> Incoming | None:
@@ -37,6 +38,7 @@ def _started(update: dict) -> Incoming | None:
         max_user_id=str(user["user_id"]),
         chat_id=chat_id,
         name=_name(user),
+        start_payload=_payload(update.get("payload")),
     )
 
 
@@ -66,16 +68,23 @@ def _message(update: dict) -> Incoming | None:
     body = message.get("body") or {}
     text = body.get("text") if isinstance(body.get("text"), str) else None
     photo_token, photo_url = _image(body.get("attachments") or [])
+    recipient = message.get("recipient") or {}
+    chat_type = recipient.get("chat_type")
+    if chat_type not in {None, "dialog"}:
+        return None
     stripped = text.strip() if text else ""
-    if stripped in {"/start", "start"}:
+    start_payload = None
+    if stripped == "/start" or stripped == "start":
         kind = "start"
+    elif stripped.startswith("/start ") or stripped.startswith("start "):
+        kind = "start"
+        start_payload = _payload(stripped.split(None, 1)[1])
     elif stripped:
         kind = "text"
     elif photo_token or photo_url:
         kind = "photo"
     else:
         return None
-    recipient = message.get("recipient") or {}
     mid = body.get("mid")
     return Incoming(
         kind=kind,
@@ -86,6 +95,7 @@ def _message(update: dict) -> Incoming | None:
         text=stripped or None,
         photo_token=photo_token,
         photo_url=photo_url,
+        start_payload=start_payload,
     )
 
 
@@ -100,6 +110,13 @@ def _image(attachments: list) -> tuple[str | None, str | None]:
         url = payload.get("url")
         return (str(token) if token else None, str(url) if url else None)
     return None, None
+
+
+def _payload(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()[:128]
+    return cleaned or None
 
 
 def _name(user: dict) -> str:
