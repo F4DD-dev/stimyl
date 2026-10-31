@@ -49,12 +49,11 @@ class MaxClient:
         )
         attachment = [_keyboard(buttons)] if buttons else None
         parts = _chunks(text)
-        async with self._lock:
-            for index, part in enumerate(parts):
-                body: dict[str, object] = {"text": part}
-                if attachment is not None and index == len(parts) - 1:
-                    body["attachments"] = attachment
-                await self._post("/messages", params=params, json=body)
+        for index, part in enumerate(parts):
+            body: dict[str, object] = {"text": part}
+            if attachment is not None and index == len(parts) - 1:
+                body["attachments"] = attachment
+            await self._post("/messages", params=params, json=body)
 
     async def answer_callback(
         self,
@@ -77,8 +76,7 @@ class MaxClient:
         if not body:
             body["notification"] = "Готово"
         try:
-            async with self._lock:
-                await self._post("/answers", params={"callback_id": callback_id}, json=body)
+            await self._post("/answers", params={"callback_id": callback_id}, json=body)
         except Exception as exc:
             logger.error("callback answer failed: %s", type(exc).__name__)
             return False
@@ -91,12 +89,24 @@ class MaxClient:
         }
         if secret:
             body["secret"] = secret
-        async with self._lock:
-            await self._request("POST", "/subscriptions", json=body)
+        await self._request("POST", "/subscriptions", json=body)
 
     async def set_commands(self, commands: list[dict[str, str]]) -> None:
-        async with self._lock:
-            await self._request("PATCH", "/me/commands", json={"commands": commands})
+        await self._request("PATCH", "/me/commands", json={"commands": commands})
+
+    async def my_username(self) -> str:
+        """Публичное имя бота для кнопки open_app. Пусто, если MAX не ответил."""
+        try:
+            response = await self._client.get("/me")
+            _raise_for_status(response)
+            payload = response.json()
+        except Exception as exc:
+            logger.error("bot profile failed: %s", type(exc).__name__)
+            return ""
+        user = payload.get("user") if isinstance(payload, dict) else None
+        if not isinstance(user, dict):
+            user = payload if isinstance(payload, dict) else {}
+        return str(user.get("username") or "").strip().lstrip("@")
 
     async def get_updates(self, marker: int | None, timeout: int = 30) -> dict:
         params: dict[str, object] = {
@@ -106,8 +116,7 @@ class MaxClient:
         }
         if marker is not None:
             params["marker"] = marker
-        async with self._lock:
-            response = await self._client.get("/updates", params=params, timeout=timeout + 5)
+        response = await self._client.get("/updates", params=params, timeout=timeout + 5)
         _raise_for_status(response)
         payload = response.json()
         if not isinstance(payload, dict):

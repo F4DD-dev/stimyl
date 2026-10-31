@@ -15,6 +15,8 @@ port="${PORT:-8000}"
   fi
   if [ -n "${MAX_WEBHOOK_URL:-}" ]; then
     python -m app.max_client.subscribe || echo "webhook subscribe failed" >&2
+  else
+    echo "MAX_WEBHOOK_URL is empty; the existing MAX subscription is left as is" >&2
   fi
 ) &
 side=$!

@@ -102,6 +102,10 @@ async def serve() -> None:
     factory = make_session_factory(engine)
     if settings.max_token:
         sender = MaxClient(settings.max_token, settings.resolved_ca_path())
+        if not (settings.bot_username or "").strip():
+            settings.bot_username = await sender.my_username()
+            if settings.bot_username:
+                logger.info("bot username=%s", settings.bot_username)
     else:
         sender = NullSender()
     explainer = build_explainer(settings)
