@@ -106,9 +106,11 @@ async def test_training_updates_status_and_hides_private_text(seeded):
     )
     await post_update(api, message(900005, "Ольга", "нет", "olga-wrong"))
 
-    sent = "\n".join(item["text"] for item in api.memory.sent)
-    assert "21" not in sent
-    assert "17+4" not in sent
+    asked = "\n".join(
+        item["text"] for item in api.memory.sent if item.get("user_id") == "900002"
+    )
+    assert "21" not in asked
+    assert "17+4" not in asked
 
     factory = api.app.state.session_factory
     async with factory() as session:

@@ -404,11 +404,21 @@ async def _deliver(
         )
 
 
+def _gate_buttons(replies: list[GateReply]) -> list[OutboundButton]:
+    buttons: list[OutboundButton] = []
+    for reply in replies:
+        buttons.extend(OutboundButton(text, payload) for text, payload in reply.buttons)
+        if reply.link_url:
+            buttons.append(OutboundButton(reply.link_text or "Открыть", "", reply.link_url))
+    return buttons
+
+
 async def _show_gate(sender: object, incoming: Incoming, replies: list[GateReply]) -> bool:
     """Показать ответ входа. На кнопке сначала меняем её сообщение, иначе шлём новое."""
     text = "\n\n".join(reply.text for reply in replies if reply.text)
-    if incoming.callback_id and text:
-        shown = await sender.answer_callback(incoming.callback_id, text=text)
+    buttons = _gate_buttons(replies)
+    if incoming.callback_id and (text or buttons):
+        shown = await sender.answer_callback(incoming.callback_id, text=text or None, buttons=buttons)
         if shown:
             return True
     await _deliver_plain(sender, incoming, replies)
@@ -417,14 +427,12 @@ async def _show_gate(sender: object, incoming: Incoming, replies: list[GateReply
 
 async def _deliver_plain(sender: object, incoming: Incoming, replies: list[GateReply]) -> None:
     for reply in replies:
-        buttons = [OutboundButton(text, payload) for text, payload in reply.buttons]
-        if reply.link_url:
-            buttons.append(OutboundButton(reply.link_text or "Открыть", "", reply.link_url))
+        own = _gate_buttons([reply])
         await sender.send_text(
             user_id=incoming.max_user_id,
             chat_id=incoming.chat_id,
             text=reply.text,
-            buttons=buttons,
+            buttons=own,
         )
 
 

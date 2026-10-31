@@ -10,6 +10,7 @@ from app.db.models import (
     SchoolClass,
     TeacherApplication,
     User,
+    WebLoginCode,
 )
 from app.domain.accounts import (
     BOT_PROVIDER,
@@ -130,29 +131,72 @@ async def test_init_data_user_id_is_not_the_bot_user(seeded):
     assert int(linked or 0) == 0
 
 
+def _cabinet_base(api) -> None:
+    api.app.state.settings.public_base_url = "https://staging.example"
+
+
+def _ticket_from_buttons(api) -> str:
+    buttons = api.memory.sent[-1]["buttons"]
+    for button in buttons:
+        found = re.search(r"ticket=([A-Za-z0-9_\-]+)", button.get("url") or "")
+        if found and button.get("text") == "Открыть кабинет":
+            return found.group(1)
+    raise AssertionError(buttons)
+
+
+def _assert_no_bare_code(text: str) -> None:
+    assert "код для кабинета" not in text.casefold()
+    assert re.search(r"\d{6}", text) is None
+    assert "ticket=" not in text
+
+
+async def test_start_does_not_issue_a_cabinet_code(seeded):
+    api = seeded
+    _cabinet_base(api)
+    await post_update(api, message(900001, "Марина", "/start", "start-teacher"))
+    teacher = api.memory.sent[-1]["text"]
+    _assert_no_bare_code(teacher)
+    assert "кабинет" not in teacher.casefold()
+    assert "математик" in teacher.casefold() or "вопрос" in teacher.casefold() or "тем" in teacher.casefold()
+    await post_update(api, _started(900001, "Марина"))
+    _assert_no_bare_code(api.memory.sent[-1]["text"])
+    await post_update(api, message(900002, "Алексей", "/start", "start-student"))
+    student = api.memory.sent[-1]["text"]
+    _assert_no_bare_code(student)
+    assert "кабинет" not in student.casefold()
+    factory = api.app.state.session_factory
+    async with factory() as session:
+        user = await session.scalar(
+            select(User)
+            .join(AuthIdentity, AuthIdentity.user_id == User.id)
+            .where(AuthIdentity.provider == BOT_PROVIDER, AuthIdentity.external_id == "900001")
+        )
+        user.role = "admin"
+        await session.commit()
+    await post_update(api, message(900001, "Марина", "/start", "start-admin"))
+    _assert_no_bare_code(api.memory.sent[-1]["text"])
+    async with factory() as session:
+        issued = await session.scalar(select(func.count()).select_from(WebLoginCode))
+    assert int(issued or 0) == 0
+
+
 async def test_teacher_code_is_single_use_and_student_cannot_open_the_cabinet(seeded):
     api = seeded
+    _cabinet_base(api)
     await post_update(api, message(900001, "Марина", "Войти в кабинет", "code-1"))
     text = api.memory.sent[-1]["text"]
-    found = re.search(r"Код (\d{6})", text)
-    public = re.search(r"Заявка ([0-9a-f]{8})", text)
-    assert found is not None and public is not None
-    code = found.group(1)
-    first = await api.client.post(
-        "/api/web-login",
-        json={"public_id": public.group(1), "code": code},
-    )
+    _assert_no_bare_code(text)
+    ticket = _ticket_from_buttons(api)
+    first = await api.client.post("/api/web-login/ticket", json={"ticket": ticket})
     assert first.status_code == 200, first.text
     report = await api.client.get("/api/teacher/class")
     assert report.status_code == 200
-    again = await api.client.post(
-        "/api/web-login",
-        json={"public_id": public.group(1), "code": code},
-    )
+    again = await api.client.post("/api/web-login/ticket", json={"ticket": ticket})
     assert again.status_code == 401
 
     await post_update(api, message(900002, "Алексей", "Войти в кабинет", "code-student"))
     assert "учител" in api.memory.sent[-1]["text"].casefold()
+    assert api.memory.sent[-1]["buttons"] == []
 
 
 async def test_whoami_on_staging_is_open_and_closed_on_prod(seeded):
@@ -174,11 +218,10 @@ async def test_cabinet_preview_does_not_burn_the_ticket(seeded):
     from app.db.models import WebLoginCode
 
     api = seeded
-    api.app.state.settings.public_base_url = "https://staging.example"
+    _cabinet_base(api)
     await post_update(api, message(900001, "Марина", "Войти в кабинет", "ticket-preview"))
-    found = re.search(r"ticket=([A-Za-z0-9_\-]+)", api.memory.sent[-1]["text"])
-    assert found is not None
-    ticket = found.group(1)
+    _assert_no_bare_code(api.memory.sent[-1]["text"])
+    ticket = _ticket_from_buttons(api)
     page = await api.client.get("/cabinet", params={"ticket": ticket})
     assert page.status_code == 200
     assert page.headers["referrer-policy"] == "no-referrer"
@@ -231,12 +274,37 @@ async def test_whoami_is_only_for_listed_admins(seeded):
     assert hidden.status_code == 404
 
 
-async def test_cabinet_button_returns_a_code(seeded):
+def test_cabinet_button_is_a_link_not_plain_text():
+    from app.max_client.base import OutboundButton
+    from app.max_client.client import _button
+
+    rendered = _button(
+        OutboundButton("Открыть кабинет", "", "https://staging.example/cabinet?ticket=abc")
+    )
+    assert rendered["type"] == "link"
+    assert rendered["url"].endswith("ticket=abc")
+    assert "payload" not in rendered
+
+
+async def test_cabinet_link_keeps_the_hourly_limit(seeded):
     api = seeded
+    _cabinet_base(api)
+    for index in range(5):
+        await post_update(api, message(900001, "Марина", "Войти в кабинет", f"hour-{index}"))
+        _assert_no_bare_code(api.memory.sent[-1]["text"])
+        assert _ticket_from_buttons(api)
+    await post_update(api, message(900001, "Марина", "Войти в кабинет", "hour-6"))
+    assert "подожд" in api.memory.sent[-1]["text"].casefold()
+    assert api.memory.sent[-1]["buttons"] == []
+
+
+async def test_cabinet_button_returns_a_link(seeded):
+    api = seeded
+    _cabinet_base(api)
     await post_update(api, callback(900001, "Марина", "cb-web", "web_login"))
     assert api.memory.callbacks == ["cb-web"]
-    found = re.search(r"\d{6}", api.memory.sent[-1]["text"])
-    assert found is not None
+    _assert_no_bare_code(api.memory.sent[-1]["text"])
+    assert _ticket_from_buttons(api)
 
 
 async def test_cabinet_button_sends_a_message_when_callback_answer_fails(seeded):
@@ -247,26 +315,46 @@ async def test_cabinet_button_sends_a_message_when_callback_answer_fails(seeded)
             self.sent: list[dict] = []
 
         async def send_text(self, *, user_id: str, chat_id: int | None, text: str, buttons: list) -> None:
-            self.sent.append({"text": text})
+            self.sent.append(
+                {
+                    "text": text,
+                    "buttons": [
+                        {"text": button.text, "payload": button.payload, "url": button.url}
+                        for button in buttons
+                    ],
+                }
+            )
 
-        async def answer_callback(self, callback_id: str, notification: str | None = None, text: str | None = None) -> bool:
+        async def answer_callback(
+            self,
+            callback_id: str,
+            notification: str | None = None,
+            text: str | None = None,
+            buttons: list | None = None,
+        ) -> bool:
             return False
 
         async def aclose(self) -> None:
             return None
 
+    _cabinet_base(api)
     sender = SilentCallback()
     api.app.state.sender = sender
     await post_update(api, callback(900001, "Марина", "cb-web-fail", "web_login"))
-    assert re.search(r"\d{6}", sender.sent[-1]["text"])
+    _assert_no_bare_code(sender.sent[-1]["text"])
+    assert any("ticket=" in button["url"] for button in sender.sent[-1]["buttons"])
 
 
 async def test_login_attempt_limit(seeded):
     api = seeded
+    _cabinet_base(api)
     await post_update(api, message(900001, "Марина", "Войти в кабинет", "limit-1"))
-    public = re.search(r"Заявка ([0-9a-f]{8})", api.memory.sent[-1]["text"])
-    assert public is not None
-    body = {"public_id": public.group(1), "code": "000000"}
+    _assert_no_bare_code(api.memory.sent[-1]["text"])
+    factory = api.app.state.session_factory
+    async with factory() as session:
+        row = await session.scalar(select(WebLoginCode).order_by(WebLoginCode.id.desc()))
+    assert row is not None
+    body = {"public_id": row.public_id, "code": "000000"}
     for _ in range(4):
         response = await api.client.post("/api/web-login", json=body)
         assert response.status_code == 401
@@ -393,9 +481,10 @@ async def test_teacher_request_does_not_open_the_cabinet(seeded):
         await session.commit()
         await session.refresh(user)
         assert user.role == "teacher"
+    _cabinet_base(api)
     await post_update(api, message(900002, "Алексей", "Войти в кабинет", "apply-4"))
-    found = re.search(r"\d{6}", api.memory.sent[-1]["text"])
-    assert found is not None
+    _assert_no_bare_code(api.memory.sent[-1]["text"])
+    assert _ticket_from_buttons(api)
 
 
 async def test_transfer_keeps_history_on_the_old_profile(seeded):

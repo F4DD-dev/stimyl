@@ -47,16 +47,7 @@ class MaxClient:
         params: dict[str, object] = (
             {"chat_id": chat_id} if chat_id is not None else {"user_id": int(user_id)}
         )
-        attachment = None
-        if buttons:
-            attachment = [
-                {
-                    "type": "inline_keyboard",
-                    "payload": {
-                        "buttons": [[_button(button)] for button in buttons]
-                    },
-                }
-            ]
+        attachment = [_keyboard(buttons)] if buttons else None
         parts = _chunks(text)
         async with self._lock:
             for index, part in enumerate(parts):
@@ -70,11 +61,17 @@ class MaxClient:
         callback_id: str,
         notification: str | None = None,
         text: str | None = None,
+        buttons: list[OutboundButton] | None = None,
     ) -> bool:
-        """Подтвердить нажатие. text заменяет сообщение с кнопкой. False — не удалось."""
+        """Подтвердить нажатие. text заменяет сообщение, кнопки остаются в нём."""
         body: dict[str, object] = {}
-        if text:
-            body["message"] = {"text": text[:TEXT_LIMIT]}
+        if text or buttons:
+            message: dict[str, object] = {}
+            if text:
+                message["text"] = text[:TEXT_LIMIT]
+            if buttons:
+                message["attachments"] = [_keyboard(buttons)]
+            body["message"] = message
         if notification:
             body["notification"] = notification[:180]
         if not body:
@@ -169,6 +166,13 @@ def _error_code(response: httpx.Response) -> str:
     if isinstance(payload, dict) and isinstance(payload.get("code"), str):
         return payload["code"][:80]
     return ""
+
+
+def _keyboard(buttons: list[OutboundButton]) -> dict[str, object]:
+    return {
+        "type": "inline_keyboard",
+        "payload": {"buttons": [[_button(button)] for button in buttons]},
+    }
 
 
 def _button(button: OutboundButton) -> dict[str, str]:

@@ -38,7 +38,7 @@ class MemorySender:
                 "user_id": user_id,
                 "chat_id": chat_id,
                 "text": text,
-                "buttons": [(button.text, button.payload) for button in buttons],
+                "buttons": [_stored_button(button) for button in buttons],
             }
         )
 
@@ -47,22 +47,27 @@ class MemorySender:
         callback_id: str,
         notification: str | None = None,
         text: str | None = None,
+        buttons: list[OutboundButton] | None = None,
     ) -> bool:
         self.callbacks.append(callback_id)
-        if not text:
+        if not text and not buttons:
             return False
         self.sent.append(
             {
                 "user_id": "",
                 "chat_id": None,
-                "text": text,
-                "buttons": [],
+                "text": text or "",
+                "buttons": [_stored_button(button) for button in buttons or []],
             }
         )
         return True
 
     async def aclose(self) -> None:
         return None
+
+
+def _stored_button(button: OutboundButton) -> dict[str, str]:
+    return {"text": button.text, "payload": button.payload, "url": button.url}
 
 
 @dataclass

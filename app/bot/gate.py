@@ -148,11 +148,6 @@ async def open_gate(
         if reply:
             replies.append(GateReply(reply))
 
-    if incoming.kind == "start" and user.role in {"teacher", "admin"} and user.status == "active":
-        replies.append(
-            GateReply("Кабинет: нажми кнопку, пришлю код.", (("Войти в кабинет", WEB_LOGIN),))
-        )
-        return GateOutcome(user, replies, True)
     return GateOutcome(user, replies, False)
 
 
@@ -194,13 +189,13 @@ def _join_reply(joined, *, unknown: bool) -> str | None:
 
 
 async def _send_code(session: AsyncSession, user: User, settings: Settings) -> GateOutcome:
+    base = (settings.public_base_url or "").rstrip("/")
+    if not base.startswith("http"):
+        return GateOutcome(user, [GateReply("Ссылку на кабинет сейчас не собрать.")], True)
     issued: IssuedCode = await issue_web_code(session, user, settings)
     if not issued.ok:
         return GateOutcome(user, [GateReply(issued.detail)], True)
-    base = (settings.public_base_url or "").rstrip("/")
-    url = f"{base}/cabinet?ticket={issued.ticket}" if base else ""
-    reply = GateReply(cabinet_text(url, issued.public_id, issued.code))
-    if url:
-        reply.link_text = "Открыть кабинет"
-        reply.link_url = url
+    reply = GateReply(cabinet_text())
+    reply.link_text = "Открыть кабинет"
+    reply.link_url = f"{base}/cabinet?ticket={issued.ticket}"
     return GateOutcome(user, [reply], True)

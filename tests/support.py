@@ -114,7 +114,9 @@ async def drain_jobs(api: Api) -> None:
 
 def button_payload(api: Api, label: str) -> str:
     buttons = api.memory.sent[-1]["buttons"]
-    for text, payload in buttons:
+    for button in buttons:
+        text = button["text"] if isinstance(button, dict) else button[0]
+        payload = button["payload"] if isinstance(button, dict) else button[1]
         if text == label:
             return payload
     raise AssertionError(buttons)

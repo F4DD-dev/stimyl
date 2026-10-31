@@ -107,6 +107,22 @@ def test_reply_sets_have_several_variants_and_keep_the_tone():
             assert word not in blob, key
 
 
+def test_start_closes_an_open_answer():
+    state = TrainState(
+        mode="submission",
+        step="check",
+        pending_answer="4",
+        pending_prompt="2+2",
+    )
+    turn = reduce_turn(state, Start())
+    assert turn.state.mode == "training"
+    assert turn.state.step == "done"
+    assert turn.state.pending_answer is None
+    follow = reduce_turn(turn.state, StudentText("не понимаю дроби"))
+    assert follow.attempt is None
+    assert follow.state.step == "explain"
+
+
 def test_greeting_has_variants_and_does_not_introduce_itself():
     first = reduce_turn(TrainState(), Start())
     second = reduce_turn(first.state, Start())

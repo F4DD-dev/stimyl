@@ -24,6 +24,7 @@ class NullSender:
         callback_id: str,
         notification: str | None = None,
         text: str | None = None,
+        buttons: list[OutboundButton] | None = None,
     ) -> bool:
         return False
 

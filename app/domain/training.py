@@ -115,6 +115,13 @@ def reduce_turn(state: TrainState, event: Event, rng: random.Random | None = Non
     current = TrainState(**asdict(state))
     numbers = rng or random.Random()
     if isinstance(event, Start):
+        current.mode = "training"
+        current.step = "done"
+        current.pending_answer = None
+        current.pending_hint = None
+        current.pending_step = None
+        current.pending_prompt = None
+        current.pending_text = None
         return Turn(current, [Reply(say(current, "greeting"))])
     if isinstance(event, PhotoOnly):
         if current.mode == "submission":
