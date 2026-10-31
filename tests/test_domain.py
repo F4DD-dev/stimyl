@@ -44,6 +44,21 @@ def test_streak_counts_consecutive_practice_days():
     assert streak({today, today - timedelta(days=2)}, today) == 1
 
 
+def test_square_context_separates_geometry_from_equations():
+    assert detect_topic("площадь квадрата") == "Геометрия"
+    assert detect_topic("ПЛОЩАДЬ КВАДРАТА") == "Геометрия"
+    assert detect_topic("сторона квадрата") == "Геометрия"
+    assert detect_topic("квадратное уравнение") == "Квадратные уравнения и дискриминант"
+    assert detect_topic("Квадратное уравнение") == "Квадратные уравнения и дискриминант"
+    assert detect_topic("квадрат") is None
+    turn = reduce_turn(TrainState(), StudentText("квадрат"))
+    assert turn.replies[0].text == "Это про геометрию?"
+    labels = [button.text for button in turn.replies[0].buttons]
+    assert labels == ["Да, геометрия", "Нет, уравнение"]
+    geometry = reduce_turn(turn.state, Action("pick", "Геометрия"))
+    assert geometry.state.topic_title == "Геометрия"
+
+
 def test_question_is_not_solved():
     turn = reduce_turn(TrainState(), StudentText("Как решить уравнение 17+4"))
     assert "21" not in turn.replies[0].text

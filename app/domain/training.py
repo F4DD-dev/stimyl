@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass
 
 from app.domain.answers import answers_match
-from app.domain.curriculum import TOPICS, TopicMaterial, detect_topic, topic_by_title
+from app.domain.curriculum import TOPICS, TopicMaterial, classify_topic, topic_by_title
 
 GREETING = (
     "Привет. Я Стимул. Пришли вопрос по математике 8 класса — "
@@ -109,11 +109,24 @@ def reduce_turn(state: TrainState, event: Event) -> Turn:
 
 
 def _ask(state: TrainState, text: str) -> Turn:
-    title = detect_topic(text)
-    if title is None:
+    guess = classify_topic(text)
+    if guess.ask_geometry:
+        return Turn(
+            state,
+            [
+                Reply(
+                    "Это про геометрию?",
+                    buttons=(
+                        ButtonSpec("Да, геометрия", "pick", TOPICS[3].title),
+                        ButtonSpec("Нет, уравнение", "pick", TOPICS[2].title),
+                    ),
+                )
+            ],
+        )
+    if not guess.confident or guess.title is None:
         buttons = tuple(ButtonSpec(item.title, "pick", item.title) for item in TOPICS)
         return Turn(state, [Reply(UNKNOWN_TOPIC, buttons=buttons)])
-    return _open_topic(state, title)
+    return _open_topic(state, guess.title)
 
 
 def _on_action(state: TrainState, event: Action) -> Turn:

@@ -128,14 +128,48 @@ def topic_by_title(title: str) -> TopicMaterial | None:
     return None
 
 
-def detect_topic(text: str) -> str | None:
-    folded = text.casefold()
-    if "дроб" in folded or "числител" in folded or "знаменател" in folded:
-        return TOPICS[0].title
-    if "дискриминант" in folded or "квадрат" in folded:
-        return TOPICS[2].title
-    if any(word in folded for word in ("геометр", "треуголь", "пифагор", "катет", "гипотенуз")):
-        return TOPICS[3].title
+@dataclass(frozen=True)
+class TopicGuess:
+    title: str | None
+    confident: bool
+    ask_geometry: bool = False
+
+
+def fold_text(text: str) -> str:
+    return text.casefold().replace("ё", "е")
+
+
+def classify_topic(text: str) -> TopicGuess:
+    """Квадрат сам по себе не тема: площадь — геометрия, уравнение — квадратные."""
+    folded = fold_text(text)
+    fractions = any(word in folded for word in ("дроб", "числител", "знаменател"))
+    equation = any(word in folded for word in ("уравнен", "дискриминант"))
+    square = "квадрат" in folded
+    geometry = any(
+        word in folded for word in ("геометр", "треуголь", "пифагор", "катет", "гипотенуз")
+    )
+    square_shape = square and any(word in folded for word in ("площад", "периметр", "сторон"))
+    if fractions and not equation:
+        return TopicGuess(TOPICS[0].title, True)
+    if square and equation and square_shape:
+        return TopicGuess(None, False, ask_geometry=True)
+    if square and equation:
+        return TopicGuess(TOPICS[2].title, True)
+    if "дискриминант" in folded:
+        return TopicGuess(TOPICS[2].title, True)
+    if square_shape or (geometry and not square):
+        return TopicGuess(TOPICS[3].title, True)
+    if square and geometry:
+        return TopicGuess(None, False, ask_geometry=True)
+    if square:
+        return TopicGuess(None, False, ask_geometry=True)
     if "линейн" in folded or "уравнен" in folded:
-        return TOPICS[1].title
+        return TopicGuess(TOPICS[1].title, True)
+    return TopicGuess(None, False)
+
+
+def detect_topic(text: str) -> str | None:
+    guess = classify_topic(text)
+    if guess.confident:
+        return guess.title
     return None
