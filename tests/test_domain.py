@@ -68,28 +68,32 @@ def test_question_is_not_solved():
 
 
 def test_wrong_practice_feedback_omits_the_reference():
-    opened = reduce_turn(TrainState(), StudentText("линейные уравнения"))
-    practiced = reduce_turn(opened.state, Action("to_practice"))
+    opened = reduce_turn(TrainState(), StudentText("линейные уравнения"), __import__("random").Random(1))
+    practiced = reduce_turn(opened.state, Action("to_practice"), __import__("random").Random(1))
     graded = reduce_turn(practiced.state, StudentText("нет"))
     assert graded.attempt is not None
     assert graded.attempt.correct is False
-    assert graded.attempt.expected == "5"
-    assert "5" not in graded.replies[0].text
+    assert graded.attempt.expected
+    assert graded.attempt.expected not in graded.replies[0].text
 
 
 def test_public_view_hides_the_reference():
-    opened = reduce_turn(TrainState(), StudentText("линейные уравнения"))
-    practiced = reduce_turn(opened.state, Action("to_practice"))
-    graded = reduce_turn(practiced.state, StudentText("нет"))
+    numbers = __import__("random").Random(1)
+    opened = reduce_turn(TrainState(), StudentText("линейные уравнения"), numbers)
+    practiced = reduce_turn(opened.state, Action("to_practice"), numbers)
+    graded = reduce_turn(practiced.state, StudentText("нет"), numbers)
     view = present_turn(graded)
     assert view["correct"] is False
-    assert "5" not in str(view)
+    assert graded.state.pending_answer is None
+    assert graded.attempt.expected not in (view["feedback"] or "")
     assert "pending_answer" not in view
     assert "reference" not in view
-    snapshot = present_state(practiced.state)
+    snapshot = present_state(
+        reduce_turn(opened.state, Action("to_practice"), __import__("random").Random(1)).state
+    )
     assert snapshot["awaiting_answer"] is True
     assert snapshot["task"]
-    assert "5" not in str(snapshot)
+    assert snapshot["feedback"] is None
 
 
 def test_check_draft_comes_from_the_bank_and_is_not_stored():

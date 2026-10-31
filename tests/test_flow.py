@@ -29,15 +29,32 @@ async def test_seed_is_idempotent_and_roster_comes_from_the_database(api):
     assert "Квадратные уравнения и дискриминант" in titles
 
 
-async def _practice(api, user_id: int, name: str, question: str, answers: list[str]) -> None:
+async def _issued_answer(api, user_id: int) -> str:
+    from app.db.models import AuthIdentity
+
+    factory = api.app.state.session_factory
+    async with factory() as session:
+        answer = await session.scalar(
+            select(LearningSession.pending_answer)
+            .join(User, User.id == LearningSession.user_id)
+            .join(AuthIdentity, AuthIdentity.user_id == User.id)
+            .where(AuthIdentity.external_id == str(user_id))
+            .order_by(LearningSession.id.desc())
+        )
+    assert answer
+    return answer
+
+
+async def _practice(api, user_id: int, name: str, question: str, times: int, correct: bool) -> None:
     await post_update(api, message(user_id, name, question, f"q-{user_id}"))
     await post_update(
         api,
         callback(user_id, name, f"cb-practice-{user_id}", button_payload(api, "К практике")),
     )
-    for index, answer in enumerate(answers):
+    for index in range(times):
+        answer = await _issued_answer(api, user_id) if correct else "нет"
         await post_update(api, message(user_id, name, answer, f"a-{user_id}-{index}"))
-        if index < len(answers) - 1:
+        if index < times - 1:
             await post_update(
                 api,
                 callback(
@@ -48,9 +65,9 @@ async def _practice(api, user_id: int, name: str, question: str, answers: list[s
 
 async def test_training_updates_status_and_hides_private_text(seeded):
     api = seeded
-    await _practice(api, 900002, "Алексей", "Помоги с катетом, страница 17+4", ["нет"])
-    await _practice(api, 900003, "Аня", "Объясни дроби", ["1/2", "0.5"])
-    await _practice(api, 900005, "Ольга", "линейные уравнения", ["5"])
+    await _practice(api, 900002, "Алексей", "Помоги с катетом, страница 17+4", 1, False)
+    await _practice(api, 900003, "Аня", "Объясни дроби", 2, True)
+    await _practice(api, 900005, "Ольга", "линейные уравнения", 1, True)
 
     sent = "\n".join(item["text"] for item in api.memory.sent)
     assert "21" not in sent

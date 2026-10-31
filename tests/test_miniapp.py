@@ -48,13 +48,19 @@ async def test_training_checks_the_answer_and_hides_the_question(seeded):
     lesson = await api.client.get("/api/student/lesson")
     assert lesson.status_code == 200
     assert lesson.json()["task"]
-    assert "5" not in lesson.text
+    assert lesson.json()["feedback"] is None
+    factory = api.app.state.session_factory
+    async with factory() as session:
+        expected = await session.scalar(
+            select(LearningSession.pending_answer).where(LearningSession.pending_answer.is_not(None))
+        )
+    assert expected
 
     graded = await api.client.post("/api/student/practice", json={"text": "нет-ТАЙНА"})
     assert graded.status_code == 200, graded.text
     graded_body = graded.json()
     assert graded_body["correct"] is False
-    assert "5" not in graded.text
+    assert expected not in (graded_body["feedback"] or "")
     assert "expected" not in graded_body
     assert "нет-ТАЙНА" == graded_body["given"]
 

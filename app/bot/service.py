@@ -174,6 +174,9 @@ async def _load_state(
         topic_title=title,
         example_index=row.example_index,
         task_index=row.task_index,
+        level=row.level,
+        correct_streak=row.correct_streak,
+        wrong_streak=row.wrong_streak,
         pending_answer=row.pending_answer,
         pending_hint=row.pending_hint,
         pending_prompt=row.pending_prompt,
@@ -209,6 +212,9 @@ def _save_state(row: LearningSession, state: TrainState, title_to_id: dict[str, 
     row.topic_id = title_to_id.get(state.topic_title or "")
     row.example_index = state.example_index
     row.task_index = state.task_index
+    row.level = state.level
+    row.correct_streak = state.correct_streak
+    row.wrong_streak = state.wrong_streak
     row.pending_answer = state.pending_answer
     row.pending_hint = state.pending_hint
     row.pending_prompt = state.pending_prompt

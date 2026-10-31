@@ -1,7 +1,9 @@
+import random
 from dataclasses import asdict, dataclass
 
 from app.domain.answers import answers_match
 from app.domain.curriculum import TOPICS, TopicMaterial, classify_topic, topic_by_title
+from app.domain.tasks import generate_task
 
 GREETING = (
     "Привет. Я Стимул. Пришли вопрос по математике 8 класса — "
@@ -55,6 +57,9 @@ class TrainState:
     topic_title: str | None = None
     example_index: int = 0
     task_index: int = 0
+    level: str = "easy"
+    correct_streak: int = 0
+    wrong_streak: int = 0
     pending_answer: str | None = None
     pending_hint: str | None = None
     pending_prompt: str | None = None
@@ -91,8 +96,9 @@ class Action:
 Event = Start | PhotoOnly | StudentText | Action
 
 
-def reduce_turn(state: TrainState, event: Event) -> Turn:
+def reduce_turn(state: TrainState, event: Event, rng: random.Random | None = None) -> Turn:
     current = TrainState(**asdict(state))
+    numbers = rng or random.Random()
     if isinstance(event, Start):
         return Turn(current, [Reply(GREETING)])
     if isinstance(event, PhotoOnly):
@@ -100,7 +106,7 @@ def reduce_turn(state: TrainState, event: Event) -> Turn:
             return Turn(current, [Reply(SUBMISSION_PHOTO)])
         return Turn(current, [Reply(TRAINING_PHOTO)])
     if isinstance(event, Action):
-        return _on_action(current, event)
+        return _on_action(current, event, numbers)
     if current.mode == "submission" and current.step != "check":
         return Turn(current, [Reply(SUBMISSION_TEXT)])
     if current.step == "check" and current.pending_answer:
@@ -129,7 +135,7 @@ def _ask(state: TrainState, text: str) -> Turn:
     return _open_topic(state, guess.title)
 
 
-def _on_action(state: TrainState, event: Action) -> Turn:
+def _on_action(state: TrainState, event: Action, rng: random.Random) -> Turn:
     if event.name in {"pick", "review"} and event.topic_title:
         return _open_topic(state, event.topic_title)
     material = topic_by_title(state.topic_title or "")
@@ -141,9 +147,7 @@ def _on_action(state: TrainState, event: Action) -> Turn:
         state.step = "explain"
         return Turn(state, [_explain_reply(material, state.example_index)])
     if event.name in {"to_practice", "again"}:
-        if event.name == "again":
-            state.task_index += 1
-        return _practice(state, material)
+        return _practice(state, material, rng)
     return Turn(state, [Reply("Напиши вопрос или выбери тему.")])
 
 
@@ -155,6 +159,9 @@ def _open_topic(state: TrainState, title: str) -> Turn:
     state.step = "explain"
     state.example_index = 0
     state.task_index = 0
+    state.level = "easy"
+    state.correct_streak = 0
+    state.wrong_streak = 0
     state.pending_answer = None
     state.pending_hint = None
     state.pending_prompt = None
@@ -175,9 +182,10 @@ def _explain_reply(material: TopicMaterial, example_index: int) -> Reply:
     )
 
 
-def _practice(state: TrainState, material: TopicMaterial) -> Turn:
-    task = material.tasks[state.task_index % len(material.tasks)]
+def _practice(state: TrainState, material: TopicMaterial, rng: random.Random) -> Turn:
+    task = generate_task(material.title, state.level, rng)
     state.step = "check"
+    state.task_index += 1
     state.pending_answer = task.answer
     state.pending_hint = task.hint
     state.pending_prompt = task.prompt
@@ -187,8 +195,18 @@ def _practice(state: TrainState, material: TopicMaterial) -> Turn:
 def _grade(state: TrainState, answer: str) -> Turn:
     expected = state.pending_answer or ""
     correct = answers_match(expected, answer)
-    hint = state.pending_hint or "Пройди приём из объяснения ещё раз."
+    hint = state.pending_hint or "Посмотри объяснение ещё раз."
     feedback = "Верно." if correct else f"Пока не сходится. {hint}"
+    if correct:
+        state.correct_streak += 1
+        state.wrong_streak = 0
+    else:
+        state.wrong_streak += 1
+        state.correct_streak = 0
+    if state.correct_streak >= 2:
+        state.level = "hard"
+    if state.wrong_streak >= 2:
+        state.level = "easy"
     draft = AttemptDraft(
         topic_title=state.topic_title or "",
         prompt=state.pending_prompt or "",
