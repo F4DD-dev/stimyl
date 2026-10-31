@@ -169,6 +169,7 @@ class Attempt(Base):
     expected: Mapped[str] = mapped_column(String(64))
     answer: Mapped[str] = mapped_column(String(200))
     correct: Mapped[bool] = mapped_column(Boolean)
+    hinted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     feedback: Mapped[str] = mapped_column(String(1000))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 

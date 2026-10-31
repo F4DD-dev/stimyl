@@ -87,8 +87,12 @@ def build_report(
             if fact is None:
                 cells.append(Cell(topic.title, None, None, False))
                 continue
-            is_stalled = fact.status is not TopicStatus.mastered and fact.last_attempt_on <= horizon
-            cells.append(Cell(topic.title, fact.status.value, fact.correct_percent, is_stalled))
+            is_stalled = (
+                fact.status not in {TopicStatus.mastered, TopicStatus.started}
+                and fact.last_attempt_on <= horizon
+            )
+            percent = None if fact.status is TopicStatus.started else fact.correct_percent
+            cells.append(Cell(topic.title, fact.status.value, percent, is_stalled))
             if fact.status is TopicStatus.repeat:
                 repeat_names[topic.title].append(name)
             if is_stalled:

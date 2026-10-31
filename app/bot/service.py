@@ -22,7 +22,7 @@ from app.domain.account_copy import PHOTO_OFF
 from app.domain.messages_ru import LINES, SUBMISSION_UNAVAILABLE
 from app.domain.progress import STATUS_LABEL, TopicProgress, choose_next, streak
 from app.domain.report import StateFact, TopicColumn, build_report
-from app.domain.status import Thresholds, TopicStatus, correct_ratio, decide_status
+from app.domain.status import Thresholds, TopicStatus, decide_status, mark_of, show_percent
 from app.domain.training import (
     Action,
     ButtonSpec,
@@ -103,6 +103,7 @@ async def process_update(
                     expected=turn.attempt.expected[:64],
                     answer=turn.attempt.answer[:200],
                     correct=turn.attempt.correct,
+                    hinted=turn.attempt.hinted,
                     feedback=turn.attempt.feedback[:1000],
                     created_at=now,
                 )
@@ -279,22 +280,26 @@ async def _recompute(
     today,
     thresholds: Thresholds,
 ) -> None:
-    flags = [
-        bool(item)
-        for item in await session.scalars(
-            select(Attempt.correct)
+    rows = (
+        await session.execute(
+            select(Attempt.correct, Attempt.prompt, Attempt.created_at, Attempt.hinted)
             .where(Attempt.user_id == user_id, Attempt.topic_id == topic_id)
             .order_by(Attempt.id)
         )
+    ).all()
+    marks = [
+        mark_of(bool(correct), hinted=bool(hinted), prompt=prompt, at=moment)
+        for correct, prompt, moment, hinted in rows
     ]
-    status = decide_status(flags, thresholds)
+    status = decide_status(marks, thresholds)
     if status is None:
         return
     state = await session.scalar(
         select(TopicState).where(TopicState.user_id == user_id, TopicState.topic_id == topic_id)
     )
-    ratio = correct_ratio(flags)
-    recheck = any(flags[1:])
+    window = marks[-10:]
+    ratio = sum(item.credit for item in window) / len(window) if window else 0.0
+    recheck = status is TopicStatus.mastered
     if state is None:
         session.add(
             TopicState(
@@ -302,7 +307,7 @@ async def _recompute(
                 topic_id=topic_id,
                 status=status.value,
                 correct_ratio=ratio,
-                attempts_count=len(flags),
+                attempts_count=len(marks),
                 has_recheck=recheck,
                 last_attempt_on=today,
             )
@@ -310,7 +315,7 @@ async def _recompute(
         return
     state.status = status.value
     state.correct_ratio = ratio
-    state.attempts_count = len(flags)
+    state.attempts_count = len(marks)
     state.has_recheck = recheck
     state.last_attempt_on = today
 
@@ -338,6 +343,8 @@ async def _progress_line(
                     topic.position,
                     TopicStatus(state.status),
                     round(state.correct_ratio * 100),
+                    attempts=state.attempts_count,
+                    rank_score=state.correct_ratio,
                 )
             )
     step = choose_next(rows)
@@ -347,9 +354,13 @@ async def _progress_line(
         return label, step.topic_title if step else None
     title = next(topic.title for topic in topics if topic.id == topic_id)
     status = TopicStatus(practiced.status)
-    line = (
-        f"Тема «{title}»: {STATUS_LABEL[status]}. Верных {round(practiced.correct_ratio * 100)}%."
-    )
+    if show_percent(status):
+        line = (
+            f"Тема «{title}»: {STATUS_LABEL[status]}. "
+            f"Верных {round(practiced.correct_ratio * 100)}%."
+        )
+    else:
+        line = f"Тема «{title}»: {STATUS_LABEL[status]}."
     if step:
         line = f"{line}\n{step.label}"
     return line, step.topic_title if step else None
@@ -515,8 +526,17 @@ async def student_progress(session: AsyncSession, user: User, settings: Settings
             payload_topics.append({"title": topic.title, "status": None, "correct_percent": None})
         else:
             status = TopicStatus(state.status)
-            share = round(state.correct_ratio * 100)
-            rows.append(TopicProgress(topic.title, topic.position, status, share))
+            share = None if not show_percent(status) else round(state.correct_ratio * 100)
+            rows.append(
+                TopicProgress(
+                    topic.title,
+                    topic.position,
+                    status,
+                    share,
+                    attempts=state.attempts_count,
+                    rank_score=state.correct_ratio,
+                )
+            )
             payload_topics.append(
                 {"title": topic.title, "status": status.value, "correct_percent": share}
             )
@@ -649,6 +669,7 @@ async def student_turn(
                     expected=turn.attempt.expected[:64],
                     answer=turn.attempt.answer[:200],
                     correct=turn.attempt.correct,
+                    hinted=turn.attempt.hinted,
                     feedback=turn.attempt.feedback[:1000],
                     created_at=now,
                 )

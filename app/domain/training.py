@@ -54,6 +54,7 @@ class AttemptDraft:
     correct: bool
     feedback: str
     hint: str
+    hinted: bool = False
 
 
 @dataclass
@@ -324,6 +325,7 @@ def _grade(state: TrainState, answer: str, rng: random.Random, force: bool = Fal
         correct=correct,
         feedback=feedback,
         hint=hint,
+        hinted=state.hint_step > 0,
     )
     if third and topic_by_title(state.topic_title or "") is not None:
         return _third_miss(state, rng, draft)

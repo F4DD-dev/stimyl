@@ -134,10 +134,10 @@ async def test_teacher_code_is_single_use_and_student_cannot_open_the_cabinet(se
     api = seeded
     await post_update(api, message(900001, "Марина", "Войти в кабинет", "code-1"))
     text = api.memory.sent[-1]["text"]
-    found = re.search(r"\d{6}", text)
+    found = re.search(r"Код (\d{6})", text)
     public = re.search(r"Заявка ([0-9a-f]{8})", text)
     assert found is not None and public is not None
-    code = found.group(0)
+    code = found.group(1)
     first = await api.client.post(
         "/api/web-login",
         json={"public_id": public.group(1), "code": code},

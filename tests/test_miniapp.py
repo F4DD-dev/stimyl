@@ -71,7 +71,8 @@ async def test_training_checks_the_answer_and_hides_the_question(seeded):
     assert payload["display_name"] == "Алексей"
     assert payload["next_topic"]
     linear = next(item for item in payload["topics"] if item["title"] == "Линейные уравнения")
-    assert linear["status"] == "repeat"
+    assert linear["status"] == "started"
+    assert linear["correct_percent"] is None
     assert "Ольга" not in progress.text
     assert "17+4" not in progress.text
 
@@ -88,7 +89,7 @@ async def test_training_checks_the_answer_and_hides_the_question(seeded):
     await login(api, 900001, "Марина")
     report = await api.client.get("/api/teacher/class")
     assert report.status_code == 200
-    assert "repeat" in report.text
+    assert "started" in report.text
     for secret in ("17+4", "нет-ТАЙНА", "СЕКРЕТ"):
         assert secret not in report.text
     denied = await api.client.get("/api/student/progress")

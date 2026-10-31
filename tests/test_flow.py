@@ -45,29 +45,66 @@ async def _issued_answer(api, user_id: int) -> str:
     return answer
 
 
-async def _practice(api, user_id: int, name: str, question: str, times: int, correct: bool) -> None:
-    await post_update(api, message(user_id, name, question, f"q-{user_id}"))
+async def _shift_attempt(api, user_id: int, hours: int) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from app.db.models import AuthIdentity
+
+    factory = api.app.state.session_factory
+    async with factory() as session:
+        row = await session.scalar(
+            select(Attempt)
+            .join(User, User.id == Attempt.user_id)
+            .join(AuthIdentity, AuthIdentity.user_id == User.id)
+            .where(AuthIdentity.external_id == str(user_id))
+            .order_by(Attempt.id)
+        )
+        assert row is not None
+        row.created_at = datetime.now(UTC) - timedelta(hours=hours)
+        row.prompt = "old-variant"
+        await session.commit()
+
+
+async def _practice(
+    api, user_id: int, name: str, question: str, times: int, correct: bool, round_id: str = "1"
+) -> None:
+    await post_update(api, message(user_id, name, question, f"q-{user_id}-{round_id}"))
     await post_update(
         api,
-        callback(user_id, name, f"cb-practice-{user_id}", button_payload(api, "К практике")),
+        callback(
+            user_id,
+            name,
+            f"cb-practice-{user_id}-{round_id}",
+            button_payload(api, "К практике"),
+        ),
     )
     for index in range(times):
         answer = await _issued_answer(api, user_id) if correct else "нет"
-        await post_update(api, message(user_id, name, answer, f"a-{user_id}-{index}"))
-        if index < times - 1:
+        await post_update(api, message(user_id, name, answer, f"a-{user_id}-{round_id}-{index}"))
+        if correct and index < times - 1:
             await post_update(
                 api,
                 callback(
-                    user_id, name, f"cb-again-{user_id}-{index}", button_payload(api, "Ещё задание")
+                    user_id,
+                    name,
+                    f"cb-again-{user_id}-{round_id}-{index}",
+                    button_payload(api, "Ещё задание"),
                 ),
             )
 
 
 async def test_training_updates_status_and_hides_private_text(seeded):
     api = seeded
-    await _practice(api, 900002, "Алексей", "Помоги с катетом, страница 17+4", 1, False)
-    await _practice(api, 900003, "Аня", "Объясни дроби", 2, True)
-    await _practice(api, 900005, "Ольга", "линейные уравнения", 1, True)
+    await _practice(api, 900002, "Алексей", "Помоги с катетом, страница 17+4", 3, False)
+    await _practice(api, 900003, "Аня", "Объясни дроби", 1, True, "a")
+    await _shift_attempt(api, 900003, hours=13)
+    await _practice(api, 900003, "Аня", "Объясни дроби", 2, True, "b")
+    await _practice(api, 900005, "Ольга", "линейные уравнения", 2, True)
+    await post_update(
+        api,
+        callback(900005, "Ольга", "olga-again", button_payload(api, "Ещё задание")),
+    )
+    await post_update(api, message(900005, "Ольга", "нет", "olga-wrong"))
 
     sent = "\n".join(item["text"] for item in api.memory.sent)
     assert "21" not in sent

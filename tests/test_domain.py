@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from app.domain.answers import answers_match
 from app.domain.curriculum import detect_topic
@@ -6,7 +6,7 @@ from app.domain.drafts import build_check_draft
 from app.domain.messages_ru import LINES
 from app.domain.progress import TopicProgress, choose_next, streak
 from app.domain.report import StateFact, TopicColumn, build_report
-from app.domain.status import TopicStatus, decide_status
+from app.domain.status import Mark, TopicStatus, decide_status, mark_of
 from app.domain.training import (
     Action,
     PhotoOnly,
@@ -27,15 +27,51 @@ def test_numeric_reference_accepts_fraction_and_decimal():
     assert not answers_match("5", "")
 
 
-def test_status_thresholds_cover_three_states():
+def _window(score: float, *, spaced: bool = True, last_two_wrong: bool = False) -> list[Mark]:
+    start = datetime(2026, 10, 1, tzinfo=UTC)
+    marks: list[Mark] = []
+    for index in range(10):
+        correct = score > 0 and not (last_two_wrong and index >= 8)
+        moment = start + timedelta(hours=13 * index) if spaced else start
+        prompt = f"v{index}" if spaced else "same"
+        marks.append(Mark(score, correct, prompt, moment))
+    if last_two_wrong:
+        # Средняя доля задаётся явно: восемь единиц и два нуля дают 0,8.
+        marks = [Mark(1, True, f"v{index}", start + timedelta(hours=13 * index)) for index in range(8)]
+        marks.append(Mark(0, False, "tail-a", start + timedelta(hours=13 * 8)))
+        marks.append(Mark(0, False, "tail-b", start + timedelta(hours=13 * 9)))
+    return marks
+
+
+def test_status_boundaries_at_49_50_79_80_percent():
     assert decide_status([]) is None
-    assert decide_status([True]) is TopicStatus.needs_practice
-    assert decide_status([False]) is TopicStatus.repeat
-    assert decide_status([True, True]) is TopicStatus.mastered
-    assert decide_status([True, False]) is TopicStatus.needs_practice
-    assert decide_status([True, True, False, False]) is TopicStatus.repeat
-    assert decide_status([True] * 8 + [False, False]) is TopicStatus.repeat
-    assert decide_status([True] * 4 + [False]) is TopicStatus.mastered
+    assert decide_status([mark_of(True, prompt="a")]) is TopicStatus.started
+    assert decide_status([mark_of(False), mark_of(True)]) is TopicStatus.started
+    assert decide_status(_window(0.49)) is TopicStatus.repeat
+    assert decide_status(_window(0.50)) is TopicStatus.needs_practice
+    assert decide_status(_window(0.79)) is TopicStatus.needs_practice
+    assert decide_status(_window(0.80)) is TopicStatus.mastered
+    assert decide_status(_window(0.80, spaced=False)) is TopicStatus.needs_practice
+    assert decide_status(_window(0.80, last_two_wrong=True)) is TopicStatus.repeat
+
+
+def test_hinted_correct_counts_as_half_and_only_the_last_ten_matter():
+    start = datetime(2026, 10, 1, tzinfo=UTC)
+
+    def series(hinted: bool) -> list[Mark]:
+        marks = [mark_of(False, prompt=f"w{i}", at=start) for i in range(5)]
+        marks.extend(mark_of(True, prompt=f"c{i}", at=start) for i in range(4))
+        marks.append(mark_of(True, hinted=hinted, prompt="edge", at=start))
+        return marks
+
+    assert decide_status(series(True)) is TopicStatus.repeat
+    assert decide_status(series(False)) is TopicStatus.needs_practice
+    old = [mark_of(False, prompt=f"old{i}", at=start) for i in range(10)]
+    fresh = [
+        mark_of(True, prompt=f"new{i}", at=start + timedelta(hours=13 * (i + 1)))
+        for i in range(10)
+    ]
+    assert decide_status(old + fresh) is TopicStatus.mastered
 
 
 def test_streak_counts_consecutive_practice_days():
@@ -133,6 +169,25 @@ def test_submission_does_not_solve_a_page():
     turn = reduce_turn(TrainState(mode="submission"), PhotoOnly())
     assert "задание" in turn.replies[0].text.casefold()
     assert "21" not in turn.replies[0].text
+
+
+def test_next_step_uses_the_weakest_topic_with_attempts():
+    empty = choose_next(
+        [
+            TopicProgress("Дроби", 1, None, None),
+            TopicProgress("Геометрия", 2, None, None),
+        ]
+    )
+    assert empty is not None
+    assert empty.topic_title == "Дроби"
+    tied = choose_next(
+        [
+            TopicProgress("Геометрия", 2, TopicStatus.needs_practice, 50, attempts=4, rank_score=0.5),
+            TopicProgress("Дроби", 1, TopicStatus.needs_practice, 50, attempts=4, rank_score=0.5),
+        ]
+    )
+    assert tied is not None
+    assert tied.topic_title == "Дроби"
 
 
 def test_next_step_picks_the_weakest_topic():
