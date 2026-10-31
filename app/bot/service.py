@@ -177,9 +177,13 @@ async def _load_state(
         level=row.level,
         correct_streak=row.correct_streak,
         wrong_streak=row.wrong_streak,
+        hint_step=row.hint_step,
+        task_misses=row.task_misses,
         pending_answer=row.pending_answer,
         pending_hint=row.pending_hint,
+        pending_step=row.pending_step,
         pending_prompt=row.pending_prompt,
+        pending_text=row.pending_text,
     )
 
 
@@ -215,9 +219,13 @@ def _save_state(row: LearningSession, state: TrainState, title_to_id: dict[str, 
     row.level = state.level
     row.correct_streak = state.correct_streak
     row.wrong_streak = state.wrong_streak
+    row.hint_step = state.hint_step
+    row.task_misses = state.task_misses
     row.pending_answer = state.pending_answer
     row.pending_hint = state.pending_hint
+    row.pending_step = state.pending_step
     row.pending_prompt = state.pending_prompt
+    row.pending_text = state.pending_text
 
 
 def _add_message(
@@ -247,7 +255,7 @@ async def _apply_explainer(turn: Turn, explainer: Explainer) -> None:
     if turn.attempt is None or turn.attempt.correct:
         return
     generated = await explainer.explain_mistake(turn.attempt.topic_title, turn.attempt.hint)
-    if generated and turn.attempt.expected not in generated:
+    if generated and turn.attempt.expected not in generated and len(turn.replies) == 1:
         turn.replies[-1].lead = f"Пока не сходится. {generated.strip()[:500]}"
         turn.attempt.feedback = turn.replies[-1].lead
 

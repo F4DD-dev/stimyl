@@ -11,6 +11,7 @@ class GeneratedTask:
     answer: str
     hint: str
     level: str
+    first_step: str = ""
 
 
 def _fmt(value: Fraction) -> str:
@@ -349,7 +350,42 @@ TEMPLATES: dict[str, tuple] = {
 }
 
 
+_STEPS = {
+    _add: "Найди общий знаменатель двух дробей.",
+    _sub: "Найди общий знаменатель двух дробей.",
+    _mul: "Перемножь числители отдельно и знаменатели отдельно.",
+    _div: "Переверни вторую дробь и умножь.",
+    _simplify: "Найди число, на которое делятся и числитель, и знаменатель.",
+    _mixed: "Переведи целое в дробь с тем же знаменателем.",
+    _ax: "Раздели обе части на число перед x.",
+    _plus: "Перенеси число без x в другую часть.",
+    _minus: "Перенеси число без x в другую часть.",
+    _ax_plus: "Сначала убери свободное число из левой части.",
+    _ax_minus: "Сначала убери свободное число из левой части.",
+    _x_over: "Умножь обе части на знаменатель.",
+    _discriminant: "Выпиши a, b и c.",
+    _discriminant_a: "Выпиши a, b и c.",
+    _larger_root: "Посчитай дискриминант.",
+    _smaller_root: "Посчитай дискриминант.",
+    _sum_roots: "Посмотри на число перед x.",
+    _product_roots: "Посмотри на свободный член.",
+    _hypotenuse: "Возведи катеты в квадрат и сложи.",
+    _leg: "Возведи гипотенузу и известный катет в квадрат.",
+    _square_area: "Умножь сторону на себя.",
+    _square_side: "Подбери число, квадрат которого равен площади.",
+    _square_perimeter: "Умножь сторону на четыре.",
+    _scaled_hyp: "Возведи катеты в квадрат и сложи.",
+}
+
+
 def generate_task(title: str, level: str, rng: random.Random) -> GeneratedTask:
     builders = TEMPLATES[title]
     chosen = builders[rng.randrange(len(builders))]
-    return chosen(rng, "hard" if level == "hard" else "easy")
+    task = chosen(rng, "hard" if level == "hard" else "easy")
+    return GeneratedTask(
+        task.prompt,
+        task.answer,
+        task.hint,
+        task.level,
+        _STEPS[chosen],
+    )

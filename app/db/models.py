@@ -116,9 +116,13 @@ class LearningSession(Base):
     level: Mapped[str] = mapped_column(String(8), default="easy", server_default="easy")
     correct_streak: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     wrong_streak: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    hint_step: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    task_misses: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     pending_answer: Mapped[str | None] = mapped_column(String(64), nullable=True)
     pending_hint: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    pending_step: Mapped[str | None] = mapped_column(String(500), nullable=True)
     pending_prompt: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    pending_text: Mapped[str | None] = mapped_column(String(500), nullable=True)
     photo_token: Mapped[str | None] = mapped_column(String(512), nullable=True)
     photo_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     photo_expires_at: Mapped[datetime | None] = mapped_column(

@@ -1,7 +1,7 @@
 import random
 from dataclasses import asdict, dataclass
 
-from app.domain.answers import answers_match
+from app.domain.answers import answers_match, is_attempt, parse_answer
 from app.domain.curriculum import TOPICS, TopicMaterial, classify_topic, topic_by_title
 from app.domain.tasks import generate_task
 
@@ -60,9 +60,13 @@ class TrainState:
     level: str = "easy"
     correct_streak: int = 0
     wrong_streak: int = 0
+    hint_step: int = 0
+    task_misses: int = 0
     pending_answer: str | None = None
     pending_hint: str | None = None
+    pending_step: str | None = None
     pending_prompt: str | None = None
+    pending_text: str | None = None
 
 
 @dataclass
@@ -110,7 +114,7 @@ def reduce_turn(state: TrainState, event: Event, rng: random.Random | None = Non
     if current.mode == "submission" and current.step != "check":
         return Turn(current, [Reply(SUBMISSION_TEXT)])
     if current.step == "check" and current.pending_answer:
-        return _grade(current, event.text)
+        return _grade(current, event.text, numbers)
     return _ask(current, event.text)
 
 
@@ -146,8 +150,23 @@ def _on_action(state: TrainState, event: Action, rng: random.Random) -> Turn:
         state.example_index += 1
         state.step = "explain"
         return Turn(state, [_explain_reply(material, state.example_index)])
-    if event.name in {"to_practice", "again"}:
+    if event.name in {"to_practice", "again", "skip"}:
         return _practice(state, material, rng)
+    if event.name == "hint":
+        return _hint(state)
+    if event.name == "other":
+        return _other_topic(state)
+    if event.name == "as_answer":
+        text = state.pending_text or ""
+        state.pending_text = None
+        if not text:
+            return Turn(state, [Reply("Напиши ответ.", buttons=_task_buttons())])
+        return _grade(state, text, rng, force=True)
+    if event.name == "as_question":
+        text = state.pending_text or ""
+        state.pending_text = None
+        _clear_task(state)
+        return _ask(state, text)
     return Turn(state, [Reply("Напиши вопрос или выбери тему.")])
 
 
@@ -162,9 +181,13 @@ def _open_topic(state: TrainState, title: str) -> Turn:
     state.level = "easy"
     state.correct_streak = 0
     state.wrong_streak = 0
+    state.hint_step = 0
+    state.task_misses = 0
     state.pending_answer = None
     state.pending_hint = None
+    state.pending_step = None
     state.pending_prompt = None
+    state.pending_text = None
     return Turn(state, [_explain_reply(material, 0)])
 
 
@@ -182,17 +205,80 @@ def _explain_reply(material: TopicMaterial, example_index: int) -> Reply:
     )
 
 
+def _task_buttons() -> tuple[ButtonSpec, ...]:
+    return (
+        ButtonSpec("Подсказка", "hint"),
+        ButtonSpec("Пропустить", "skip"),
+        ButtonSpec("Другая тема", "other"),
+    )
+
+
 def _practice(state: TrainState, material: TopicMaterial, rng: random.Random) -> Turn:
     task = generate_task(material.title, state.level, rng)
     state.step = "check"
     state.task_index += 1
+    state.hint_step = 0
+    state.task_misses = 0
     state.pending_answer = task.answer
     state.pending_hint = task.hint
+    state.pending_step = task.first_step
     state.pending_prompt = task.prompt
-    return Turn(state, [Reply(f"Задание. {task.prompt}")])
+    state.pending_text = None
+    return Turn(state, [Reply(f"Задание. {task.prompt}", buttons=_task_buttons())])
 
 
-def _grade(state: TrainState, answer: str) -> Turn:
+def _hint(state: TrainState) -> Turn:
+    if state.hint_step < 1:
+        state.hint_step = 1
+        text = state.pending_hint or "Посмотри способ из объяснения."
+    else:
+        state.hint_step = 2
+        text = state.pending_step or "Сделай первый шаг и пришли, что получилось."
+    return Turn(state, [Reply(text, buttons=_task_buttons())])
+
+
+def _other_topic(state: TrainState) -> Turn:
+    _clear_task(state)
+    buttons = tuple(ButtonSpec(item.title, "pick", item.title) for item in TOPICS)
+    return Turn(state, [Reply("Какую тему возьмём?", buttons=buttons)])
+
+
+def _clear_task(state: TrainState) -> None:
+    state.step = "done"
+    state.hint_step = 0
+    state.task_misses = 0
+    state.pending_answer = None
+    state.pending_hint = None
+    state.pending_step = None
+    state.pending_prompt = None
+
+
+def _looks_like_question(text: str) -> bool:
+    if parse_answer(text).values:
+        return False
+    if "?" in text or len(text.split()) >= 4:
+        return True
+    guess = classify_topic(text)
+    return guess.confident or guess.ask_geometry
+
+
+def _grade(state: TrainState, answer: str, rng: random.Random, force: bool = False) -> Turn:
+    if not is_attempt(answer):
+        return _hint(state)
+    if not force and _looks_like_question(answer):
+        state.pending_text = answer.strip()
+        return Turn(
+            state,
+            [
+                Reply(
+                    "Это ответ или новый вопрос?",
+                    buttons=(
+                        ButtonSpec("Это ответ", "as_answer"),
+                        ButtonSpec("Новый вопрос", "as_question"),
+                    ),
+                )
+            ],
+        )
     expected = state.pending_answer or ""
     correct = answers_match(expected, answer)
     hint = state.pending_hint or "Посмотри объяснение ещё раз."
@@ -200,13 +286,16 @@ def _grade(state: TrainState, answer: str) -> Turn:
     if correct:
         state.correct_streak += 1
         state.wrong_streak = 0
+        state.task_misses = 0
     else:
         state.wrong_streak += 1
         state.correct_streak = 0
+        state.task_misses += 1
     if state.correct_streak >= 2:
         state.level = "hard"
     if state.wrong_streak >= 2:
         state.level = "easy"
+    third = not correct and state.task_misses >= 3
     draft = AttemptDraft(
         topic_title=state.topic_title or "",
         prompt=state.pending_prompt or "",
@@ -216,15 +305,34 @@ def _grade(state: TrainState, answer: str) -> Turn:
         feedback=feedback,
         hint=hint,
     )
+    if third and topic_by_title(state.topic_title or "") is not None:
+        return _third_miss(state, rng, draft)
+    if not correct:
+        return Turn(state, [Reply(feedback, buttons=_task_buttons())], attempt=draft)
     state.step = "done"
     state.pending_answer = None
     state.pending_hint = None
+    state.pending_step = None
     state.pending_prompt = None
+    state.pending_text = None
     return Turn(
         state,
         [Reply(feedback, buttons=(ButtonSpec("Ещё задание", "again"),))],
         attempt=draft,
     )
+
+
+def _third_miss(state: TrainState, rng: random.Random, draft: AttemptDraft) -> Turn:
+    material = topic_by_title(state.topic_title or "")
+    assert material is not None
+    example = generate_task(material.title, state.level, rng)
+    for _ in range(6):
+        if example.prompt != draft.prompt:
+            break
+        example = generate_task(material.title, state.level, rng)
+    fresh = _practice(state, material, rng)
+    shown = f"Похожий пример. {example.prompt} Получается {example.answer}."
+    return Turn(state, [Reply(shown), *fresh.replies], attempt=draft)
 
 
 SUBMISSION_UNAVAILABLE = (
@@ -242,7 +350,7 @@ def present_turn(turn: Turn, status_line: str | None = None) -> dict:
     task = None
     feedback = None
     notice = None
-    if turn.attempt is not None:
+    if turn.attempt is not None and not lead.startswith("Задание."):
         feedback = lead or None
         task = turn.attempt.prompt or None
     elif reply is not None and reply.replaceable_lead:

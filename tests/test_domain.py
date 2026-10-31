@@ -84,7 +84,7 @@ def test_public_view_hides_the_reference():
     graded = reduce_turn(practiced.state, StudentText("нет"), numbers)
     view = present_turn(graded)
     assert view["correct"] is False
-    assert graded.state.pending_answer is None
+    assert graded.state.step == "check"
     assert graded.attempt.expected not in (view["feedback"] or "")
     assert "pending_answer" not in view
     assert "reference" not in view
