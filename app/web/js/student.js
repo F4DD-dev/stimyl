@@ -114,7 +114,7 @@ export function renderHome() {
         </label>
         <button class="btn btn-primary" type="button" data-act="send-question" ${disabled()}>${icon("send")}<span>Отправить</span></button>
       </div>
-      <p class="hint">Напиши вопрос или сфотографируй страницу. Готовый ответ к твоей задаче не пишу.</p>
+      <p class="hint">Напиши вопрос своими словами. Если есть фото, подпиши тему.</p>
       <p class="hint">Это тренировка: текст вопроса учителю не уходит.</p>
       <button class="text-btn" type="button" data-act="open-submission">Сдать работу учителя</button>
     </section>

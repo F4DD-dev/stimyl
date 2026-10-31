@@ -32,7 +32,7 @@ def topic_prompt(topic_title: str) -> str:
 def mistake_prompt(topic_title: str, hint: str) -> str:
     return (
         f"Тема «{topic_title}». Ученик ошибся в похожем задании. "
-        f"Объясни приём в одном предложении, без числового ответа. Опора: {hint}"
+        f"Объясни способ в одном предложении, без числового ответа. Опора: {hint}"
     )
 
 

@@ -41,7 +41,7 @@ def test_third_wrong_shows_a_similar_example_and_a_new_task():
     assert turn.attempt is not None
     assert turn.attempt.correct is False
     blob = " ".join(reply.text for reply in turn.replies)
-    assert "Похожий пример." in blob
+    assert "похожий пример" in blob.casefold()
     assert state.pending_prompt != first_prompt
     assert state.step == "check"
 

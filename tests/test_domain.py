@@ -3,12 +3,14 @@ from datetime import date, timedelta
 from app.domain.answers import answers_match
 from app.domain.curriculum import detect_topic
 from app.domain.drafts import build_check_draft
+from app.domain.messages_ru import LINES
 from app.domain.progress import TopicProgress, choose_next, streak
 from app.domain.report import StateFact, TopicColumn, build_report
 from app.domain.status import TopicStatus, decide_status
 from app.domain.training import (
     Action,
     PhotoOnly,
+    Start,
     StudentText,
     TrainState,
     present_state,
@@ -57,6 +59,27 @@ def test_square_context_separates_geometry_from_equations():
     assert labels == ["Да, геометрия", "Нет, уравнение"]
     geometry = reduce_turn(turn.state, Action("pick", "Геометрия"))
     assert geometry.state.topic_title == "Геометрия"
+
+
+def test_reply_sets_have_several_variants_and_keep_the_tone():
+    banned = ("я стимул", "приём", "эталон", "конечно!", "отличный вопрос", "как ии")
+    for key, options in LINES.items():
+        assert 3 <= len(options) <= 5, key
+        assert len(set(options)) == len(options)
+        blob = " ".join(options).casefold()
+        for word in banned:
+            assert word not in blob, key
+
+
+def test_greeting_has_variants_and_does_not_introduce_itself():
+    first = reduce_turn(TrainState(), Start())
+    second = reduce_turn(first.state, Start())
+    assert first.replies[0].text != second.replies[0].text
+    blob = first.replies[0].text.casefold()
+    assert "стимул" not in blob
+    assert "приём" not in blob
+    assert "эталон" not in blob
+    assert "готовый ответ" not in blob
 
 
 def test_question_is_not_solved():
@@ -108,7 +131,7 @@ def test_check_draft_comes_from_the_bank_and_is_not_stored():
 
 def test_submission_does_not_solve_a_page():
     turn = reduce_turn(TrainState(mode="submission"), PhotoOnly())
-    assert "не решаю" in turn.replies[0].text
+    assert "задание" in turn.replies[0].text.casefold()
     assert "21" not in turn.replies[0].text
 
 

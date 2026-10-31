@@ -19,11 +19,11 @@ from app.db.models import (
     User,
 )
 from app.domain.account_copy import PHOTO_OFF
+from app.domain.messages_ru import LINES, SUBMISSION_UNAVAILABLE
 from app.domain.progress import STATUS_LABEL, TopicProgress, choose_next, streak
 from app.domain.report import StateFact, TopicColumn, build_report
 from app.domain.status import Thresholds, TopicStatus, correct_ratio, decide_status
 from app.domain.training import (
-    SUBMISSION_UNAVAILABLE,
     Action,
     ButtonSpec,
     PhotoOnly,
@@ -186,6 +186,8 @@ async def _load_state(
         hint_step=row.hint_step,
         task_misses=row.task_misses,
         version=row.state_version,
+        line_cursor=row.line_cursor,
+        last_line=row.last_line,
         pending_answer=row.pending_answer,
         pending_hint=row.pending_hint,
         pending_step=row.pending_step,
@@ -229,6 +231,8 @@ def _save_state(row: LearningSession, state: TrainState, title_to_id: dict[str, 
     row.hint_step = state.hint_step
     row.task_misses = state.task_misses
     row.state_version = state.version
+    row.line_cursor = state.line_cursor
+    row.last_line = state.last_line
     row.pending_answer = state.pending_answer
     row.pending_hint = state.pending_hint
     row.pending_step = state.pending_step
@@ -264,7 +268,7 @@ async def _apply_explainer(turn: Turn, explainer: Explainer) -> None:
         return
     generated = await explainer.explain_mistake(turn.attempt.topic_title, turn.attempt.hint)
     if generated and turn.attempt.expected not in generated and len(turn.replies) == 1:
-        turn.replies[-1].lead = f"Пока не сходится. {generated.strip()[:500]}"
+        turn.replies[-1].lead = f"{LINES['wrong'][0]} {generated.strip()[:500]}"
         turn.attempt.feedback = turn.replies[-1].lead
 
 
@@ -623,7 +627,7 @@ async def student_turn(
     elif photo:
         event = PhotoOnly()
     else:
-        return {"ok": False, "code": "empty", "detail": "Напишите вопрос или выберите действие."}
+        return {"ok": False, "code": "empty", "detail": LINES["empty_practice"][0]}
     turn = reduce_turn(state, event)
     await _apply_explainer(turn, explainer)
     _save_state(row, turn.state, title_to_id)
@@ -667,5 +671,5 @@ async def student_turn(
             {"action": "review", "label": "Разобрать следующий шаг", "topic": review_title},
         ]
     view["photo_received"] = photo
-    view["photo_note"] = "Фото получили. Страницу не решаем." if photo else None
+    view["photo_note"] = LINES["photo_note"][0] if photo else None
     return view

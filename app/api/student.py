@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import db_session, user_from_cookie
 from app.bot.service import current_lesson, student_history, student_progress, student_turn
-from app.domain.training import SUBMISSION_UNAVAILABLE
+from app.domain.messages_ru import SUBMISSION_UNAVAILABLE
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

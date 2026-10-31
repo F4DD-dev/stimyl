@@ -104,7 +104,7 @@ async def test_submission_does_not_store_the_question(seeded):
     )
     assert response.status_code == 409
     assert "СЕКРЕТ-СДАЧА" not in response.text
-    assert "не передаётся" in response.text
+    assert "тренир" in response.text.casefold()
     factory = api.app.state.session_factory
     async with factory() as session:
         messages = await session.scalar(select(func.count()).select_from(Message))
