@@ -24,8 +24,8 @@
 
 1. Ветка `feature/accounts`.
 2. Новая база и новый бот. Пользователь базы не суперпользователь.
-3. Сборка `pip install .`, запуск `sh docker/entrypoint.sh`. Скрипт накатывает миграции, затем поднимает воркер и API.
-4. Проверка: `GET /health` и `GET /ready`. `/ready` ждёт heartbeat воркера.
+3. Сборка `pip install .`, запуск `sh docker/entrypoint.sh`. Порт открывается сразу, миграции идут рядом. Подробности в `docs/DEPLOY_CHECK.md`.
+4. Проверка: `GET /health` сразу 200 и поле `version`. `GET /ready` ждёт схему и heartbeat воркера.
 5. В MAX мини-приложение staging указывает на `https://<staging-домен>/cabinet`.
 
 ## Как откатить

@@ -1,6 +1,7 @@
+import asyncio
 import logging
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -18,6 +19,14 @@ from app.api.session import router as session_router
 from app.api.student import router as student_router
 from app.api.teacher import router as teacher_router
 from app.api.web_login import router as web_login_router
+from app.boot import (
+    config_error,
+    git_sha,
+    listen_host,
+    listen_port,
+    missing_required,
+    probe_max_tls,
+)
 from app.bot.routes import router as webhook_router
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, request_id
@@ -36,31 +45,73 @@ class AssetFiles(StaticFiles):
         return response
 
 
+async def _bring_up(app: FastAPI, settings: Settings) -> None:
+    """База и TLS после того, как порт уже можно открыть. Ошибка сюда процесс не роняет."""
+    notes = ["skipped"]
+    if settings.env in {"staging", "prod"}:
+        notes = await probe_max_tls()
+        for note in notes:
+            if note.endswith("ok"):
+                logger.info("max tls %s", note)
+            else:
+                logger.warning("max tls %s", note)
+    app.state.max_tls = notes
+    engine = make_engine(settings.database_url)
+    applied = "-"
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+        app.state.engine = engine
+        app.state.session_factory = make_session_factory(engine)
+        async with app.state.session_factory() as session:
+            try:
+                rows = await session.execute(text("SELECT version_num FROM alembic_version"))
+                applied = ",".join(sorted(rows.scalars().all())) or "-"
+            except Exception:
+                applied = "-"
+        logger.info("database connected")
+    except asyncio.CancelledError:
+        if app.state.engine is None:
+            await engine.dispose()
+        raise
+    except Exception as exc:
+        app.state.boot_error = type(exc).__name__
+        logger.error("database unavailable: %s", type(exc).__name__)
+        await engine.dispose()
+    logger.info(
+        "boot version=%s env=%s dev=%s listen=%s:%s migrations=%s db=%s max_tls=%s missing=%s max_token=%s",
+        git_sha(),
+        settings.env,
+        str(settings.dev).lower(),
+        listen_host(),
+        listen_port(),
+        applied,
+        "up" if app.state.session_factory is not None else "down",
+        ";".join(notes),
+        ",".join(missing_required(settings)) or "-",
+        "set" if settings.max_token else "missing",
+    )
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     configure_logging()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        if settings.dev and settings.env == "prod":
-            raise RuntimeError("DEV=true запрещён при ENV=prod")
-        if not settings.database_url:
-            raise RuntimeError("database is unavailable")
+        reason = config_error(settings)
+        if reason:
+            logger.error("config: %s", reason)
+            raise RuntimeError(reason)
         lowered = settings.database_url.lower()
         if "sslmode=require" in lowered or "ssl=require" in lowered:
             logger.warning("database ssl mode does not verify the server certificate")
         if settings.session_secret == "change-me":
             logger.warning("SESSION_SECRET is the default value")
-        engine = make_engine(settings.database_url)
-        try:
-            async with engine.connect() as connection:
-                await connection.execute(text("SELECT 1"))
-        except Exception as exc:
-            await engine.dispose()
-            logger.error("database unavailable at startup: %s", type(exc).__name__)
-            raise RuntimeError("database is unavailable") from None
-        app.state.engine = engine
-        app.state.session_factory = make_session_factory(engine)
+        app.state.engine = None
+        app.state.session_factory = None
+        app.state.max_tls = []
+        app.state.boot_error = ""
         created_sender = False
         if getattr(app.state, "sender", None) is None:
             if settings.max_token:
@@ -70,11 +121,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 app.state.sender = NullSender()
         if getattr(app.state, "explainer", None) is None:
             app.state.explainer = build_explainer(settings)
-        yield
-        if created_sender:
-            await app.state.sender.aclose()
-        if engine is not None:
-            await engine.dispose()
+        task = asyncio.create_task(_bring_up(app, settings))
+        try:
+            yield
+        finally:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+            if created_sender:
+                await app.state.sender.aclose()
+            engine = getattr(app.state, "engine", None)
+            if engine is not None:
+                await engine.dispose()
 
     app = FastAPI(title="Стимул", lifespan=lifespan)
     app.state.settings = settings

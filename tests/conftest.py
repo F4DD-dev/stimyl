@@ -1,3 +1,4 @@
+import asyncio
 import os
 import time
 from dataclasses import dataclass
@@ -138,6 +139,11 @@ async def api(settings: Settings, database_url: str):
     application.state.sender = memory
     application.state.explainer = NullExplainer()
     async with application.router.lifespan_context(application):
+        deadline = time.monotonic() + 10
+        while application.state.session_factory is None:
+            if time.monotonic() > deadline:
+                raise RuntimeError(application.state.boot_error or "database did not become ready")
+            await asyncio.sleep(0.05)
         factory = application.state.session_factory
         async with factory() as session:
             session.add(RuntimeFlag(key=HEARTBEAT_KEY, value=str(int(time.time()))))

@@ -25,6 +25,7 @@ async def test_health_and_ready(api):
     missing = await api.client.get("/healthz")
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
+    assert health.json()["version"]
     assert ready.status_code == 200
     assert ready.json()["status"] == "ok"
     assert missing.status_code == 404
@@ -72,16 +73,20 @@ async def test_staging_dev_exposes_whoami_page(database_url):
 async def test_service_does_not_start_without_a_database():
     settings = Settings(database_url="", session_secret="session-secret")
     application = create_app(settings)
-    with pytest.raises(RuntimeError, match="database is unavailable"):
+    with pytest.raises(RuntimeError, match="DATABASE_URL"):
         async with application.router.lifespan_context(application):
             pass
 
 
 async def test_ready_hides_database_errors(api):
     api.app.state.session_factory = None
+    health = await api.client.get("/health")
     response = await api.client.get("/ready")
     session = await api.client.get("/api/session")
+    assert health.status_code == 200
+    assert health.json()["version"]
     assert response.status_code == 503
+    assert response.json()["reason"] == "database"
     assert "Traceback" not in response.text
     assert session.status_code == 503
     assert session.json()["detail"] == "База сейчас недоступна. Попробуйте ещё раз."

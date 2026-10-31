@@ -81,11 +81,16 @@ async def run_available(
 
 
 async def heartbeat_loop(factory: async_sessionmaker[AsyncSession], every: float = 5) -> None:
-    """Отметка живого воркера не ждёт разбор сообщения."""
+    """Отметка живого воркера не ждёт разбор сообщения. Обрыв базы не завершает процесс."""
     while True:
-        async with factory() as session:
-            await beat(session)
-            await session.commit()
+        try:
+            async with factory() as session:
+                await beat(session)
+                await session.commit()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("worker heartbeat failed: %s", type(exc).__name__)
         await asyncio.sleep(every)
 
 
@@ -103,7 +108,14 @@ async def serve() -> None:
     heart = asyncio.create_task(heartbeat_loop(factory))
     try:
         while True:
-            await run_available(factory, sender, explainer, settings)
+            try:
+                await run_available(factory, sender, explainer, settings)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error("worker loop: %s", type(exc).__name__)
+                await asyncio.sleep(2)
+                continue
             await asyncio.sleep(0.2)
     finally:
         heart.cancel()

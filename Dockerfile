@@ -16,7 +16,11 @@ RUN pip install --no-cache-dir . \
 
 USER appuser
 
+# Один сертификат для httpx. Бандл Минцифры в каталог rehash не кладём:
+# openssl пропускает файл, в котором больше одного сертификата.
 ENV MAX_ROOT_CA_PATH=/app/certs/russian_trusted_root_ca.pem
+ENV HOST=0.0.0.0
+ENV PORT=8000
 
 EXPOSE 8000
 
