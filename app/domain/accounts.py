@@ -2,6 +2,7 @@
 
 import hashlib
 import hmac
+import re
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -34,7 +35,7 @@ from app.db.models import (
 )
 
 BOT_PROVIDER = "max"
-# user.id из initData сюда не пишется, пока документы не подтвердят равенство с user_id бота.
+# Строка max_webapp появляется из билета в start_param или при ALLOW_ID_MATCH.
 WEBAPP_PROVIDER = "max_webapp"
 POLICY_VERSION = "2026-10-30"
 CODE_TTL = timedelta(minutes=5)
@@ -303,15 +304,31 @@ def _short_token(text: str) -> str | None:
 
 
 async def issue_web_code(session: AsyncSession, user: User, settings: Settings) -> IssuedCode:
+    return await _issue_login(session, user, settings, allow_student=False)
+
+
+async def issue_app_ticket(session: AsyncSession, user: User, settings: Settings) -> IssuedCode:
+    """Билет мини-приложения. Ученику тоже, лимит тот же, что у кода кабинета."""
+    return await _issue_login(session, user, settings, allow_student=True)
+
+
+async def _issue_login(
+    session: AsyncSession,
+    user: User,
+    settings: Settings,
+    *,
+    allow_student: bool,
+) -> IssuedCode:
     from app.domain.account_copy import PENDING_BROWSER, WEB_DENIED, WEB_WAIT
 
     if user.deleted_at is not None or user.status == "blocked":
         return IssuedCode(False, detail=WEB_DENIED)
-    if user.role == "student":
+    if user.role == "student" and not allow_student:
         return IssuedCode(False, detail=WEB_DENIED)
     if user.role == "teacher" and user.status != "active":
         return IssuedCode(False, detail=PENDING_BROWSER)
-    if user.role not in {"teacher", "admin"} or user.status != "active":
+    allowed = {"teacher", "admin", "student"} if allow_student else {"teacher", "admin"}
+    if user.role not in allowed or user.status != "active":
         return IssuedCode(False, detail=WEB_DENIED)
     since = _now() - timedelta(hours=1)
     issued = await session.scalar(
@@ -338,6 +355,62 @@ async def issue_web_code(session: AsyncSession, user: User, settings: Settings) 
     )
     await write_audit(session, user.id, "web_code", user.id, None, None)
     return IssuedCode(True, code=code, ticket=ticket, public_id=public_id)
+
+
+async def ensure_webapp_identity(session: AsyncSession, user: User, external_id: str) -> bool:
+    """Привязать user.id мини-приложения. False, если этот id уже у другого человека."""
+    external_id = external_id[:64]
+    existing = await find_identity(session, WEBAPP_PROVIDER, external_id)
+    if existing is not None and existing.revoked_at is None and existing.user_id != user.id:
+        return False
+    if existing is not None:
+        existing.user_id = user.id
+        existing.revoked_at = None
+        return True
+    try:
+        async with session.begin_nested():
+            session.add(
+                AuthIdentity(
+                    user_id=user.id,
+                    provider=WEBAPP_PROVIDER,
+                    external_id=external_id,
+                    created_at=_now(),
+                )
+            )
+            await session.flush()
+    except IntegrityError:
+        winner = await find_identity(session, WEBAPP_PROVIDER, external_id)
+        if winner is None or winner.user_id != user.id or winner.revoked_at is not None:
+            return False
+    return True
+
+
+async def claim_webapp_ticket(
+    session: AsyncSession,
+    ticket: str,
+    web_user_id: str,
+    settings: Settings,
+) -> User | None:
+    """Погасить билет и записать max_webapp в той же транзакции."""
+    cleaned = ticket.strip()
+    if not re.fullmatch(r"[\w-]{1,512}", cleaned):
+        return None
+    digest = _digest(settings.session_secret, "ticket", cleaned)
+    row = await session.scalar(
+        select(WebLoginCode).where(WebLoginCode.token_hash == digest).with_for_update()
+    )
+    now = _now()
+    if row is None or row.used_at is not None or _aware(row.expires_at) < now:
+        return None
+    user = await session.get(User, row.user_id)
+    if user is None or user.deleted_at is not None or user.status != "active":
+        row.used_at = now
+        return None
+    bound = await ensure_webapp_identity(session, user, web_user_id)
+    row.used_at = now
+    action = "link_webapp" if bound else "link_webapp_conflict"
+    await write_audit(session, user.id, action, user.id, None, None)
+    return user if bound else None
 
 
 async def _free_code(session: AsyncSession, settings: Settings) -> str:

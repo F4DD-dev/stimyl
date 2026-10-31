@@ -67,7 +67,12 @@ class MemorySender:
 
 
 def _stored_button(button: OutboundButton) -> dict[str, str]:
-    return {"text": button.text, "payload": button.payload, "url": button.url}
+    return {
+        "text": button.text,
+        "payload": button.payload,
+        "url": button.url,
+        "web_app": button.web_app,
+    }
 
 
 @dataclass

@@ -1,4 +1,4 @@
-import { approveJoin, getHistory, getLesson, getProgress, getSession, openSession, openTicket, setCsrf, webLogin } from "./api.js";
+import { approveJoin, getHistory, getLesson, getProgress, getSession, openSession, openTicket, setCsrf } from "./api.js";
 import { previewRole, studentPreview, teacherPreview } from "./preview.js";
 import {
   checkSubmission,
@@ -160,6 +160,7 @@ async function boot() {
       return;
     }
     const initData = readInitData();
+    store.fromMax = Boolean(initData);
     if (initData) {
       const opened = await openSession(initData);
       setCsrf(opened.csrf);
@@ -172,7 +173,7 @@ async function boot() {
     store.role = me.role;
     store.displayName = me.display_name || "";
     store.preview = false;
-    if (entry !== "auto" && entry !== me.role) {
+    if (!store.fromMax && entry !== "auto" && entry !== me.role) {
       store.booting = false;
       store.gate = "mismatch";
       refresh();
@@ -193,13 +194,17 @@ async function boot() {
     if (id !== bootId) return;
     store.booting = false;
     store.loading = false;
-    store.gate = error.status === 401 || error.status === 403 ? "auth" : "network";
-    if (error.status === 401) {
-      store.gateMessage = "Откройте мини-приложение из чата MAX. Без входа данные учеников не показываются.";
+    store.gateMessage = error.message || "";
+    if (error.status === 409 || (store.fromMax && error.status === 401)) {
+      store.gate = "unlinked";
     } else if (error.status === 403) {
-      store.gateMessage = "Недостаточно прав для этого раздела.";
+      store.gate = "forbidden";
+    } else if (error.status === 401 && isTeacherEntry()) {
+      store.gate = "browser";
+    } else if (error.status === 401) {
+      store.gate = "unlinked";
     } else {
-      store.gateMessage = error.message;
+      store.gate = "network";
     }
     refresh();
   }
@@ -258,6 +263,18 @@ function frame(inner) {
   </div>${tabs()}`;
 }
 
+function isTeacherEntry() {
+  const entry = document.body.dataset.entry || "auto";
+  return entry === "teacher" || location.pathname.endsWith("/cabinet");
+}
+
+function returnToChat() {
+  const name = (document.body.dataset.bot || "").trim();
+  const app = window.WebApp;
+  if (!name || !app || typeof app.openMaxLink !== "function") return;
+  app.openMaxLink(`https://max.ru/${name}`);
+}
+
 function renderGate() {
   if (store.gate === "ticket") {
     return `<div class="gate">${brand()}
@@ -270,29 +287,36 @@ function renderGate() {
     const teacher = store.role === "teacher";
     return `<div class="gate">${brand()}
       <h1>${teacher ? "Это экран ученика" : "Это кабинет учителя"}</h1>
-      <p>${teacher ? "Вы вошли как учитель." : "Вы вошли как ученик. Личный прогресс — на своём экране."}</p>
+      <p>${teacher ? "Вы вошли как учитель." : "Ты вошёл как ученик. Свой прогресс — на своём экране."}</p>
       <a class="btn btn-primary" href="${teacher ? "/cabinet" : "/student"}">${teacher ? "Открыть кабинет" : "Открыть свой прогресс"}</a>
+    </div>`;
+  }
+  if (store.gate === "unlinked") {
+    return `<div class="gate">${brand()}
+      <h1>Стимул</h1>
+      <p>Открой приложение кнопкой из чата с ботом.</p>
+      <button class="btn btn-primary" type="button" data-act="return-chat">Вернуться в чат</button>
+    </div>`;
+  }
+  if (store.gate === "forbidden") {
+    return `<div class="gate">${brand()}
+      <h1>Сюда не попасть</h1>
+      <p>${esc(store.gateMessage || "Этот раздел сейчас закрыт.")}</p>
+      <button class="btn btn-primary" type="button" data-act="return-chat">Вернуться в чат</button>
+    </div>`;
+  }
+  if (store.gate === "browser") {
+    return `<div class="gate">${brand()}
+      <h1>Кабинет</h1>
+      <p>Открой кабинет кнопкой из чата с ботом.</p>
+      <button class="btn btn-primary" type="button" data-act="return-chat">Вернуться в чат</button>
     </div>`;
   }
   return `<div class="gate">${brand()}
     <h1>Стимул</h1>
     <p>${esc(store.gateMessage)}</p>
-    ${cabinetLogin()}
     <button class="btn btn-primary" type="button" data-act="retry-auth">Повторить</button>
   </div>`;
-}
-
-function cabinetLogin() {
-  const entry = document.body.dataset.entry || "auto";
-  const cabinet = entry === "teacher" || location.pathname.endsWith("/cabinet");
-  if (!cabinet) return "";
-  return `<form id="web-login-form" class="stack tight">
-    <label class="field-label" for="cabinet-request">Заявка</label>
-    <input id="cabinet-request" class="field" autocomplete="off" maxlength="16" aria-label="Номер заявки">
-    <label class="field-label" for="cabinet-code">Код из бота</label>
-    <input id="cabinet-code" class="field" inputmode="numeric" autocomplete="one-time-code" maxlength="8" aria-label="Код из бота">
-    <button class="btn btn-primary" type="submit">Войти</button>
-  </form>`;
 }
 
 function pageInner() {
@@ -388,6 +412,10 @@ async function onAction(act, button) {
     await boot();
     return;
   }
+  if (act === "return-chat") {
+    returnToChat();
+    return;
+  }
   if (act === "retry") {
     if (store.role === "teacher") await reloadTeacher();
     else {
@@ -436,17 +464,6 @@ function bind() {
   document.addEventListener("submit", (event) => {
     event.preventDefault();
     if (event.target.id === "answer-form") submitAnswer();
-    if (event.target.id === "web-login-form") {
-      const code = document.querySelector("#cabinet-code")?.value || "";
-      const requestId = document.querySelector("#cabinet-request")?.value || "";
-      webLogin(requestId.trim(), code.trim())
-        .then(() => boot())
-        .catch((error) => {
-          store.gate = "auth";
-          store.gateMessage = error.message;
-          refresh();
-        });
-    }
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && event.target.id === "question") {

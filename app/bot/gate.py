@@ -32,6 +32,7 @@ from app.domain.accounts import (
     continue_application,
     draft_application,
     find_identity,
+    issue_app_ticket,
     issue_web_code,
     join_by_code,
     join_by_key,
@@ -54,6 +55,9 @@ class GateReply:
     buttons: tuple[tuple[str, str], ...] = ()
     link_text: str = ""
     link_url: str = ""
+    app_text: str = ""
+    app_payload: str = ""
+    app_name: str = ""
 
 
 @dataclass
@@ -65,6 +69,22 @@ class GateOutcome:
 
 def _fold(text: str) -> str:
     return text.strip().casefold().replace("ё", "е")
+
+
+def _named_action(payload: str | None) -> str:
+    raw = (payload or "").strip()
+    if raw.startswith("v") and ":" in raw:
+        head, rest = raw.split(":", 1)
+        if head[1:].isdigit():
+            return rest.split(":", 1)[0]
+    return raw
+
+
+def bot_name(settings: Settings) -> str:
+    raw = (settings.bot_username or "").strip().lstrip("@")
+    if raw and all(ch.isalnum() or ch in "._-" for ch in raw):
+        return raw
+    return ""
 
 
 def _consent_reply(settings: Settings) -> GateReply:
@@ -106,8 +126,11 @@ async def open_gate(
 
     text = incoming.text or ""
     folded = _fold(text)
-    if incoming.payload == WEB_LOGIN or folded == "войти в кабинет":
+    action = _named_action(incoming.payload)
+    if action in {WEB_LOGIN, "open_cabinet"} or folded in {"войти в кабинет", "открыть кабинет"}:
         return await _send_code(session, user, settings)
+    if action == "progress" or folded == "мой прогресс":
+        return await _send_app(session, user, settings)
 
     if folded == "я учитель":
         reply = await start_application(session, user)
@@ -189,13 +212,34 @@ def _join_reply(joined, *, unknown: bool) -> str | None:
 
 
 async def _send_code(session: AsyncSession, user: User, settings: Settings) -> GateOutcome:
+    username = bot_name(settings)
     base = (settings.public_base_url or "").rstrip("/")
-    if not base.startswith("http"):
+    link = base.startswith("http")
+    if not link and not username:
         return GateOutcome(user, [GateReply("Ссылку на кабинет сейчас не собрать.")], True)
     issued: IssuedCode = await issue_web_code(session, user, settings)
     if not issued.ok:
         return GateOutcome(user, [GateReply(issued.detail)], True)
     reply = GateReply(cabinet_text())
-    reply.link_text = "Открыть кабинет"
-    reply.link_url = f"{base}/cabinet?ticket={issued.ticket}"
+    if username:
+        reply.app_text = "Открыть кабинет"
+        reply.app_payload = issued.ticket
+        reply.app_name = username
+    if link:
+        reply.link_text = "Открыть в браузере" if username else "Открыть кабинет"
+        reply.link_url = f"{base}/cabinet?ticket={issued.ticket}"
+    return GateOutcome(user, [reply], True)
+
+
+async def _send_app(session: AsyncSession, user: User, settings: Settings) -> GateOutcome:
+    username = bot_name(settings)
+    if not username:
+        return GateOutcome(user, [GateReply("Кнопку в приложение сейчас не собрать.")], True)
+    issued: IssuedCode = await issue_app_ticket(session, user, settings)
+    if not issued.ok:
+        return GateOutcome(user, [GateReply(issued.detail)], True)
+    reply = GateReply("Кнопка откроет твой прогресс. Она действует 5 минут и только один раз.")
+    reply.app_text = "Мой прогресс"
+    reply.app_payload = issued.ticket
+    reply.app_name = username
     return GateOutcome(user, [reply], True)

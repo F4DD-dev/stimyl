@@ -176,6 +176,11 @@ def _keyboard(buttons: list[OutboundButton]) -> dict[str, object]:
 
 
 def _button(button: OutboundButton) -> dict[str, str]:
+    if button.web_app:
+        rendered = {"type": "open_app", "text": button.text, "web_app": button.web_app}
+        if button.payload:
+            rendered["payload"] = button.payload
+        return rendered
     if button.url:
         return {"type": "link", "text": button.text, "url": button.url}
     return {"type": "callback", "text": button.text, "payload": button.payload}

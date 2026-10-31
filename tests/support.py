@@ -7,7 +7,12 @@ from urllib.parse import urlencode
 from tests.conftest import Api
 
 
-def sign_init_data(user_id: int, token: str, first_name: str = "Марина") -> str:
+def sign_init_data(
+    user_id: int,
+    token: str,
+    first_name: str = "Марина",
+    start_param: str = "",
+) -> str:
     fields = {
         "auth_date": str(int(time.time())),
         "query_id": "test-query",
@@ -17,6 +22,8 @@ def sign_init_data(user_id: int, token: str, first_name: str = "Марина") -
             ensure_ascii=False,
         ),
     }
+    if start_param:
+        fields["start_param"] = start_param
     check = "\n".join(f"{key}={fields[key]}" for key in sorted(fields))
     secret = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
     fields["hash"] = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()

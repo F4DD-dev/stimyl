@@ -1,14 +1,25 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import client_ip, db_session, user_from_cookie
-from app.domain.account_copy import LINK_REQUIRED
-from app.domain.accounts import WEBAPP_PROVIDER, open_browser_session, user_by_provider, write_audit
+from app.domain.account_copy import BLOCKED, OPEN_FROM_CHAT, PENDING_BROWSER
+from app.domain.accounts import (
+    BOT_PROVIDER,
+    WEBAPP_PROVIDER,
+    claim_webapp_ticket,
+    ensure_webapp_identity,
+    open_browser_session,
+    user_by_provider,
+    write_audit,
+)
 from app.security.cookies import COOKIE_NAME, cookie_params
-from app.security.init_data import validate_init_data
+from app.security.init_data import read_init_data
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class SessionBody(BaseModel):
@@ -25,13 +36,30 @@ async def open_session(
     settings = request.app.state.settings
     if not settings.max_token:
         raise HTTPException(status_code=503, detail="Бот не настроен")
-    external_id = validate_init_data(body.init_data, settings.max_token)
-    if external_id is None:
+    fields = read_init_data(body.init_data, settings.max_token)
+    if fields is None:
+        logger.info("miniapp session rejected reason=unsigned")
         raise HTTPException(status_code=401, detail="Не удалось проверить вход")
-    # Поле user.id из initData не ищем среди user_id бота. См. docs/ACCOUNTS.md.
+    external_id = fields["user_id"]
+    start_param = fields.get("start_param") or ""
     user = await user_by_provider(session, WEBAPP_PROVIDER, external_id)
-    if user is None or user.status != "active":
-        raise HTTPException(status_code=403, detail=LINK_REQUIRED)
+    if user is None and settings.allow_id_match:
+        matched = await user_by_provider(session, BOT_PROVIDER, external_id)
+        if matched is not None and matched.status == "active" and matched.deleted_at is None:
+            if await ensure_webapp_identity(session, matched, external_id):
+                user = matched
+    if user is None and start_param:
+        user = await claim_webapp_ticket(session, start_param, external_id, settings)
+    if user is None:
+        logger.info("miniapp session rejected reason=unlinked")
+        await session.commit()
+        raise HTTPException(status_code=409, detail=OPEN_FROM_CHAT)
+    if user.status == "blocked":
+        logger.info("miniapp session rejected reason=blocked")
+        raise HTTPException(status_code=403, detail=BLOCKED)
+    if user.status != "active":
+        logger.info("miniapp session rejected reason=pending")
+        raise HTTPException(status_code=403, detail=PENDING_BROWSER)
     raw, csrf = await open_browser_session(
         session,
         user,

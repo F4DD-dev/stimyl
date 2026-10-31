@@ -23,7 +23,7 @@ from app.domain.accounts import (
     delete_user_data,
     set_blocked,
 )
-from tests.support import auth_as, callback, message, post_update, sign_init_data
+from tests.support import auth_as, button_payload, callback, message, post_update, sign_init_data
 
 
 def _started(user_id: int, name: str, payload: str | None = None) -> dict:
@@ -120,7 +120,8 @@ async def test_init_data_user_id_is_not_the_bot_user(seeded):
         "/api/session",
         json={"init_data": sign_init_data(900002, api.settings.max_token or "", "Алексей")},
     )
-    assert response.status_code == 403
+    assert response.status_code == 409
+    assert "кнопкой из чата" in response.json()["detail"]
     factory = api.app.state.session_factory
     async with factory() as session:
         linked = await session.scalar(
@@ -131,6 +132,124 @@ async def test_init_data_user_id_is_not_the_bot_user(seeded):
     assert int(linked or 0) == 0
 
 
+def _app_button(api) -> dict:
+    buttons = api.memory.sent[-1]["buttons"]
+    for button in buttons:
+        if button.get("web_app"):
+            return button
+    raise AssertionError(buttons)
+
+
+async def test_progress_button_binds_the_miniapp_without_a_code(seeded):
+    api = seeded
+    api.app.state.settings.bot_username = "stimyl_bot"
+    await post_update(api, message(900002, "Алексей", "/start", "progress-start"))
+    await post_update(
+        api,
+        callback(900002, "Алексей", "progress-1", button_payload(api, "Мой прогресс")),
+    )
+    text = api.memory.sent[-1]["text"]
+    _assert_no_bare_code(text)
+    button = _app_button(api)
+    assert button["web_app"] == "stimyl_bot"
+    assert button["text"] == "Мой прогресс"
+    assert re.fullmatch(r"[\w-]{1,512}", button["payload"])
+    assert "ticket=" not in text
+    assert button["payload"] not in text
+    assert all(not item.get("url") for item in api.memory.sent[-1]["buttons"])
+    token = api.settings.max_token or ""
+    opened = await api.client.post(
+        "/api/session",
+        json={"init_data": sign_init_data(424242, token, "Алексей", button["payload"])},
+    )
+    assert opened.status_code == 200, opened.text
+    assert opened.json()["role"] == "student"
+    again = await api.client.post(
+        "/api/session",
+        json={"init_data": sign_init_data(424242, token, "Алексей")},
+    )
+    assert again.status_code == 200, again.text
+    reused = await api.client.post(
+        "/api/session",
+        json={"init_data": sign_init_data(525252, token, "Чужой", button["payload"])},
+    )
+    assert reused.status_code == 409
+    factory = api.app.state.session_factory
+    async with factory() as session:
+        rows = list(
+            await session.scalars(
+                select(AuthIdentity).where(AuthIdentity.provider == WEBAPP_PROVIDER)
+            )
+        )
+    assert [row.external_id for row in rows] == ["424242"]
+    page = await api.client.get("/student")
+    assert 'data-bot="stimyl_bot"' in page.text
+    script = await api.client.get("/assets/js/app.js")
+    assert "Недостаточно прав" not in script.text
+    assert "Открой приложение кнопкой из чата с ботом" in script.text
+    assert "Сюда не попасть" in script.text
+    assert "openMaxLink" in script.text
+    assert "cabinet-code" not in script.text
+
+
+async def test_allow_id_match_binds_without_a_ticket_and_block_is_forbidden(seeded):
+    api = seeded
+    token = api.settings.max_token or ""
+    api.app.state.settings.allow_id_match = False
+    denied = await api.client.post(
+        "/api/session",
+        json={"init_data": sign_init_data(900002, token, "Алексей")},
+    )
+    assert denied.status_code == 409
+    api.app.state.settings.allow_id_match = True
+    opened = await api.client.post(
+        "/api/session",
+        json={"init_data": sign_init_data(900002, token, "Алексей")},
+    )
+    assert opened.status_code == 200, opened.text
+    assert opened.json()["role"] == "student"
+    factory = api.app.state.session_factory
+    async with factory() as session:
+        user = await session.scalar(
+            select(User)
+            .join(AuthIdentity, AuthIdentity.user_id == User.id)
+            .where(
+                AuthIdentity.provider == WEBAPP_PROVIDER,
+                AuthIdentity.external_id == "900002",
+            )
+        )
+        assert user is not None
+        await set_blocked(session, user.id, True, None)
+        await session.commit()
+    blocked = await api.client.post(
+        "/api/session",
+        json={"init_data": sign_init_data(900002, token, "Алексей")},
+    )
+    assert blocked.status_code == 403
+    assert "закрыт" in blocked.json()["detail"].casefold()
+    assert "кнопкой из чата" not in blocked.json()["detail"]
+
+
+async def test_teacher_cabinet_button_can_be_open_app(seeded):
+    api = seeded
+    _cabinet_base(api)
+    api.app.state.settings.bot_username = "stimyl_bot"
+    await post_update(api, message(900001, "Марина", "/start", "cabinet-start"))
+    factory = api.app.state.session_factory
+    async with factory() as session:
+        before = await session.scalar(select(func.count()).select_from(WebLoginCode))
+    assert int(before or 0) == 0
+    await post_update(
+        api,
+        callback(900001, "Марина", "cabinet-open", button_payload(api, "Открыть кабинет")),
+    )
+    _assert_no_bare_code(api.memory.sent[-1]["text"])
+    app_button = _app_button(api)
+    link = _ticket_from_buttons(api)
+    assert app_button["payload"] == link
+    assert app_button["web_app"] == "stimyl_bot"
+
+
 def _cabinet_base(api) -> None:
     api.app.state.settings.public_base_url = "https://staging.example"
 
@@ -139,7 +258,7 @@ def _ticket_from_buttons(api) -> str:
     buttons = api.memory.sent[-1]["buttons"]
     for button in buttons:
         found = re.search(r"ticket=([A-Za-z0-9_\-]+)", button.get("url") or "")
-        if found and button.get("text") == "Открыть кабинет":
+        if found:
             return found.group(1)
     raise AssertionError(buttons)
 

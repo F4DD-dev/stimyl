@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     teacher_max_user_id: str | None = None
     admin_max_ids: str = ""
     bot_username: str | None = None
+    allow_id_match: bool = False
     public_base_url: str | None = None
     seed_demo: bool = False
     cors_origins: str = ""

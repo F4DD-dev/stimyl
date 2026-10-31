@@ -17,8 +17,9 @@ export class ApiError extends Error {
 
 function messageFor(status, detail) {
   if (detail && detail !== "error") return detail;
-  if (status === 401) return "Откройте мини-приложение из чата MAX.";
-  if (status === 403) return "Недостаточно прав для этого раздела.";
+  if (status === 401) return "Открой приложение кнопкой из чата с ботом.";
+  if (status === 403) return "Этот раздел сейчас закрыт.";
+  if (status === 409) return "Открой приложение кнопкой из чата с ботом.";
   if (status === 422) return "Проверьте поля и отправьте ещё раз.";
   if (status >= 500) return "Сервер не ответил. Попробуйте ещё раз.";
   return "Не получилось выполнить запрос.";

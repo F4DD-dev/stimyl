@@ -123,6 +123,8 @@ async def process_update(
                 reply.buttons = reply.buttons + (
                     ButtonSpec("Разобрать с ботом", "review", review_title),
                 )
+    if incoming.kind == "start" and turn.replies:
+        _offer_app(turn.replies[0], user.role)
     for reply in turn.replies:
         _add_message(session, row, "bot", reply.text, visibility)
     await _deliver(sender, incoming, turn.replies, title_to_id, turn.state.version)
@@ -404,10 +406,22 @@ async def _deliver(
         )
 
 
+def _offer_app(reply: Reply, role: str) -> None:
+    if role in {"teacher", "admin"}:
+        spec = ButtonSpec("Открыть кабинет", "open_cabinet")
+    else:
+        spec = ButtonSpec("Мой прогресс", "progress")
+    reply.buttons = reply.buttons + (spec,)
+
+
 def _gate_buttons(replies: list[GateReply]) -> list[OutboundButton]:
     buttons: list[OutboundButton] = []
     for reply in replies:
         buttons.extend(OutboundButton(text, payload) for text, payload in reply.buttons)
+        if reply.app_payload and reply.app_name:
+            buttons.append(
+                OutboundButton(reply.app_text or "Открыть", reply.app_payload, web_app=reply.app_name)
+            )
         if reply.link_url:
             buttons.append(OutboundButton(reply.link_text or "Открыть", "", reply.link_url))
     return buttons
