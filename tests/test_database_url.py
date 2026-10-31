@@ -18,8 +18,8 @@ def test_postgres_ssl_require_does_not_stay_in_the_url() -> None:
     assert args["timeout"] == 10
     context = args["ssl"]
     assert isinstance(context, ssl.SSLContext)
-    assert context.verify_mode == ssl.CERT_REQUIRED
-    assert context.check_hostname is True
+    assert context.verify_mode == ssl.CERT_NONE
+    assert context.check_hostname is False
 
 
 def test_remote_postgres_uses_asyncpg_and_verifies_tls() -> None:

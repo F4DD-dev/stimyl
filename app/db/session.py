@@ -29,11 +29,19 @@ def prepare_database_url(url: str) -> tuple[str, dict[str, object]]:
     )
     query.pop("ssl", None)
     remote = (parsed.host or "") not in _LOCAL_HOSTS
-    if remote and mode in {"", "require", "prefer"}:
+    ca_path = os.environ.get("DATABASE_SSL_CA") or ""
+    if remote and mode in {"", "prefer"} and ca_path:
+        mode = "verify-full"
+    elif remote and mode == "":
         mode = "verify-full"
     connect_args: dict[str, object] = {"timeout": 10}
-    if mode and mode != "disable":
-        ca_path = os.environ.get("DATABASE_SSL_CA") or ""
+    if mode in {"require", "prefer"} and not ca_path:
+        # Шифрование без проверки имени. Так подключается база Timeweb по ssl=require.
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        connect_args["ssl"] = context
+    elif mode and mode != "disable":
         context = ssl.create_default_context(cafile=ca_path) if ca_path else ssl.create_default_context()
         context.verify_mode = ssl.CERT_REQUIRED
         context.check_hostname = mode == "verify-full"
