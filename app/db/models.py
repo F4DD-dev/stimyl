@@ -117,6 +117,7 @@ class LearningSession(Base):
     correct_streak: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     wrong_streak: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     hint_step: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    state_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     task_misses: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     pending_answer: Mapped[str | None] = mapped_column(String(64), nullable=True)
     pending_hint: Mapped[str | None] = mapped_column(String(500), nullable=True)

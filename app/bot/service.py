@@ -124,7 +124,7 @@ async def process_update(
                 )
     for reply in turn.replies:
         _add_message(session, row, "bot", reply.text, visibility)
-    await _deliver(sender, incoming, turn.replies, title_to_id)
+    await _deliver(sender, incoming, turn.replies, title_to_id, turn.state.version)
     if incoming.callback_id and not acked:
         await sender.answer_callback(incoming.callback_id, notification="Готово")
 
@@ -145,11 +145,17 @@ def _event(incoming: Incoming, id_to_title: dict[int, str]):
         return PhotoOnly()
     if incoming.kind == "callback":
         payload = incoming.payload or ""
-        if ":" in payload:
-            name, raw = payload.split(":", 1)
-            title = id_to_title.get(int(raw)) if raw.isdigit() else None
-            return Action(name, title)
-        return Action(payload)
+        if payload.startswith("v") and ":" in payload:
+            head, rest = payload.split(":", 1)
+            number = head[1:]
+            if number.isdigit():
+                version = int(number)
+                if ":" in rest:
+                    name, raw = rest.split(":", 1)
+                    title = id_to_title.get(int(raw)) if raw.isdigit() else None
+                    return Action(name, title, version)
+                return Action(rest, version=version)
+        return Action(payload or "stale", version=-1)
     return StudentText(incoming.text or "")
 
 
@@ -179,6 +185,7 @@ async def _load_state(
         wrong_streak=row.wrong_streak,
         hint_step=row.hint_step,
         task_misses=row.task_misses,
+        version=row.state_version,
         pending_answer=row.pending_answer,
         pending_hint=row.pending_hint,
         pending_step=row.pending_step,
@@ -221,6 +228,7 @@ def _save_state(row: LearningSession, state: TrainState, title_to_id: dict[str, 
     row.wrong_streak = state.wrong_streak
     row.hint_step = state.hint_step
     row.task_misses = state.task_misses
+    row.state_version = state.version
     row.pending_answer = state.pending_answer
     row.pending_hint = state.pending_hint
     row.pending_step = state.pending_step
@@ -356,7 +364,11 @@ def _zone(settings: Settings):
 
 
 async def _deliver(
-    sender: object, incoming: Incoming, replies: list[Reply], title_to_id: dict[str, int]
+    sender: object,
+    incoming: Incoming,
+    replies: list[Reply],
+    title_to_id: dict[str, int],
+    version: int,
 ) -> None:
     for reply in replies:
         buttons: list[OutboundButton] = []
@@ -365,9 +377,9 @@ async def _deliver(
                 topic_id = title_to_id.get(spec.topic_title)
                 if topic_id is None:
                     continue
-                payload = f"{spec.action}:{topic_id}"
+                payload = f"v{version}:{spec.action}:{topic_id}"
             else:
-                payload = spec.action
+                payload = f"v{version}:{spec.action}"
             buttons.append(OutboundButton(spec.text, payload))
         await sender.send_text(
             user_id=incoming.max_user_id,
@@ -584,6 +596,7 @@ async def student_turn(
     text: str | None = None,
     action: str | None = None,
     topic: str | None = None,
+    version: int | None = None,
     photo: bool = False,
 ) -> dict:
     """Training turn for the mini-app. Submission is refused without storing the text."""
@@ -604,7 +617,7 @@ async def student_turn(
     state.mode = "training"
     cleaned = (text or "").strip()
     if action:
-        event = Action(action, topic)
+        event = Action(action, topic, version)
     elif cleaned:
         event = StudentText(cleaned)
     elif photo:

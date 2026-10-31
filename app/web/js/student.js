@@ -186,14 +186,16 @@ function actionButtons(actions) {
   if (!items.length) return "";
   return `<div class="actions">${items.map((item) => {
     const primary = item.action === "to_practice" || item.action === "again" || item.action === "review";
-    return `<button class="btn ${primary ? "btn-primary" : "btn-ghost"}" type="button" data-act="lesson-action" data-action="${esc(item.action)}" data-topic="${esc(item.topic || "")}" ${disabled()}>${esc(item.label)}</button>`;
+    const version = store.lesson && store.lesson.version != null ? String(store.lesson.version) : "";
+    return `<button class="btn ${primary ? "btn-primary" : "btn-ghost"}" type="button" data-act="lesson-action" data-action="${esc(item.action)}" data-topic="${esc(item.topic || "")}" data-version="${esc(version)}" ${disabled()}>${esc(item.label)}</button>`;
   }).join("")}</div>`;
 }
 
 function pickChips(actions) {
   const picks = (actions || []).filter((item) => item.action === "pick");
   if (!picks.length) return "";
-  return `<div class="chips">${picks.map((item) => `<button class="chip" type="button" data-act="lesson-action" data-action="${esc(item.action)}" data-topic="${esc(item.topic || "")}" ${disabled()}>${esc(item.label || item.topic)}</button>`).join("")}</div>`;
+  const version = store.lesson && store.lesson.version != null ? String(store.lesson.version) : "";
+  return `<div class="chips">${picks.map((item) => `<button class="chip" type="button" data-act="lesson-action" data-action="${esc(item.action)}" data-topic="${esc(item.topic || "")}" data-version="${esc(version)}" ${disabled()}>${esc(item.label || item.topic)}</button>`).join("")}</div>`;
 }
 
 export function renderLesson() {
@@ -434,10 +436,16 @@ export function submitAnswer() {
   queue({ type: "answer", text });
 }
 
-export function runLessonAction(action, topic) {
+export function runLessonAction(action, topic, version) {
   if (!action) return;
   store.busyLabel = "Собираю шаг…";
-  queue({ type: "action", action, topic: topic || null });
+  const parsed = version === "" || version == null ? null : Number(version);
+  queue({
+    type: "action",
+    action,
+    topic: topic || null,
+    version: Number.isInteger(parsed) ? parsed : null,
+  });
 }
 
 export function pickTopic(title) {
@@ -563,7 +571,12 @@ export async function flush() {
       refresh();
       lesson = await sendPhoto(job.photo, job.text || "");
     } else if (job.type === "action") {
-      lesson = await practice({ mode: "training", action: job.action, topic: job.topic });
+      lesson = await practice({
+        mode: "training",
+        action: job.action,
+        topic: job.topic,
+        version: job.version,
+      });
     } else {
       lesson = await practice({ mode: "training", text: job.text });
     }

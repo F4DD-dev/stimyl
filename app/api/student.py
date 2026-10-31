@@ -20,6 +20,7 @@ class PracticeBody(BaseModel):
     text: str | None = Field(default=None, max_length=1000)
     action: str | None = Field(default=None, max_length=32)
     topic: str | None = Field(default=None, max_length=200)
+    version: int | None = Field(default=None, ge=0, le=1_000_000)
 
 
 def _image_kind(blob: bytes) -> str | None:
@@ -92,6 +93,7 @@ async def practice(
             text=body.text,
             action=body.action,
             topic=body.topic,
+            version=body.version,
         )
         if not result.get("ok"):
             await session.rollback()

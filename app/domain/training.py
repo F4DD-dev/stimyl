@@ -62,6 +62,7 @@ class TrainState:
     wrong_streak: int = 0
     hint_step: int = 0
     task_misses: int = 0
+    version: int = 1
     pending_answer: str | None = None
     pending_hint: str | None = None
     pending_step: str | None = None
@@ -95,6 +96,7 @@ class StudentText:
 class Action:
     name: str
     topic_title: str | None = None
+    version: int | None = None
 
 
 Event = Start | PhotoOnly | StudentText | Action
@@ -110,12 +112,22 @@ def reduce_turn(state: TrainState, event: Event, rng: random.Random | None = Non
             return Turn(current, [Reply(SUBMISSION_PHOTO)])
         return Turn(current, [Reply(TRAINING_PHOTO)])
     if isinstance(event, Action):
-        return _on_action(current, event, numbers)
+        if event.version is not None and event.version != current.version:
+            return Turn(
+                current,
+                [Reply("Эта кнопка уже неактуальна. Нажми кнопку в последнем сообщении.")],
+            )
+        turn = _on_action(current, event, numbers)
+        turn.state.version += 1
+        return turn
     if current.mode == "submission" and current.step != "check":
         return Turn(current, [Reply(SUBMISSION_TEXT)])
     if current.step == "check" and current.pending_answer:
-        return _grade(current, event.text, numbers)
-    return _ask(current, event.text)
+        turn = _grade(current, event.text, numbers)
+    else:
+        turn = _ask(current, event.text)
+    turn.state.version += 1
+    return turn
 
 
 def _ask(state: TrainState, text: str) -> Turn:
@@ -350,7 +362,11 @@ def present_turn(turn: Turn, status_line: str | None = None) -> dict:
     task = None
     feedback = None
     notice = None
-    if turn.attempt is not None and not lead.startswith("Задание."):
+    if "неактуальна" in lead:
+        notice = lead
+        if turn.state.step == "check":
+            task = turn.state.pending_prompt
+    elif turn.attempt is not None and not lead.startswith("Задание."):
         feedback = lead or None
         task = turn.attempt.prompt or None
     elif reply is not None and reply.replaceable_lead:
@@ -384,6 +400,7 @@ def present_turn(turn: Turn, status_line: str | None = None) -> dict:
         "actions": actions,
         "notice": notice,
         "status_line": status_line,
+        "version": turn.state.version,
         "awaiting_answer": turn.state.step == "check" and bool(turn.state.pending_answer),
         "photo_received": False,
         "photo_note": None,
@@ -420,6 +437,7 @@ def _blank_lesson(state: TrainState) -> dict:
         "actions": [],
         "notice": None,
         "status_line": None,
+        "version": state.version,
         "awaiting_answer": False,
         "photo_received": False,
         "photo_note": None,

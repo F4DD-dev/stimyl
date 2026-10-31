@@ -406,7 +406,9 @@ async function onAction(act, button) {
   else if (act === "resume") resume();
   else if (act === "open-next") openNext();
   else if (act === "pick") pickTopic(button.dataset.topic);
-  else if (act === "lesson-action") runLessonAction(button.dataset.action, button.dataset.topic);
+  else if (act === "lesson-action") {
+    runLessonAction(button.dataset.action, button.dataset.topic, button.dataset.version);
+  }
   else if (act === "mode") setMode(button.dataset.mode);
   else if (act === "check-submission") await checkSubmission();
   else if (act === "retry-lesson") retryLesson();
