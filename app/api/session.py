@@ -32,7 +32,7 @@ async def open_session(
     user = await user_by_provider(session, WEBAPP_PROVIDER, external_id)
     if user is None or user.status != "active":
         raise HTTPException(status_code=403, detail=LINK_REQUIRED)
-    raw = await open_browser_session(
+    raw, csrf = await open_browser_session(
         session,
         user,
         request.headers.get("user-agent", ""),
@@ -42,7 +42,7 @@ async def open_session(
     await write_audit(session, user.id, "login_webapp", user.id, client_ip(request), None)
     await session.commit()
     response.set_cookie(COOKIE_NAME, raw, **cookie_params(settings.cookie_secure))
-    return {"role": user.role}
+    return {"role": user.role, "csrf": csrf}
 
 
 @router.get("/api/session")
@@ -51,4 +51,8 @@ async def current_session(
     session: AsyncSession = Depends(db_session),
 ) -> dict[str, str]:
     user = await user_from_cookie(request, session)
-    return {"role": user.role, "display_name": user.display_name}
+    return {
+        "role": user.role,
+        "display_name": user.display_name,
+        "csrf": getattr(request.state, "csrf", ""),
+    }

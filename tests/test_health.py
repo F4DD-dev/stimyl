@@ -22,14 +22,51 @@ async def test_cabinet_is_the_teacher_app(api):
 async def test_health_and_ready(api):
     health = await api.client.get("/health")
     ready = await api.client.get("/ready")
-    healthz = await api.client.get("/healthz")
-    readyz = await api.client.get("/readyz")
+    missing = await api.client.get("/healthz")
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
     assert ready.status_code == 200
     assert ready.json()["status"] == "ok"
-    assert healthz.status_code == 200
-    assert readyz.status_code == 200
+    assert missing.status_code == 404
+
+
+def _paths(application) -> set[str]:
+    found: set[str] = set()
+    for route in application.routes:
+        path = getattr(route, "path", "")
+        if path:
+            found.add(path)
+        router = getattr(route, "original_router", None)
+        for item in getattr(router, "routes", []) or []:
+            item_path = getattr(item, "path", "")
+            if item_path:
+                found.add(item_path)
+    return found
+
+
+async def test_dev_true_and_prod_does_not_start(database_url):
+    settings = Settings(
+        database_url=database_url,
+        session_secret="session-secret",
+        dev=True,
+        env="prod",
+    )
+    application = create_app(settings)
+    assert "/dev/whoami" not in _paths(application)
+    with pytest.raises(RuntimeError, match="DEV=true"):
+        async with application.router.lifespan_context(application):
+            pass
+
+
+async def test_staging_dev_exposes_whoami_page(database_url):
+    settings = Settings(
+        database_url=database_url,
+        session_secret="session-secret",
+        dev=True,
+        env="staging",
+    )
+    application = create_app(settings)
+    assert "/dev/whoami" in _paths(application)
 
 
 async def test_service_does_not_start_without_a_database():

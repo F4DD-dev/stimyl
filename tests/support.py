@@ -82,19 +82,34 @@ async def auth_as(api: Api, max_user_id: str) -> None:
             )
         )
         assert user is not None
-        raw = await open_browser_session(session, user, "test", "127.0.0.1", api.settings)
+        raw, csrf = await open_browser_session(session, user, "test", "127.0.0.1", api.settings)
         await session.commit()
     api.client.cookies.set("stimul_session", raw)
+    api.client.headers["X-CSRF-Token"] = csrf
 
 
 async def post_update(api: Api, payload: dict):
+    before = len(api.memory.sent)
     response = await api.client.post(
         "/webhook",
         json=payload,
         headers={"X-Max-Bot-Api-Secret": api.settings.max_webhook_secret or ""},
     )
     assert response.status_code == 200, response.text
+    assert len(api.memory.sent) == before
+    await drain_jobs(api)
     return response
+
+
+async def drain_jobs(api: Api) -> None:
+    from app.worker import run_available
+
+    await run_available(
+        api.app.state.session_factory,
+        api.app.state.sender,
+        api.app.state.explainer,
+        api.app.state.settings,
+    )
 
 
 def button_payload(api: Api, label: str) -> str:

@@ -25,4 +25,14 @@ if [ -n "${MAX_WEBHOOK_URL:-}" ]; then
   python -m app.max_client.subscribe || echo "webhook subscribe failed" >&2
 fi
 
-exec uvicorn main:app --host 0.0.0.0 --port "${PORT:-8000}"
+python -m app.worker &
+worker=$!
+uvicorn main:app --host 0.0.0.0 --port "${PORT:-8000}" &
+api=$!
+trap 'kill "$worker" "$api" 2>/dev/null || true' TERM INT
+while kill -0 "$worker" 2>/dev/null && kill -0 "$api" 2>/dev/null; do
+  sleep 2
+done
+kill "$worker" "$api" 2>/dev/null || true
+wait || true
+exit 1

@@ -42,6 +42,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        if settings.dev and settings.env == "prod":
+            raise RuntimeError("DEV=true запрещён при ENV=prod")
         if not settings.database_url:
             raise RuntimeError("database is unavailable")
         lowered = settings.database_url.lower()
@@ -98,6 +100,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(teacher_router)
     app.include_router(student_router)
     app.include_router(pages_router)
+    if settings.dev and settings.env != "prod":
+        from app.api.dev_whoami import router as dev_router
+
+        app.include_router(dev_router)
     origins = [item.strip() for item in settings.cors_origins.split(",") if item.strip()]
     if origins:
         app.add_middleware(
@@ -105,7 +111,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             allow_origins=origins,
             allow_credentials=True,
             allow_methods=["GET", "POST", "DELETE"],
-            allow_headers=["Content-Type"],
+            allow_headers=["Content-Type", "X-CSRF-Token"],
         )
 
     @app.middleware("http")

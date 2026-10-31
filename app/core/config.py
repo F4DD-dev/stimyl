@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     llm_api_key: str | None = None
     llm_model: str = "qwen2.5"
     cookie_secure: bool = False
+    dev: bool = False
+    env: str = "dev"
+    worker_stale_seconds: int = 30
+    class_join_requires_approval: bool = True
+    database_ssl_ca: str | None = None
     app_timezone: str = "Asia/Vladivostok"
     photo_ttl_days: int = 7
     status_repeat_below: float = 0.5
@@ -54,6 +59,7 @@ class Settings(BaseSettings):
         "teacher_max_user_id",
         "bot_username",
         "public_base_url",
+        "database_ssl_ca",
         mode="before",
     )
     @classmethod

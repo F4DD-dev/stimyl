@@ -377,6 +377,8 @@ async def _show_gate(sender: object, incoming: Incoming, replies: list[GateReply
 async def _deliver_plain(sender: object, incoming: Incoming, replies: list[GateReply]) -> None:
     for reply in replies:
         buttons = [OutboundButton(text, payload) for text, payload in reply.buttons]
+        if reply.link_url:
+            buttons.append(OutboundButton(reply.link_text or "Открыть", "", reply.link_url))
         await sender.send_text(
             user_id=incoming.max_user_id,
             chat_id=incoming.chat_id,
@@ -404,6 +406,7 @@ async def class_report(
             .join(Enrollment, Enrollment.user_id == User.id)
             .where(
                 Enrollment.class_id == class_id,
+                Enrollment.status == "active",
                 User.role == "student",
                 User.deleted_at.is_(None),
             )

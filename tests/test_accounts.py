@@ -107,7 +107,10 @@ async def test_start_payload_joins_only_after_consent(seeded):
     await post_update(api, _consent(5151, "Петя"))
     report = await api.client.get("/api/teacher/class")
     assert report.status_code == 200
-    assert "Петя" in report.text
+    body = report.json()
+    names = [item["display_name"] for item in body["students"]]
+    assert "Петя" not in names
+    assert body["pending_students"][0]["display_name"] == "Петя"
 
 
 async def test_init_data_user_id_is_not_the_bot_user(seeded):
@@ -132,17 +135,100 @@ async def test_teacher_code_is_single_use_and_student_cannot_open_the_cabinet(se
     await post_update(api, message(900001, "Марина", "Войти в кабинет", "code-1"))
     text = api.memory.sent[-1]["text"]
     found = re.search(r"\d{6}", text)
-    assert found is not None
+    public = re.search(r"Заявка ([0-9a-f]{8})", text)
+    assert found is not None and public is not None
     code = found.group(0)
-    first = await api.client.post("/api/web-login", json={"code": code})
+    first = await api.client.post(
+        "/api/web-login",
+        json={"public_id": public.group(1), "code": code},
+    )
     assert first.status_code == 200, first.text
     report = await api.client.get("/api/teacher/class")
     assert report.status_code == 200
-    again = await api.client.post("/api/web-login", json={"code": code})
+    again = await api.client.post(
+        "/api/web-login",
+        json={"public_id": public.group(1), "code": code},
+    )
     assert again.status_code == 401
 
     await post_update(api, message(900002, "Алексей", "Войти в кабинет", "code-student"))
     assert "учител" in api.memory.sent[-1]["text"].casefold()
+
+
+async def test_whoami_on_staging_is_open_and_closed_on_prod(seeded):
+    api = seeded
+    api.app.state.settings.dev = True
+    api.app.state.settings.env = "staging"
+    await post_update(api, message(900002, "Алексей", "/whoami", "who-staging"))
+    assert api.memory.sent[-1]["text"] == "user_id: 900002"
+    api.app.state.settings.env = "prod"
+    await post_update(api, message(900002, "Алексей", "/whoami", "who-prod"))
+    assert "недоступна" in api.memory.sent[-1]["text"].casefold()
+
+
+async def test_cabinet_preview_does_not_burn_the_ticket(seeded):
+    import re
+
+    from sqlalchemy import select
+
+    from app.db.models import WebLoginCode
+
+    api = seeded
+    api.app.state.settings.public_base_url = "https://staging.example"
+    await post_update(api, message(900001, "Марина", "Войти в кабинет", "ticket-preview"))
+    found = re.search(r"ticket=([A-Za-z0-9_\-]+)", api.memory.sent[-1]["text"])
+    assert found is not None
+    ticket = found.group(1)
+    page = await api.client.get("/cabinet", params={"ticket": ticket})
+    assert page.status_code == 200
+    assert page.headers["referrer-policy"] == "no-referrer"
+    assert 'content="no-referrer"' in page.text
+    script = await api.client.get("/assets/js/app.js")
+    assert 'store.gate = "ticket"' in script.text
+    assert "use-ticket" in script.text
+    factory = api.app.state.session_factory
+    async with factory() as session:
+        row = await session.scalar(select(WebLoginCode).order_by(WebLoginCode.id.desc()))
+        assert row is not None
+        assert row.used_at is None
+    opened = await api.client.post("/api/web-login/ticket", json={"ticket": ticket})
+    assert opened.status_code == 200, opened.text
+    async with factory() as session:
+        row = await session.scalar(select(WebLoginCode).order_by(WebLoginCode.id.desc()))
+        assert row.used_at is not None
+    again = await api.client.post("/api/web-login/ticket", json={"ticket": ticket})
+    assert again.status_code == 401
+
+
+def test_ticket_query_is_redacted_in_logs():
+    import logging
+
+    from app.core.logging import RedactTicket
+
+    record = logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        "",
+        0,
+        '%s - "%s"',
+        ("127.0.0.1", "GET /cabinet?ticket=super-secret-token HTTP/1.1"),
+        None,
+    )
+    assert RedactTicket().filter(record) is True
+    rendered = record.getMessage()
+    assert "super-secret-token" not in rendered
+    assert "ticket=redacted" in rendered
+
+
+async def test_whoami_is_only_for_listed_admins(seeded):
+    api = seeded
+    await post_update(api, message(900002, "Алексей", "/whoami", "who-student"))
+    assert "администратора" in api.memory.sent[-1]["text"].casefold()
+    api.app.state.settings.admin_max_ids = "900001"
+    await post_update(api, message(900001, "Марина", "/whoami", "who-admin"))
+    assert api.memory.sent[-1]["text"] == "user_id: 900001"
+    hidden = await api.client.get("/dev/whoami")
+    assert hidden.status_code == 404
 
 
 async def test_cabinet_button_returns_a_code(seeded):
@@ -177,10 +263,14 @@ async def test_cabinet_button_sends_a_message_when_callback_answer_fails(seeded)
 
 async def test_login_attempt_limit(seeded):
     api = seeded
-    for index in range(4):
-        response = await api.client.post("/api/web-login", json={"code": f"11111{index}"})
+    await post_update(api, message(900001, "Марина", "Войти в кабинет", "limit-1"))
+    public = re.search(r"Заявка ([0-9a-f]{8})", api.memory.sent[-1]["text"])
+    assert public is not None
+    body = {"public_id": public.group(1), "code": "000000"}
+    for _ in range(4):
+        response = await api.client.post("/api/web-login", json=body)
         assert response.status_code == 401
-    blocked = await api.client.post("/api/web-login", json={"code": "000000"})
+    blocked = await api.client.post("/api/web-login", json=body)
     assert blocked.status_code == 429
 
 
@@ -264,7 +354,7 @@ async def test_group_chat_is_ignored(seeded):
     assert await _count_users(api, "4243") == 0
 
 
-async def test_database_down_replies_without_creating_a_user(seeded):
+async def test_database_down_does_not_accept_the_update(seeded):
     api = seeded
     api.app.state.session_factory = None
     response = await api.client.post(
@@ -272,8 +362,8 @@ async def test_database_down_replies_without_creating_a_user(seeded):
         json=message(4244, "Ира", "дроби", "down-1"),
         headers={"X-Max-Bot-Api-Secret": api.settings.max_webhook_secret or ""},
     )
-    assert response.status_code == 200
-    assert "через минуту" in api.memory.sent[-1]["text"]
+    assert response.status_code == 503
+    assert api.memory.sent == []
 
 
 async def test_class_rows_are_scoped(seeded):

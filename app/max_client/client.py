@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import ssl
+import time
 
 import httpx
 
@@ -10,6 +11,15 @@ logger = logging.getLogger(__name__)
 
 API_BASE = "https://platform-api2.max.ru"
 TEXT_LIMIT = 4000
+MIN_GAP_SECONDS = 1 / 30
+
+
+class DeliveryBlocked(Exception):
+    """Пользователь закрыл бота или чат удалён. Повторять нельзя."""
+
+
+class DeliveryRetry(Exception):
+    """Лимит MAX. Задачу можно повторить позже."""
 
 
 class MaxClient:
@@ -24,6 +34,7 @@ class MaxClient:
             timeout=30,
         )
         self._lock = asyncio.Lock()
+        self._next_at = 0.0
 
     async def send_text(
         self,
@@ -42,10 +53,7 @@ class MaxClient:
                 {
                     "type": "inline_keyboard",
                     "payload": {
-                        "buttons": [
-                            [{"type": "callback", "text": button.text, "payload": button.payload}]
-                            for button in buttons
-                        ]
+                        "buttons": [[_button(button)] for button in buttons]
                     },
                 }
             ]
@@ -116,8 +124,34 @@ class MaxClient:
         await self._request("POST", path, params=params, json=json)
 
     async def _request(self, method: str, path: str, **kwargs: object) -> None:
-        response = await self._client.request(method, path, **kwargs)
-        _raise_for_status(response)
+        delay = 1.0
+        for _ in range(4):
+            await self._slot()
+            response = await self._client.request(method, path, **kwargs)
+            if response.status_code == 429:
+                retry_after = response.headers.get("retry-after")
+                try:
+                    pause = float(retry_after) if retry_after else delay
+                except ValueError:
+                    pause = delay
+                await asyncio.sleep(min(pause, 30))
+                delay = min(delay * 2, 30)
+                continue
+            if response.status_code in {403, 404} and path in {"/messages", "/answers"}:
+                raise DeliveryBlocked(_error_code(response) or str(response.status_code))
+            _raise_for_status(response)
+            return
+        raise DeliveryRetry("429")
+
+    async def _slot(self) -> None:
+        while True:
+            async with self._lock:
+                now = time.monotonic()
+                if now >= self._next_at:
+                    self._next_at = now + MIN_GAP_SECONDS
+                    return
+                pause = self._next_at - now
+            await asyncio.sleep(pause)
 
 
 def _raise_for_status(response: httpx.Response) -> None:
@@ -135,6 +169,12 @@ def _error_code(response: httpx.Response) -> str:
     if isinstance(payload, dict) and isinstance(payload.get("code"), str):
         return payload["code"][:80]
     return ""
+
+
+def _button(button: OutboundButton) -> dict[str, str]:
+    if button.url:
+        return {"type": "link", "text": button.text, "url": button.url}
+    return {"type": "callback", "text": button.text, "payload": button.payload}
 
 
 def _chunks(text: str, size: int = TEXT_LIMIT) -> list[str]:

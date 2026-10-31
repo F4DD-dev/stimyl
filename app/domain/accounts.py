@@ -40,9 +40,13 @@ POLICY_VERSION = "2026-10-30"
 CODE_TTL = timedelta(minutes=5)
 CODE_ATTEMPTS = 5
 CODES_PER_HOUR = 5
+FAIL_WINDOW = timedelta(minutes=15)
+USER_FAILS = 5
+IP_FAILS = 30
+INVITE_TTL = timedelta(days=1)
+TRANSFER_TTL = timedelta(hours=1)
 SESSION_IDLE = timedelta(hours=12)
 SESSION_MAX = timedelta(days=7)
-INVITE_TTL = timedelta(days=7)
 TOUCH_EVERY = timedelta(minutes=5)
 
 
@@ -51,12 +55,17 @@ class JoinResult:
     found: bool
     created: bool
     title: str = ""
+    pending: bool = False
+    closed: bool = False
+    limited: bool = False
 
 
 @dataclass
 class IssuedCode:
     ok: bool
     code: str = ""
+    ticket: str = ""
+    public_id: str = ""
     detail: str = ""
 
 
@@ -64,6 +73,7 @@ class IssuedCode:
 class RedeemedCode:
     ok: bool
     token: str = ""
+    csrf: str = ""
     user: User | None = None
     detail: str = ""
     status: int = 401
@@ -219,7 +229,11 @@ async def touch(session: AsyncSession, user: User) -> None:
     user.last_seen_at = now
 
 
-async def _join_row(session: AsyncSession, user: User, school_class: SchoolClass) -> JoinResult:
+async def _join_row(
+    session: AsyncSession, user: User, school_class: SchoolClass, *, needs_approval: bool
+) -> JoinResult:
+    if not school_class.join_open:
+        return JoinResult(True, False, school_class.title, closed=True)
     if user.role != "student" or user.status != "active" or user.deleted_at is not None:
         return JoinResult(True, False, school_class.title)
     found = await session.scalar(
@@ -229,38 +243,63 @@ async def _join_row(session: AsyncSession, user: User, school_class: SchoolClass
         )
     )
     if found is not None:
-        return JoinResult(True, False, school_class.title)
-    session.add(Enrollment(class_id=school_class.id, user_id=user.id))
-    await write_audit(session, user.id, "join_class", user.id, None, str(school_class.id))
-    return JoinResult(True, True, school_class.title)
+        return JoinResult(True, False, school_class.title, pending=found.status == "pending")
+    status = "pending" if needs_approval else "active"
+    session.add(Enrollment(class_id=school_class.id, user_id=user.id, status=status))
+    await write_audit(session, user.id, "join_class", user.id, None, status)
+    return JoinResult(True, True, school_class.title, pending=status == "pending")
 
 
-async def join_by_key(session: AsyncSession, user: User, key: str) -> JoinResult:
+async def _join_blocked(session: AsyncSession, user: User) -> bool:
+    guard = await _guard(session, f"join:{user.id}", FAIL_WINDOW)
+    return guard.failures >= USER_FAILS
+
+
+async def _join_miss(session: AsyncSession, user: User) -> JoinResult:
+    guard = await _guard(session, f"join:{user.id}", FAIL_WINDOW)
+    guard.failures += 1
+    if guard.failures >= USER_FAILS:
+        return JoinResult(False, False, limited=True)
+    return JoinResult(False, False)
+
+
+async def join_by_key(
+    session: AsyncSession, user: User, key: str, *, needs_approval: bool
+) -> JoinResult:
+    if await _join_blocked(session, user):
+        return JoinResult(False, False, limited=True)
     cleaned = key.strip().lower()
     if not cleaned:
-        return JoinResult(False, False)
+        return await _join_miss(session, user)
     school_class = await session.scalar(
         select(SchoolClass).where(func.lower(SchoolClass.join_key) == cleaned)
     )
     if school_class is None:
-        return JoinResult(False, False)
-    return await _join_row(session, user, school_class)
+        return await _join_miss(session, user)
+    return await _join_row(session, user, school_class, needs_approval=needs_approval)
 
 
-async def join_by_code(session: AsyncSession, user: User, code: str) -> JoinResult:
+async def join_by_code(
+    session: AsyncSession, user: User, code: str, *, needs_approval: bool
+) -> JoinResult:
+    if await _join_blocked(session, user):
+        return JoinResult(False, False, limited=True)
     school_class = await session.scalar(
         select(SchoolClass).where(SchoolClass.join_code == code.strip().upper())
     )
     if school_class is None:
-        return JoinResult(False, False)
-    return await _join_row(session, user, school_class)
+        return await _join_miss(session, user)
+    return await _join_row(session, user, school_class, needs_approval=needs_approval)
 
 
 def _short_token(text: str) -> str | None:
-    cleaned = text.strip().upper()
-    if " " in cleaned or not cleaned.isalnum() or not 4 <= len(cleaned) <= 16:
+    cleaned = text.strip()
+    if cleaned.startswith(("T-", "P-")) and " " not in cleaned and 12 <= len(cleaned) <= 80:
+        return cleaned
+    upper = cleaned.upper()
+    if " " in upper or not upper.isalnum() or not 4 <= len(upper) <= 16:
         return None
-    return cleaned
+    return upper
 
 
 async def issue_web_code(session: AsyncSession, user: User, settings: Settings) -> IssuedCode:
@@ -282,36 +321,81 @@ async def issue_web_code(session: AsyncSession, user: User, settings: Settings) 
     )
     if int(issued or 0) >= CODES_PER_HOUR:
         return IssuedCode(False, detail=WEB_WAIT)
-    code = f"{secrets.randbelow(1_000_000):06d}"
+    now = _now()
+    code = await _free_code(session, settings)
+    ticket = secrets.token_urlsafe(32)
+    public_id = secrets.token_hex(4)
     session.add(
         WebLoginCode(
             user_id=user.id,
             code_hash=_digest(settings.session_secret, "web", code),
-            expires_at=_now() + CODE_TTL,
+            token_hash=_digest(settings.session_secret, "ticket", ticket),
+            public_id=public_id,
+            expires_at=now + CODE_TTL,
             attempts=0,
-            created_at=_now(),
+            created_at=now,
         )
     )
     await write_audit(session, user.id, "web_code", user.id, None, None)
-    return IssuedCode(True, code=code)
+    return IssuedCode(True, code=code, ticket=ticket, public_id=public_id)
 
 
-async def _guard(session: AsyncSession, ip: str) -> LoginGuard:
-    row = await session.get(LoginGuard, ip[:64] or "unknown")
+async def _free_code(session: AsyncSession, settings: Settings) -> str:
+    """Два живых кода не должны совпасть."""
+    now = _now()
+    for _ in range(8):
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        digest = _digest(settings.session_secret, "web", code)
+        clash = await session.scalar(
+            select(WebLoginCode.id).where(
+                WebLoginCode.code_hash == digest,
+                WebLoginCode.used_at.is_(None),
+                WebLoginCode.expires_at > now,
+            )
+        )
+        if clash is None:
+            return code
+    raise RuntimeError("не удалось выдать уникальный код")
+
+
+async def _guard(session: AsyncSession, key: str, window: timedelta) -> LoginGuard:
+    row = await session.get(LoginGuard, key[:64] or "unknown")
     now = _now()
     if row is None:
-        row = LoginGuard(ip=ip[:64] or "unknown", failures=0, window_start=now)
+        row = LoginGuard(ip=key[:64] or "unknown", failures=0, window_start=now)
         session.add(row)
         await session.flush()
         return row
-    if now - _aware(row.window_start) > CODE_TTL:
+    if now - _aware(row.window_start) > window:
         row.failures = 0
         row.window_start = now
     return row
 
 
+async def _login_limited(session: AsyncSession, ip: str, user_id: int | None) -> bool:
+    ip_guard = await _guard(session, ip[:64] or "unknown", FAIL_WINDOW)
+    if ip_guard.failures >= IP_FAILS:
+        return True
+    if user_id is None:
+        return False
+    user_guard = await _guard(session, f"login:{user_id}", FAIL_WINDOW)
+    return user_guard.failures >= USER_FAILS
+
+
+async def _login_fail(session: AsyncSession, ip: str, user_id: int | None, row: WebLoginCode | None) -> None:
+    ip_guard = await _guard(session, ip[:64] or "unknown", FAIL_WINDOW)
+    ip_guard.failures += 1
+    if user_id is not None:
+        user_guard = await _guard(session, f"login:{user_id}", FAIL_WINDOW)
+        user_guard.failures += 1
+    if row is not None:
+        row.attempts += 1
+    await write_audit(session, user_id, "login_failed", user_id, ip, None)
+
+
 async def redeem_web_code(
     session: AsyncSession,
+    public_id: str,
     code: str,
     settings: Settings,
     ip: str,
@@ -319,35 +403,60 @@ async def redeem_web_code(
 ) -> RedeemedCode:
     from app.domain.account_copy import LOGIN_BAD, LOGIN_LIMIT, STUDENT_BROWSER
 
-    guard = await _guard(session, ip)
-    if guard.failures >= CODE_ATTEMPTS:
-        return RedeemedCode(False, detail=LOGIN_LIMIT, status=429)
-    cleaned = "".join(ch for ch in code.strip() if ch.isdigit())
     row = await session.scalar(
-        select(WebLoginCode).where(
-            WebLoginCode.code_hash == _digest(settings.session_secret, "web", cleaned)
-        )
+        select(WebLoginCode).where(WebLoginCode.public_id == public_id.strip().lower())
     )
+    user_id = row.user_id if row is not None else None
+    if await _login_limited(session, ip, user_id):
+        return RedeemedCode(False, detail=LOGIN_LIMIT, status=429)
     now = _now()
-    if row is None or row.used_at is not None or _aware(row.expires_at) < now:
-        guard.failures += 1
-        if row is not None:
-            row.attempts += 1
-        await write_audit(session, None, "login_failed", None, ip, None)
-        status = 429 if guard.failures >= CODE_ATTEMPTS else 401
-        detail = LOGIN_LIMIT if status == 429 else LOGIN_BAD
-        return RedeemedCode(False, detail=detail, status=status)
+    cleaned = "".join(ch for ch in code.strip() if ch.isdigit())
+    digest = _digest(settings.session_secret, "web", cleaned)
+    expired = row is None or row.used_at is not None or _aware(row.expires_at) < now
+    mismatch = row is None or row.code_hash != digest or row.attempts >= CODE_ATTEMPTS
+    if expired or mismatch:
+        await _login_fail(session, ip, user_id, row)
+        limited = await _login_limited(session, ip, user_id)
+        return RedeemedCode(
+            False,
+            detail=LOGIN_LIMIT if limited else LOGIN_BAD,
+            status=429 if limited else 401,
+        )
     user = await session.get(User, row.user_id)
     if user is None or user.deleted_at is not None or user.status != "active":
         return RedeemedCode(False, detail=LOGIN_BAD, status=403)
     if user.role not in {"teacher", "admin"}:
         return RedeemedCode(False, detail=STUDENT_BROWSER, status=403)
     row.used_at = now
-    row.attempts += 1
-    guard.failures = 0
-    token = await open_browser_session(session, user, user_agent, ip, settings)
+    token, csrf = await open_browser_session(session, user, user_agent, ip, settings)
     await write_audit(session, user.id, "login_web", user.id, ip, None)
-    return RedeemedCode(True, token=token, user=user)
+    return RedeemedCode(True, token=token, csrf=csrf, user=user)
+
+
+async def redeem_ticket(
+    session: AsyncSession,
+    ticket: str,
+    settings: Settings,
+    ip: str,
+    user_agent: str,
+) -> RedeemedCode:
+    from app.domain.account_copy import LOGIN_BAD, STUDENT_BROWSER
+
+    digest = _digest(settings.session_secret, "ticket", ticket.strip())
+    row = await session.scalar(select(WebLoginCode).where(WebLoginCode.token_hash == digest))
+    now = _now()
+    if row is None or row.used_at is not None or _aware(row.expires_at) < now:
+        await _login_fail(session, ip, row.user_id if row else None, row)
+        return RedeemedCode(False, detail=LOGIN_BAD, status=401)
+    user = await session.get(User, row.user_id)
+    if user is None or user.deleted_at is not None or user.status != "active":
+        return RedeemedCode(False, detail=LOGIN_BAD, status=403)
+    if user.role not in {"teacher", "admin"}:
+        return RedeemedCode(False, detail=STUDENT_BROWSER, status=403)
+    row.used_at = now
+    token, csrf = await open_browser_session(session, user, user_agent, ip, settings)
+    await write_audit(session, user.id, "login_link", user.id, ip, None)
+    return RedeemedCode(True, token=token, csrf=csrf, user=user)
 
 
 async def open_browser_session(
@@ -356,13 +465,15 @@ async def open_browser_session(
     user_agent: str,
     ip: str,
     settings: Settings,
-) -> str:
+) -> tuple[str, str]:
     raw = secrets.token_urlsafe(32)
+    csrf = secrets.token_urlsafe(24)
     now = _now()
     session.add(
         UserSession(
             user_id=user.id,
             token_hash=_digest(settings.session_secret, "session", raw),
+            csrf_token=csrf,
             user_agent=(user_agent or "")[:200],
             ip=(ip or "")[:64],
             created_at=now,
@@ -372,7 +483,7 @@ async def open_browser_session(
     )
     await touch(session, user)
     await session.flush()
-    return raw
+    return raw, csrf
 
 
 async def user_for_token(
@@ -569,12 +680,17 @@ async def delete_user_data(session: AsyncSession, user_id: int, actor_id: int | 
     return True
 
 
+def _long_secret(prefix: str) -> str:
+    return prefix + secrets.token_urlsafe(18)
+
+
 async def create_invite(session: AsyncSession, actor_id: int | None, settings: Settings) -> str:
-    code = f"T{secrets.randbelow(1_000_000):06d}"
+    code = _long_secret("T-")
     now = _now()
     session.add(
         TeacherInvite(
             code_hash=_digest(settings.session_secret, "invite", code),
+            attempts=0,
             created_by=actor_id,
             expires_at=now + INVITE_TTL,
             created_at=now,
@@ -589,12 +705,13 @@ async def claim_invite(session: AsyncSession, user: User, code: str, settings: S
 
     row = await session.scalar(
         select(TeacherInvite).where(
-            TeacherInvite.code_hash == _digest(settings.session_secret, "invite", code.strip().upper())
+            TeacherInvite.code_hash == _digest(settings.session_secret, "invite", code.strip())
         )
     )
     if row is None:
         return None
-    if row.used_at is not None or _aware(row.expires_at) < _now():
+    if row.attempts >= CODE_ATTEMPTS or row.used_at is not None or _aware(row.expires_at) < _now():
+        row.attempts += 1
         return INVITE_USED
     row.used_at = _now()
     row.used_by = user.id
@@ -606,13 +723,14 @@ async def create_transfer(session: AsyncSession, user_id: int, actor_id: int | N
     user = await session.get(User, user_id)
     if user is None or user.deleted_at is not None:
         return None
-    code = f"P{secrets.randbelow(1_000_000):06d}"
+    code = _long_secret("P-")
     now = _now()
     session.add(
         TransferCode(
             user_id=user.id,
             code_hash=_digest(settings.session_secret, "transfer", code),
-            expires_at=now + CODE_TTL * 12,
+            attempts=0,
+            expires_at=now + TRANSFER_TTL,
             created_by=actor_id,
             created_at=now,
         )
@@ -624,26 +742,25 @@ async def create_transfer(session: AsyncSession, user_id: int, actor_id: int | N
 async def claim_transfer(
     session: AsyncSession, new_user: User, code: str, settings: Settings
 ) -> str | None:
-    from app.domain.account_copy import TRANSFER_BAD, TRANSFER_BUSY, TRANSFER_OK, TRANSFER_SELF
+    from app.domain.account_copy import TRANSFER_BAD, TRANSFER_OK, TRANSFER_SELF
 
     row = await session.scalar(
         select(TransferCode).where(
-            TransferCode.code_hash == _digest(settings.session_secret, "transfer", code.strip().upper())
+            TransferCode.code_hash == _digest(settings.session_secret, "transfer", code.strip())
         )
     )
-    if row is None or row.used_at is not None or _aware(row.expires_at) < _now():
-        return None if row is None else TRANSFER_BAD
+    if row is None:
+        return None
+    if row.attempts >= CODE_ATTEMPTS or row.used_at is not None or _aware(row.expires_at) < _now():
+        row.attempts += 1
+        return TRANSFER_BAD
     if row.user_id == new_user.id:
         return TRANSFER_SELF
-    attempts = await session.scalar(
-        select(func.count()).select_from(Attempt).where(Attempt.user_id == new_user.id)
-    )
-    if int(attempts or 0) > 0:
-        return TRANSFER_BUSY
     old = await session.get(User, row.user_id)
     if old is None or old.deleted_at is not None:
         return TRANSFER_BAD
     now = _now()
+    await _merge_into(session, new_user, old)
     await session.execute(
         update(AuthIdentity)
         .where(AuthIdentity.user_id == old.id, AuthIdentity.revoked_at.is_(None))
@@ -658,8 +775,33 @@ async def claim_transfer(
     await revoke_all(session, new_user.id)
     new_user.deleted_at = now
     row.used_at = now
-    await write_audit(session, new_user.id, "transfer_done", old.id, None, None)
+    await write_audit(session, new_user.id, "transfer_done", old.id, None, "merged")
     return TRANSFER_OK
+
+
+async def _merge_into(session: AsyncSession, new_user: User, old: User) -> None:
+    """История нового профиля переезжает на старый users.id, оболочка нового закрывается."""
+    await session.execute(
+        update(Attempt).where(Attempt.user_id == new_user.id).values(user_id=old.id)
+    )
+    await session.execute(
+        update(LearningSession).where(LearningSession.user_id == new_user.id).values(user_id=old.id)
+    )
+    fresh_states = list(
+        await session.scalars(select(TopicState).where(TopicState.user_id == new_user.id))
+    )
+    for state in fresh_states:
+        kept = await session.scalar(
+            select(TopicState).where(
+                TopicState.user_id == old.id,
+                TopicState.topic_id == state.topic_id,
+            )
+        )
+        if kept is None:
+            state.user_id = old.id
+        else:
+            await session.delete(state)
+    await session.execute(delete(Enrollment).where(Enrollment.user_id == new_user.id))
 
 
 async def add_school(session: AsyncSession, title: str) -> School:
@@ -678,7 +820,8 @@ async def add_class(session: AsyncSession, school_id: int, title: str) -> School
         school_id=school.id,
         title=title.strip()[:64],
         join_key=f"c-{suffix}",
-        join_code=f"K{secrets.randbelow(100_000):05d}",
+        join_code=secrets.token_hex(4).upper(),
+        join_open=True,
         timezone="Europe/Moscow",
     )
     session.add(school_class)
@@ -688,3 +831,59 @@ async def add_class(session: AsyncSession, school_id: int, title: str) -> School
 
 def looks_like_token(text: str) -> str | None:
     return _short_token(text)
+
+
+async def approve_enrollment(session: AsyncSession, teacher_id: int, student_id: int) -> bool:
+    class_ids = list(
+        await session.scalars(select(ClassTeacher.class_id).where(ClassTeacher.user_id == teacher_id))
+    )
+    if not class_ids:
+        return False
+    row = await session.scalar(
+        select(Enrollment).where(
+            Enrollment.user_id == student_id,
+            Enrollment.class_id.in_(class_ids),
+            Enrollment.status == "pending",
+        )
+    )
+    if row is None:
+        return False
+    row.status = "active"
+    await write_audit(session, teacher_id, "approve_join", student_id, None, str(row.class_id))
+    return True
+
+
+async def rotate_class_key(session: AsyncSession, teacher_id: int, class_id: int) -> SchoolClass | None:
+    owns = await session.scalar(
+        select(ClassTeacher).where(
+            ClassTeacher.user_id == teacher_id,
+            ClassTeacher.class_id == class_id,
+        )
+    )
+    if owns is None:
+        return None
+    school_class = await session.get(SchoolClass, class_id)
+    if school_class is None:
+        return None
+    school_class.join_key = "k-" + secrets.token_hex(8)
+    school_class.join_code = secrets.token_hex(4).upper()
+    school_class.join_open = True
+    await write_audit(session, teacher_id, "rotate_key", None, None, str(class_id))
+    return school_class
+
+
+async def set_class_join(session: AsyncSession, teacher_id: int, class_id: int, opened: bool) -> bool:
+    owns = await session.scalar(
+        select(ClassTeacher).where(
+            ClassTeacher.user_id == teacher_id,
+            ClassTeacher.class_id == class_id,
+        )
+    )
+    if owns is None:
+        return False
+    school_class = await session.get(SchoolClass, class_id)
+    if school_class is None:
+        return False
+    school_class.join_open = opened
+    await write_audit(session, teacher_id, "join_open" if opened else "join_close", None, None, str(class_id))
+    return True

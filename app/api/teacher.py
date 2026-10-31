@@ -2,10 +2,13 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import db_session, user_from_cookie
 from app.bot.service import class_report
+from app.db.models import ClassTeacher, Enrollment, SchoolClass, User
+from app.domain.accounts import approve_enrollment, rotate_class_key, set_class_join
 from app.domain.drafts import build_check_draft
 
 router = APIRouter()
@@ -84,7 +87,28 @@ async def teacher_class(
     session: AsyncSession = Depends(db_session),
 ) -> dict:
     report = await _report(request, session, class_id)
-    return report.as_dict()
+    payload = report.as_dict()
+    teacher = await user_from_cookie(request, session, "teacher")
+    owned = select(ClassTeacher.class_id).where(ClassTeacher.user_id == teacher.id)
+    if class_id is not None:
+        owned = owned.where(ClassTeacher.class_id == class_id)
+    current = await session.scalar(owned.order_by(ClassTeacher.class_id))
+    school_class = await session.get(SchoolClass, current) if current is not None else None
+    pending = []
+    if current is not None:
+        rows = await session.execute(
+            select(User.id, User.display_name)
+            .join(Enrollment, Enrollment.user_id == User.id)
+            .where(Enrollment.class_id == current, Enrollment.status == "pending")
+            .order_by(User.id)
+        )
+        pending = [{"id": row.id, "display_name": row.display_name} for row in rows]
+    payload["class_id"] = current
+    payload["pending_students"] = pending
+    payload["join_open"] = bool(school_class.join_open) if school_class else False
+    payload["join_key"] = school_class.join_key if school_class else ""
+    payload["join_code"] = school_class.join_code if school_class else ""
+    return payload
 
 
 @router.get("/api/teacher/assignments")
@@ -119,3 +143,48 @@ async def create_assignment(
     report = await _report(request, session)
     _prepare(report, body, request.app.state.settings.feature_quiz)
     raise HTTPException(status_code=501, detail=DELIVERY_MISSING)
+
+
+class KeyBody(BaseModel):
+    action: Literal["rotate", "disable", "enable"]
+
+
+@router.post("/api/teacher/joins/{student_id}/approve")
+async def approve_join(
+    student_id: int,
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, bool]:
+    teacher = await user_from_cookie(request, session, "teacher")
+    ok = await approve_enrollment(session, teacher.id, student_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Заявки нет")
+    await session.commit()
+    return {"ok": True}
+
+
+@router.post("/api/teacher/class/key")
+async def class_key(
+    body: KeyBody,
+    request: Request,
+    class_id: int | None = None,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    teacher = await user_from_cookie(request, session, "teacher")
+    owned = select(ClassTeacher.class_id).where(ClassTeacher.user_id == teacher.id)
+    if class_id is not None:
+        owned = owned.where(ClassTeacher.class_id == class_id)
+    current = await session.scalar(owned.order_by(ClassTeacher.class_id))
+    if current is None:
+        raise HTTPException(status_code=403, detail="Нет доступа к классу")
+    if body.action == "rotate":
+        school_class = await rotate_class_key(session, teacher.id, current)
+        if school_class is None:
+            raise HTTPException(status_code=403, detail="Нет доступа к классу")
+        await session.commit()
+        return {"join_key": school_class.join_key, "join_code": school_class.join_code, "join_open": True}
+    ok = await set_class_join(session, teacher.id, current, body.action == "enable")
+    if not ok:
+        raise HTTPException(status_code=403, detail="Нет доступа к классу")
+    await session.commit()
+    return {"join_open": body.action == "enable"}

@@ -7,6 +7,7 @@ export const store = {
   screen: "home",
   gate: null,
   gateMessage: "",
+  ticket: "",
   progress: null,
   progressError: null,
   history: null,

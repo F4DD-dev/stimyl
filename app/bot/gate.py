@@ -12,17 +12,21 @@ from app.domain.account_copy import (
     BLOCKED,
     CLOSED,
     CONSENT_NO,
+    JOIN_CLOSED,
+    JOIN_LIMIT,
+    JOIN_PENDING,
     JOIN_UNKNOWN,
     JOINED,
     UNLINKED,
-    WEB_CODE,
     WELCOME,
+    cabinet_text,
     consent_text,
 )
 from app.domain.accounts import (
     BOT_PROVIDER,
     IssuedCode,
     accept_consent,
+    admin_ids,
     claim_invite,
     claim_transfer,
     continue_application,
@@ -48,6 +52,8 @@ WEB_LOGIN = "web_login"
 class GateReply:
     text: str
     buttons: tuple[tuple[str, str], ...] = ()
+    link_text: str = ""
+    link_url: str = ""
 
 
 @dataclass
@@ -72,6 +78,13 @@ async def open_gate(
     session: AsyncSession, incoming: Incoming, settings: Settings
 ) -> GateOutcome:
     external = incoming.max_user_id
+    command = (incoming.text or "").strip()
+    if command.lower().startswith("/whoami"):
+        if settings.env == "prod":
+            return GateOutcome(None, [GateReply("Команда недоступна.")], True)
+        if settings.dev or external in admin_ids(settings):
+            return GateOutcome(None, [GateReply(f"user_id: {external}")], True)
+        return GateOutcome(None, [GateReply("Команда только для администратора.")], True)
     if incoming.start_payload:
         await remember_payload(session, external, incoming.start_payload)
 
@@ -106,31 +119,34 @@ async def open_gate(
             return GateOutcome(user, [GateReply(reply)], True)
 
     token = looks_like_token(text) if incoming.kind == "text" else None
-    if token and token.startswith("P"):
+    if token and token.startswith("P-"):
         reply = await claim_transfer(session, user, token, settings)
         if reply:
             return GateOutcome(user, [GateReply(reply)], True)
-    if token and token.startswith("T"):
+    if token and token.startswith("T-"):
         reply = await claim_invite(session, user, token, settings)
         if reply:
             return GateOutcome(user, [GateReply(reply)], True)
 
     replies: list[GateReply] = []
-    if token and not token.startswith(("T", "P")):
-        joined = await join_by_code(session, user, token)
-        if joined.found and joined.created:
-            replies.append(GateReply(JOINED.format(title=joined.title)))
-            return GateOutcome(user, replies, True)
-        if not joined.found and token.startswith("K"):
-            replies.append(GateReply(JOIN_UNKNOWN))
-            return GateOutcome(user, replies, True)
+    if token and not token.startswith(("T-", "P-")):
+        joined = await join_by_code(
+            session, user, token, needs_approval=settings.class_join_requires_approval
+        )
+        reply = _join_reply(joined, unknown=not token.startswith(("T-", "P-")))
+        if reply is not None:
+            return GateOutcome(user, [GateReply(reply)], True)
 
     if incoming.start_payload and user.role == "student":
-        joined = await join_by_key(session, user, incoming.start_payload)
-        if joined.created:
-            replies.append(GateReply(JOINED.format(title=joined.title)))
-        elif not joined.found:
-            replies.append(GateReply(JOIN_UNKNOWN))
+        joined = await join_by_key(
+            session,
+            user,
+            incoming.start_payload,
+            needs_approval=settings.class_join_requires_approval,
+        )
+        reply = _join_reply(joined, unknown=True)
+        if reply:
+            replies.append(GateReply(reply))
 
     if incoming.kind == "start" and user.role in {"teacher", "admin"} and user.status == "active":
         replies.append(
@@ -148,19 +164,43 @@ async def _without_account(
         replies = [GateReply(WELCOME)]
         payload = await take_hint(session, incoming.max_user_id)
         if payload:
-            joined = await join_by_key(session, user, payload)
-            if joined.created:
-                replies.append(GateReply(JOINED.format(title=joined.title)))
-            elif not joined.found:
-                replies.append(GateReply(JOIN_UNKNOWN))
+            joined = await join_by_key(
+                session,
+                user,
+                payload,
+                needs_approval=settings.class_join_requires_approval,
+            )
+            reply = _join_reply(joined, unknown=True)
+            if reply:
+                replies.append(GateReply(reply))
         return GateOutcome(user, replies, True)
     if incoming.payload == CONSENT_NO_PAYLOAD:
         return GateOutcome(None, [GateReply(CONSENT_NO)], True)
     return GateOutcome(None, [_consent_reply(settings)], True)
 
 
+def _join_reply(joined, *, unknown: bool) -> str | None:
+    if joined.limited:
+        return JOIN_LIMIT
+    if joined.closed:
+        return JOIN_CLOSED
+    if joined.created and joined.pending:
+        return JOIN_PENDING.format(title=joined.title)
+    if joined.created:
+        return JOINED.format(title=joined.title)
+    if not joined.found and unknown:
+        return JOIN_UNKNOWN
+    return None
+
+
 async def _send_code(session: AsyncSession, user: User, settings: Settings) -> GateOutcome:
     issued: IssuedCode = await issue_web_code(session, user, settings)
     if not issued.ok:
         return GateOutcome(user, [GateReply(issued.detail)], True)
-    return GateOutcome(user, [GateReply(WEB_CODE.format(code=issued.code))], True)
+    base = (settings.public_base_url or "").rstrip("/")
+    url = f"{base}/cabinet?ticket={issued.ticket}" if base else ""
+    reply = GateReply(cabinet_text(url, issued.public_id, issued.code))
+    if url:
+        reply.link_text = "Открыть кабинет"
+        reply.link_url = url
+    return GateOutcome(user, [reply], True)

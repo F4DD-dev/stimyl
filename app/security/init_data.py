@@ -11,6 +11,14 @@ def validate_init_data(init_data: str, bot_token: str, max_age_seconds: int = 36
     Это поле из документации мини-приложения. Его нельзя подставлять
     в user_id бота, пока живая сверка не подтвердит, что числа равны.
     """
+    fields = read_init_data(init_data, bot_token, max_age_seconds)
+    if fields is None:
+        return None
+    return fields["user_id"]
+
+
+def read_init_data(init_data: str, bot_token: str, max_age_seconds: int = 3600) -> dict | None:
+    """Проверить подпись и вернуть user_id и start_param. start_param есть в Bridge."""
     pairs = parse_qsl(init_data, keep_blank_values=True)
     hash_values = [value for key, value in pairs if key == "hash"]
     if len(hash_values) != 1:
@@ -30,6 +38,7 @@ def validate_init_data(init_data: str, bot_token: str, max_age_seconds: int = 36
         return None
     try:
         user = json.loads(fields["user"])
-        return str(user["id"])
+        user_id = str(user["id"])
     except (KeyError, TypeError, json.JSONDecodeError):
         return None
+    return {"user_id": user_id, "start_param": fields.get("start_param") or ""}

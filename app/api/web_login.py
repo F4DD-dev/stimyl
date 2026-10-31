@@ -5,14 +5,30 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import client_ip, db_session, user_from_cookie
-from app.domain.accounts import list_sessions, redeem_web_code, revoke_all, revoke_session
+from app.domain.accounts import (
+    list_sessions,
+    redeem_ticket,
+    redeem_web_code,
+    revoke_all,
+    revoke_session,
+)
 from app.security.cookies import COOKIE_NAME, cookie_params
 
 router = APIRouter()
 
 
 class CodeBody(BaseModel):
-    code: str = Field(min_length=4, max_length=16)
+    public_id: str = Field(min_length=4, max_length=16)
+    code: str = Field(min_length=4, max_length=8)
+
+
+class TicketBody(BaseModel):
+    ticket: str = Field(min_length=20, max_length=128)
+
+
+def _accept(result, response: Response, secure: bool) -> dict[str, str]:
+    response.set_cookie(COOKIE_NAME, result.token, **cookie_params(secure))
+    return {"role": result.user.role, "csrf": result.csrf}
 
 
 @router.post("/api/web-login")
@@ -25,6 +41,7 @@ async def web_login(
     settings = request.app.state.settings
     result = await redeem_web_code(
         session,
+        body.public_id,
         body.code,
         settings,
         client_ip(request),
@@ -34,8 +51,29 @@ async def web_login(
         await session.commit()
         raise HTTPException(status_code=result.status, detail=result.detail)
     await session.commit()
-    response.set_cookie(COOKIE_NAME, result.token, **cookie_params(settings.cookie_secure))
-    return {"role": result.user.role}
+    return _accept(result, response, settings.cookie_secure)
+
+
+@router.post("/api/web-login/ticket")
+async def web_ticket(
+    body: TicketBody,
+    request: Request,
+    response: Response,
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, str]:
+    settings = request.app.state.settings
+    result = await redeem_ticket(
+        session,
+        body.ticket,
+        settings,
+        client_ip(request),
+        request.headers.get("user-agent", ""),
+    )
+    if not result.ok or result.user is None:
+        await session.commit()
+        raise HTTPException(status_code=result.status, detail=result.detail)
+    await session.commit()
+    return _accept(result, response, settings.cookie_secure)
 
 
 @router.post("/api/logout")

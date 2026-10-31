@@ -1,4 +1,9 @@
 const JSON_HEADERS = { "Content-Type": "application/json" };
+let csrfToken = "";
+
+export function setCsrf(value) {
+  csrfToken = value || "";
+}
 
 export class ApiError extends Error {
   constructor(message, extra) {
@@ -23,9 +28,14 @@ async function once(path, options) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
   try {
+    const headers = { ...(options.headers || {}) };
+    const method = (options.method || "GET").toUpperCase();
+    if (method !== "GET" && method !== "HEAD" && csrfToken) {
+      headers["X-CSRF-Token"] = csrfToken;
+    }
     const response = await fetch(path, {
       method: options.method || "GET",
-      headers: options.headers,
+      headers,
       body: options.body,
       credentials: "same-origin",
       signal: controller.signal,
@@ -81,12 +91,22 @@ export const openSession = (initData) =>
     body: JSON.stringify({ init_data: initData }),
   });
 
-export const webLogin = (code) =>
+export const webLogin = (publicId, code) =>
   request("/api/web-login", {
     method: "POST",
     headers: JSON_HEADERS,
-    body: JSON.stringify({ code }),
+    body: JSON.stringify({ public_id: publicId, code }),
   });
+
+export const openTicket = (ticket) =>
+  request("/api/web-login/ticket", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ ticket }),
+  });
+
+export const approveJoin = (studentId) =>
+  request(`/api/teacher/joins/${studentId}/approve`, { method: "POST" });
 
 export const getProgress = () => request("/api/student/progress");
 export const getHistory = () => request("/api/student/history");

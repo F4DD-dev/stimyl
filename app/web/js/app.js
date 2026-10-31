@@ -1,4 +1,4 @@
-import { getHistory, getLesson, getProgress, getSession, openSession, webLogin } from "./api.js";
+import { approveJoin, getHistory, getLesson, getProgress, getSession, openSession, openTicket, setCsrf, webLogin } from "./api.js";
 import { previewRole, studentPreview, teacherPreview } from "./preview.js";
 import {
   checkSubmission,
@@ -151,13 +151,23 @@ async function boot() {
   }
   try {
     await waitForBridge();
+    const ticket = new URLSearchParams(location.search).get("ticket");
+    if (ticket) {
+      store.ticket = ticket;
+      store.booting = false;
+      store.gate = "ticket";
+      refresh();
+      return;
+    }
     const initData = readInitData();
     if (initData) {
-      await openSession(initData);
+      const opened = await openSession(initData);
+      setCsrf(opened.csrf);
       stripInit();
     }
     if (id !== bootId) return;
     const me = await getSession();
+    setCsrf(me.csrf);
     if (id !== bootId) return;
     store.role = me.role;
     store.displayName = me.display_name || "";
@@ -249,6 +259,13 @@ function frame(inner) {
 }
 
 function renderGate() {
+  if (store.gate === "ticket") {
+    return `<div class="gate">${brand()}
+      <h1>Кабинет</h1>
+      <p>Ссылка ещё действует. Нажми кнопку, чтобы войти.</p>
+      <button class="btn btn-primary" type="button" data-act="use-ticket">Войти</button>
+    </div>`;
+  }
   if (store.gate === "mismatch") {
     const teacher = store.role === "teacher";
     return `<div class="gate">${brand()}
@@ -270,6 +287,8 @@ function cabinetLogin() {
   const cabinet = entry === "teacher" || location.pathname.endsWith("/cabinet");
   if (!cabinet) return "";
   return `<form id="web-login-form" class="stack tight">
+    <label class="field-label" for="cabinet-request">Заявка</label>
+    <input id="cabinet-request" class="field" autocomplete="off" maxlength="16" aria-label="Номер заявки">
     <label class="field-label" for="cabinet-code">Код из бота</label>
     <input id="cabinet-code" class="field" inputmode="numeric" autocomplete="one-time-code" maxlength="8" aria-label="Код из бота">
     <button class="btn btn-primary" type="submit">Войти</button>
@@ -345,6 +364,26 @@ async function onAction(act, button) {
     go(button.dataset.screen);
     return;
   }
+  if (act === "approve-join") {
+    await approveJoin(button.dataset.id);
+    if (store.role === "teacher") await reloadTeacher();
+    return;
+  }
+  if (act === "use-ticket") {
+    const ticket = store.ticket;
+    if (!ticket) return;
+    try {
+      const opened = await openTicket(ticket);
+      setCsrf(opened.csrf);
+      store.ticket = "";
+      location.replace(location.pathname);
+    } catch (error) {
+      store.gate = "auth";
+      store.gateMessage = error.message;
+      refresh();
+    }
+    return;
+  }
   if (act === "retry-auth") {
     await boot();
     return;
@@ -397,7 +436,8 @@ function bind() {
     if (event.target.id === "answer-form") submitAnswer();
     if (event.target.id === "web-login-form") {
       const code = document.querySelector("#cabinet-code")?.value || "";
-      webLogin(code.trim())
+      const requestId = document.querySelector("#cabinet-request")?.value || "";
+      webLogin(requestId.trim(), code.trim())
         .then(() => boot())
         .catch((error) => {
           store.gate = "auth";

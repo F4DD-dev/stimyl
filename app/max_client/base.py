@@ -5,6 +5,7 @@ from dataclasses import dataclass
 class OutboundButton:
     text: str
     payload: str
+    url: str = ""
 
 
 class NullSender:

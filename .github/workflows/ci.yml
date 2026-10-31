@@ -2,7 +2,6 @@ name: ci
 
 on:
   push:
-    branches: [main]
   pull_request:
 
 jobs:
@@ -29,7 +28,6 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
       - run: ruff check app tests
-      - run: pytest
       - name: migrations on empty postgres
         env:
           DATABASE_URL: postgresql+asyncpg://stimul:stimul@localhost:5432/stimul
@@ -37,8 +35,13 @@ jobs:
           alembic upgrade head
           alembic downgrade -1
           alembic upgrade head
+      - name: pytest
+        env:
+          TEST_DATABASE_URL: postgresql+asyncpg://stimul:stimul@localhost:5432/stimul
+          DATABASE_URL: postgresql+asyncpg://stimul:stimul@localhost:5432/stimul
+        run: pytest
       - name: pip-audit
-        continue-on-error: true
         run: |
           pip install pip-audit
-          pip-audit
+          pip-audit --format json --output audit.json
+          python scripts/fail_on_high_vulns.py audit.json

@@ -1,3 +1,4 @@
+import os
 import ssl
 from collections.abc import Mapping
 
@@ -27,14 +28,15 @@ def prepare_database_url(url: str) -> tuple[str, dict[str, object]]:
         _query_text(query.pop("sslmode", "")).lower() or _query_text(query.pop("ssl", "")).lower()
     )
     query.pop("ssl", None)
-    if not mode and (parsed.host or "") not in _LOCAL_HOSTS:
-        mode = "require"
+    remote = (parsed.host or "") not in _LOCAL_HOSTS
+    if remote and mode in {"", "require", "prefer"}:
+        mode = "verify-full"
     connect_args: dict[str, object] = {"timeout": 10}
     if mode and mode != "disable":
-        context = ssl.create_default_context()
-        if mode not in {"verify-ca", "verify-full"}:
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
+        ca_path = os.environ.get("DATABASE_SSL_CA") or ""
+        context = ssl.create_default_context(cafile=ca_path) if ca_path else ssl.create_default_context()
+        context.verify_mode = ssl.CERT_REQUIRED
+        context.check_hostname = mode == "verify-full"
         connect_args["ssl"] = context
     cleaned = parsed.set(query=query).render_as_string(hide_password=False)
     return cleaned, connect_args

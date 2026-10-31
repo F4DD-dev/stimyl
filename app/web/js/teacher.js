@@ -192,6 +192,8 @@ export function renderClass() {
       <h1 id="page-title" tabindex="-1">Карта класса</h1>
       <p class="hint">Три статуса. Тексты вопросов учеников сюда не попадают.</p>
     </div>
+    ${(report.pending_students || []).length ? `<section class="card"><h2>Ждут подтверждения</h2>${report.pending_students.map((student) => `<button class="btn btn-ghost" type="button" data-act="approve-join" data-id="${student.id}">${esc(student.display_name)}</button>`).join("")}</section>` : ""}
+    <p class="hint">Код класса ${esc(report.join_code || "")}. ${report.join_open ? "Набор открыт." : "Набор закрыт."}</p>
     ${report.frequent_mistakes ? `<div class="banner banner-warn"><p>${esc(report.frequent_mistakes)}</p></div>` : ""}
     <div class="chips" role="tablist" aria-label="Статус">
       ${filters.map(([id, label]) => `<button class="chip ${store.filters.status === id ? "is-on" : ""}" type="button" data-act="filter-status" data-status="${id}">${label}</button>`).join("")}

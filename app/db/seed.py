@@ -78,6 +78,7 @@ async def _class(session: AsyncSession, school: School) -> SchoolClass:
         title=DEMO_CLASS_TITLE,
         join_key="8b-demo",
         join_code="8BDEMO",
+        join_open=True,
         timezone="Europe/Moscow",
     )
     session.add(found)
@@ -165,7 +166,7 @@ async def _enroll(session: AsyncSession, school: SchoolClass, max_id: str) -> No
         select(Enrollment).where(Enrollment.class_id == school.id, Enrollment.user_id == user.id)
     )
     if found is None:
-        session.add(Enrollment(class_id=school.id, user_id=user.id))
+        session.add(Enrollment(class_id=school.id, user_id=user.id, status="active"))
         await session.flush()
 
 

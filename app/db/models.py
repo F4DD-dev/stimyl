@@ -9,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -53,6 +54,7 @@ class SchoolClass(Base):
     title: Mapped[str] = mapped_column(String(64))
     join_key: Mapped[str] = mapped_column(String(128), unique=True)
     join_code: Mapped[str] = mapped_column(String(16), unique=True)
+    join_open: Mapped[bool] = mapped_column(Boolean, default=True)
     timezone: Mapped[str] = mapped_column(String(64), default="Europe/Moscow")
 
 
@@ -65,9 +67,13 @@ class ClassTeacher(Base):
 
 class Enrollment(Base):
     __tablename__ = "enrollments"
+    __table_args__ = (
+        CheckConstraint("status IN ('pending', 'active')", name="ck_enrollments_status"),
+    )
 
     class_id: Mapped[int] = mapped_column(ForeignKey("classes.id"), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    status: Mapped[str] = mapped_column(String(16), default="active")
 
 
 class Subject(Base):
@@ -222,6 +228,8 @@ class WebLoginCode(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     code_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    public_id: Mapped[str] = mapped_column(String(16), unique=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
@@ -234,6 +242,7 @@ class UserSession(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    csrf_token: Mapped[str] = mapped_column(String(64))
     user_agent: Mapped[str] = mapped_column(String(200))
     ip: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -276,6 +285,7 @@ class TeacherInvite(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     code_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
@@ -289,6 +299,7 @@ class TransferCode(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     code_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
@@ -311,3 +322,26 @@ class LoginGuard(Base):
     ip: Mapped[str] = mapped_column(String(64), primary_key=True)
     failures: Mapped[int] = mapped_column(Integer, default=0)
     window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Job(Base):
+    """Входящий апдейт. Вебхук только кладёт строку, разбирает воркер."""
+
+    __tablename__ = "jobs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'running', 'done', 'dead')",
+            name="ck_jobs_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    dedup_key: Mapped[str] = mapped_column(String(200), unique=True)
+    user_key: Mapped[str] = mapped_column(String(64), default="")
+    payload: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
