@@ -142,8 +142,8 @@ def _app_button(api) -> dict:
 
 async def test_progress_button_binds_the_miniapp_without_a_code(seeded):
     api = seeded
-    api.app.state.settings.bot_username = "stimyl_bot"
-    api.app.state.settings.bot_contact_id = 515445879
+    api.app.state.settings.bot_username = "ideya_fiks_101_bot"
+    api.app.state.settings.bot_contact_id = 387830563
     await post_update(api, message(900002, "Алексей", "/start", "progress-start"))
     await post_update(
         api,
@@ -152,8 +152,8 @@ async def test_progress_button_binds_the_miniapp_without_a_code(seeded):
     text = api.memory.sent[-1]["text"]
     _assert_no_bare_code(text)
     button = _app_button(api)
-    assert button["web_app"] == "stimyl_bot"
-    assert button["contact_id"] == 515445879
+    assert button["web_app"] == "ideya_fiks_101_bot"
+    assert button["contact_id"] == 387830563
     assert button["text"] == "Мой прогресс"
     assert re.fullmatch(r"[\w-]{1,512}", button["payload"])
     assert "ticket=" not in text
@@ -192,7 +192,7 @@ async def test_progress_button_binds_the_miniapp_without_a_code(seeded):
         )
     assert [row.external_id for row in rows] == ["424242"]
     page = await api.client.get("/student")
-    assert 'data-bot="stimyl_bot"' in page.text
+    assert 'data-bot="ideya_fiks_101_bot"' in page.text
     script = await api.client.get("/assets/js/app.js")
     assert "Недостаточно прав" not in script.text
     assert "Открой приложение кнопкой из чата с ботом" in script.text
@@ -244,8 +244,8 @@ async def test_allow_id_match_binds_without_a_ticket_and_block_is_forbidden(seed
 async def test_teacher_cabinet_button_can_be_open_app(seeded):
     api = seeded
     _cabinet_base(api)
-    api.app.state.settings.bot_username = "stimyl_bot"
-    api.app.state.settings.bot_contact_id = 515445879
+    api.app.state.settings.bot_username = "ideya_fiks_101_bot"
+    api.app.state.settings.bot_contact_id = 387830563
     await post_update(api, message(900001, "Марина", "/start", "cabinet-start"))
     factory = api.app.state.session_factory
     async with factory() as session:
@@ -259,8 +259,8 @@ async def test_teacher_cabinet_button_can_be_open_app(seeded):
     app_button = _app_button(api)
     link = _ticket_from_buttons(api)
     assert app_button["payload"] == link
-    assert app_button["web_app"] == "stimyl_bot"
-    assert app_button["contact_id"] == 515445879
+    assert app_button["web_app"] == "ideya_fiks_101_bot"
+    assert app_button["contact_id"] == 387830563
 
 
 def _cabinet_base(api) -> None:

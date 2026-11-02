@@ -44,7 +44,7 @@ async def test_web_process_learns_the_bot_contact(monkeypatch):
             assert ca is None or isinstance(ca, str)
 
         async def my_profile(self) -> tuple[str, int]:
-            return "se14271630_1_bot", 515445879
+            return "ideya_fiks_101_bot", 387830563
 
         async def aclose(self) -> None:
             return None
@@ -59,9 +59,9 @@ async def test_web_process_learns_the_bot_contact(monkeypatch):
         bot_username="already",
     )
     await _learn_bot_name(app, settings)
-    assert settings.bot_username == "se14271630_1_bot"
-    assert settings.bot_contact_id == 515445879
-    assert app.state.bot_username == "se14271630_1_bot"
+    assert settings.bot_username == "ideya_fiks_101_bot"
+    assert settings.bot_contact_id == 387830563
+    assert app.state.bot_username == "ideya_fiks_101_bot"
 
 
 def test_shipped_root_is_one_certificate_and_the_image_does_not_rehash_a_bundle():

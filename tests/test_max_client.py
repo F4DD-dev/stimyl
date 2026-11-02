@@ -30,16 +30,16 @@ def test_open_app_button_includes_payload_and_bot_contact():
         OutboundButton(
             "Открыть кабинет",
             "ticket_1",
-            web_app="se14271630_1_bot",
-            contact_id=515445879,
+            web_app="ideya_fiks_101_bot",
+            contact_id=387830563,
         )
     )
     assert rendered == {
         "type": "open_app",
         "text": "Открыть кабинет",
-        "web_app": "se14271630_1_bot",
+        "web_app": "ideya_fiks_101_bot",
         "payload": "ticket_1",
-        "contact_id": 515445879,
+        "contact_id": 387830563,
     }
 
 

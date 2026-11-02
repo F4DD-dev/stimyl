@@ -131,8 +131,8 @@ async def test_production_never_bootstraps_a_teacher(api):
 async def test_claim_accept_publishes_work_without_a_stale_ticket(seeded):
     api = seeded
     api.settings.first_teacher_bootstrap = True
-    api.settings.bot_username = "stimyl_bot"
-    api.settings.bot_contact_id = 515445879
+    api.settings.bot_username = "ideya_fiks_101_bot"
+    api.settings.bot_contact_id = 387830563
     token = api.settings.max_token or ""
     await post_update(api, _started(830001, "Марк"))
     await post_update(api, _consent(830001, "Марк"))

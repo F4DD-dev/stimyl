@@ -4,12 +4,11 @@
 
 ## Что уже есть
 
-Два приложения, оба с GitHub `F4DD-dev/stimyl`, ветка `main`. Сборка `pip install .`, запуск `sh docker/entrypoint.sh`, проверка `/health`. Регион `ru-3`.
+Одно приложение, GitHub `F4DD-dev/stimyl`, ветка `feature/accounts`. Сборка `pip install .`, запуск `sh docker/entrypoint.sh`, проверка `/health`. Регион `ru-3`. Приложения `277859` в аккаунте больше нет.
 
-| Приложение | id | Адрес | Снаружи |
+| Приложение | id | Адрес | Бот |
 | --- | --- | --- | --- |
-| Stimyl | 277859 | `f4dd-dev-stimyl-c213.twc1.net` | Соединение часто обрывается |
-| Копия Stimyl | 279257 | `stimyl.online`, `f4dd-dev-stimyl-1cea.twc1.net` | Отвечает. Сюда ставить мини-приложение в MAX |
+| Копия Stimyl | 279257 | `stimyl.online`, `f4dd-dev-stimyl-1cea.twc1.net` | `ideya_fiks_101_bot`, `user_id` `387830563` |
 
 Одна база PostgreSQL 16, id `4226125`, имя `stimul`, порт `5432`, публичный IP `193.188.23.51`, локальный `192.168.0.4`. Пресет `4753` (ru-3, 1 CPU / 1 ГБ / 8 ГБ, 1200 ₽). Пользователь и имя базы — `stimul`. Пароль в API не читается (`hidden-by-api-key-policy`), он только в панели Timeweb и в переменной приложения.
 
@@ -28,4 +27,4 @@
 
 `POST /api/v1/databases` с `type` `postgres14`…`postgres18` и `preset_id` создаёт кластер сразу. Тип `postgres` без версии устарел. Не отправляй такой запрос, чтобы узнать поля: каждый успешный ответ — отдельная платная база. Сейчас лишние кластеры уже удалены, живой один: `4226125`.
 
-Секреты приложения (`MAX_TOKEN`, `MAX_WEBHOOK_SECRET`, `SESSION_SECRET`, `DATABASE_URL`) лежат только в env Timeweb. `MAX_WEBHOOK_URL` задан у приложения 277859. У копии его нет, чтобы два процесса не перехватывали подписку бота друг у друга.
+Секреты приложения (`MAX_TOKEN`, `MAX_WEBHOOK_SECRET`, `SESSION_SECRET`, `DATABASE_URL`) лежат только в env Timeweb. `GET` отдаёт значения как `hidden-by-api-key-policy`. `PATCH` с полем `envs` заменяет всю карту и сразу деплоит: ключ, которого нет в теле, пропадёт. Собирать карту заново из локального `.env` и `.local/db-password.txt`, менять только нужные ключи. Сейчас у `279257` есть `MAX_WEBHOOK_URL=https://stimyl.online/webhook`. Второго приложения с тем же ботом нет.
