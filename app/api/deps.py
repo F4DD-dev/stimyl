@@ -35,7 +35,7 @@ async def user_from_cookie(
     role: str | None = None,
 ) -> User:
     """Роль берётся из базы. Аргумент role — какую роль ждёт этот эндпоинт."""
-    raw = request.cookies.get(COOKIE_NAME)
+    raw = request.cookies.get(COOKIE_NAME) or _bearer(request)
     if not raw:
         raise HTTPException(status_code=401, detail="Нужен вход")
     found = await user_for_token(session, raw, request.app.state.settings)
@@ -53,6 +53,14 @@ async def user_from_cookie(
     if role is not None and user.role != role:
         raise HTTPException(status_code=403, detail="Нет доступа")
     return user
+
+
+def _bearer(request: Request) -> str:
+    """Окно MAX не хранит cookie кабинета. Тот же токен приходит заголовком."""
+    header = request.headers.get("authorization") or ""
+    if header.lower().startswith("bearer "):
+        return header[7:].strip()
+    return ""
 
 
 def _same(left: str, right: str) -> bool:

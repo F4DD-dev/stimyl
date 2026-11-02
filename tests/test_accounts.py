@@ -166,6 +166,13 @@ async def test_progress_button_binds_the_miniapp_without_a_code(seeded):
     )
     assert opened.status_code == 200, opened.text
     assert opened.json()["role"] == "student"
+    session_token = opened.json()["token"]
+    api.client.cookies.clear()
+    lost = await api.client.get("/api/session")
+    assert lost.status_code == 401
+    kept = await api.client.get("/api/session", headers={"Authorization": f"Bearer {session_token}"})
+    assert kept.status_code == 200
+    assert kept.json()["role"] == "student"
     again = await api.client.post(
         "/api/session",
         json={"init_data": sign_init_data(424242, token, "Алексей")},
@@ -191,6 +198,8 @@ async def test_progress_button_binds_the_miniapp_without_a_code(seeded):
     assert "Открой приложение кнопкой из чата с ботом" in script.text
     assert "Сюда не попасть" in script.text
     assert "openMaxLink" in script.text
+    api_js = await api.client.get("/assets/js/api.js")
+    assert "Bearer" in api_js.text
     assert "cabinet-code" not in script.text
 
 
@@ -334,8 +343,6 @@ async def test_whoami_on_staging_is_open_and_closed_on_prod(seeded):
 
 
 async def test_cabinet_preview_does_not_burn_the_ticket(seeded):
-    import re
-
     from sqlalchemy import select
 
     from app.db.models import WebLoginCode

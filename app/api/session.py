@@ -87,7 +87,7 @@ async def open_session(
     await write_audit(session, user.id, "login_webapp", user.id, client_ip(request), None)
     await session.commit()
     response.set_cookie(COOKIE_NAME, raw, **cookie_params(settings.cookie_secure))
-    return {"role": user.role, "csrf": csrf}
+    return {"role": user.role, "csrf": csrf, "token": raw}
 
 
 @router.get("/api/session")

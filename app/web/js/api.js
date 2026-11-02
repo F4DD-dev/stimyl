@@ -1,8 +1,32 @@
 const JSON_HEADERS = { "Content-Type": "application/json" };
+const TOKEN_KEY = "stimul_session";
 let csrfToken = "";
+let sessionToken = "";
+
+try {
+  sessionToken = sessionStorage.getItem(TOKEN_KEY) || "";
+} catch {
+  sessionToken = "";
+}
 
 export function setCsrf(value) {
   csrfToken = value || "";
+}
+
+export function setSession(value) {
+  sessionToken = value || "";
+  try {
+    if (sessionToken) sessionStorage.setItem(TOKEN_KEY, sessionToken);
+    else sessionStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* окно MAX может закрыть хранилище, токен останется в памяти вкладки */
+  }
+}
+
+function remember(payload) {
+  if (payload && payload.csrf) setCsrf(payload.csrf);
+  if (payload && payload.token) setSession(payload.token);
+  return payload;
 }
 
 export class ApiError extends Error {
@@ -31,6 +55,7 @@ async function once(path, options) {
   try {
     const headers = { ...(options.headers || {}) };
     const method = (options.method || "GET").toUpperCase();
+    if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
     if (method !== "GET" && method !== "HEAD" && csrfToken) {
       headers["X-CSRF-Token"] = csrfToken;
     }
@@ -90,21 +115,21 @@ export const openSession = (initData, startParam) =>
     method: "POST",
     headers: JSON_HEADERS,
     body: JSON.stringify({ init_data: initData, start_param: startParam || "" }),
-  });
+  }).then(remember);
 
 export const webLogin = (publicId, code) =>
   request("/api/web-login", {
     method: "POST",
     headers: JSON_HEADERS,
     body: JSON.stringify({ public_id: publicId, code }),
-  });
+  }).then(remember);
 
 export const openTicket = (ticket) =>
   request("/api/web-login/ticket", {
     method: "POST",
     headers: JSON_HEADERS,
     body: JSON.stringify({ ticket }),
-  });
+  }).then(remember);
 
 export const approveJoin = (studentId) =>
   request(`/api/teacher/joins/${studentId}/approve`, { method: "POST" });

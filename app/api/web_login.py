@@ -28,7 +28,7 @@ class TicketBody(BaseModel):
 
 def _accept(result, response: Response, secure: bool) -> dict[str, str]:
     response.set_cookie(COOKIE_NAME, result.token, **cookie_params(secure))
-    return {"role": result.user.role, "csrf": result.csrf}
+    return {"role": result.user.role, "csrf": result.csrf, "token": result.token}
 
 
 @router.post("/api/web-login")
