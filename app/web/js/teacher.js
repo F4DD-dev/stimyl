@@ -8,8 +8,8 @@ import {
   errorBlock,
   esc,
   icon,
-  initials,
   pill,
+  plural,
 } from "./ui.js";
 
 const DIFFICULTIES = [
@@ -78,16 +78,48 @@ function needText(info) {
   return `${count} ${word} нужна практика или повтор.`;
 }
 
+function subjectTitle() {
+  const direct = String(store.report?.subject_title || "").trim();
+  if (direct) return direct;
+  const titles = [];
+  const push = (title) => {
+    const clean = String(title || "").trim();
+    if (clean && !titles.includes(clean)) titles.push(clean);
+  };
+  for (const item of store.report?.classes || []) {
+    for (const subject of item.subjects || []) push(subject.title);
+  }
+  for (const subject of store.report?.subjects || []) push(subject.title || subject);
+  return titles.join(", ");
+}
+
+function roleName() {
+  return store.report?.can_manage_school || store.canManage ? "Учитель-администратор" : "Учитель";
+}
+
 function topbar() {
-  const name = store.displayName || "Учитель";
-  const subject = store.report?.subject_title || "";
   const unread = Number(store.notices?.unread) || 0;
+  const subject = subjectTitle();
   return `<header class="mast">
     ${brand()}
-    <button class="class-pill" type="button" data-act="class-sheet">${esc(classTitle())}${subject ? ` · ${esc(subject)}` : ""}</button>
-    <button class="bell" type="button" data-act="notices" aria-label="Уведомления">${icon("bell")}${unread ? `<i class="dot"></i>` : ""}</button>
-    <button class="avatar" type="button" data-act="nav" data-screen="profile" aria-label="Профиль">${esc(initials(name))}</button>
+    <button class="class-switch" type="button" data-act="class-sheet">
+      <b>${esc(classTitle())}</b>
+      <span>${esc(subject || "предмет не указан")}</span>
+    </button>
+    <button class="icon-btn" type="button" data-act="notices" aria-label="Уведомления">${icon("bell")}${unread ? `<i class="dot"></i>` : ""}</button>
+    <button class="icon-btn" type="button" data-act="nav" data-screen="profile" aria-label="Профиль">${icon("user")}</button>
   </header>`;
+}
+
+function distribution(info) {
+  const parts = [
+    ["mastered", info.mastered],
+    ["needs_practice", info.practice],
+    ["repeat", info.repeat],
+  ].filter(([, count]) => count > 0);
+  if (!parts.length) return "";
+  return `<div class="dist" aria-hidden="true">${parts.map(([status, count]) => `<i data-status="${status}" style="flex:${count}"></i>`).join("")}</div>
+    <p class="legend"><span><i data-status="mastered"></i>усвоено ${info.mastered}</span><span><i data-status="needs_practice"></i>практика ${info.practice}</span><span><i data-status="repeat"></i>повторить ${info.repeat}</span></p>`;
 }
 
 function rollup(report) {
@@ -123,28 +155,24 @@ export function renderOverview() {
   const info = stats(store.report);
   const claims = store.report.pending_claims || [];
   const reviewer = store.report.claims_reviewer;
+  const name = store.displayName || store.report.display_name || "";
+  const subject = subjectTitle();
   return `<div class="stack">
     ${topbar()}
-    <section>
-      <h1 id="page-title" tabindex="-1">${esc(classTitle())}</h1>
-      <p class="quiet">${esc(store.report.subject_title || "Предмет появится после назначения")}</p>
-    </section>
-    <section>
-      <p class="figure">${info.students}</p>
-      <p class="figure-label">${info.students ? "учеников в классе" : "Учеников пока нет"}</p>
-    </section>
-    ${info.known ? `<section class="sheet-block">
-      <button class="line" type="button" data-act="nav" data-screen="class"><span><b>${info.share}%</b><small>тем со статусом «усвоено» среди уже проверенных</small></span></button>
-      <button class="line" type="button" data-act="nav" data-screen="class"><span><b>${info.weak.length}</b><small>нужна практика или повтор</small></span></button>
-      ${info.ranked.slice(0, 3).map(([title, bag]) => `<button class="line" type="button" data-act="focus-topic" data-topic="${esc(title)}"><span><b>${esc(title)}</b><small>повторить ${bag.repeat}, практика ${bag.practice}</small></span></button>`).join("")}
-    </section>` : `<section>
-      <h2>Класс готов к работе</h2>
-      <p class="quiet">Здесь появятся результаты учеников после первых проверок.</p>
-      <button class="btn btn-primary" type="button" data-act="compose">Создать первое задание</button>
-    </section>`}
-    ${reviewer ? `<p class="quiet">Заявки проверяет ${esc(reviewer)}. ${store.report.can_manage_school ? "Учитель-администратор" : ""}</p>` : ""}
-    ${store.report.can_manage_school ? `<button class="line" type="button" data-act="nav" data-screen="manage"><span><b>Заявки</b><small>${claims.length ? `${claims.length} ждут` : "новых нет"}</small></span></button>` : ""}
+    <div class="who">
+      <b>${esc(name || "Имя не пришло из профиля")}</b>
+      <span>${esc(roleName())}</span>
+    </div>
+    <div class="stat-row">
+      <div><b>${info.students}</b><span>${info.students ? `${plural(info.students, "ученик", "ученика", "учеников")} в классе` : "учеников пока нет"}</span></div>
+      <div><b>${info.known ? info.weak.length : 0}</b><span>${info.known ? "нужна практика" : "проверок ещё нет"}</span></div>
+      ${info.known ? distribution(info) : ""}
+    </div>
+    ${info.known ? `<div class="rows">${info.ranked.slice(0, 4).map(([title, bag]) => `<button class="line" type="button" data-act="focus-topic" data-topic="${esc(title)}"><span><b>${esc(title)}</b><small>повторить ${bag.repeat}, практика ${bag.practice}</small></span></button>`).join("")}</div>` : `<div class="invite"><img src="/assets/logo.jpg" alt=""><div><h1 id="page-title">Проверок ещё не было</h1><p class="quiet">${esc(classTitle())}${subject ? `, ${esc(subject)}` : ""}. После первой работы здесь станет видно, какая тема просела.</p></div><button class="btn btn-primary" type="button" data-act="compose">Создать первую работу</button></div>`}
     ${store.report.frequent_mistakes ? `<p>${esc(store.report.frequent_mistakes)}</p>` : ""}
+    ${reviewer ? `<p class="quiet">Заявки проверяет ${esc(reviewer)}.</p>` : ""}
+    ${store.report.can_manage_school ? `<button class="line" type="button" data-act="nav" data-screen="manage"><span><b>Заявки</b><small>${claims.length ? `${claims.length} ждут решения` : "новых нет"}</small></span></button>` : ""}
+    ${info.known ? `<button class="btn btn-primary" type="button" data-act="compose">Создать работу</button>` : ""}
   </div>`;
 }
 
@@ -166,7 +194,7 @@ export function renderClass() {
     ["mastered", "Усвоено"],
     ["needs_practice", "Практика"],
     ["repeat", "Повторить"],
-    ["none", "Без попыток"],
+    ["none", "Пусто"],
   ];
   const people = (report.students || [])
     .map((student) => ({ student, topics: visibleTopics(student) }))
@@ -177,38 +205,22 @@ export function renderClass() {
     : [];
   return `<div class="stack">
     ${topbar()}
-    <div>
-      <p class="kicker">${esc(classTitle())}</p>
-      <h1 id="page-title" tabindex="-1">Карта класса</h1>
-      <p class="hint">Три статуса. Тексты вопросов учеников сюда не попадают.</p>
-    </div>
-    ${(report.pending_students || []).length ? `<section class="card"><h2>Ждут подтверждения</h2>${report.pending_students.map((student) => `<button class="btn btn-ghost" type="button" data-act="approve-join" data-id="${student.id}">${esc(student.display_name)}</button>`).join("")}</section>` : ""}
-    <p class="hint">Код класса ${esc(report.join_code || "")}. ${report.join_open ? "Набор открыт." : "Набор закрыт."}</p>
-    ${report.frequent_mistakes ? `<div class="banner banner-warn"><p>${esc(report.frequent_mistakes)}</p></div>` : ""}
-    <div class="chips" role="tablist" aria-label="Статус">
+    <div class="who"><b>Карта класса</b><span>${esc(classTitle())}${subjectTitle() ? `, ${esc(subjectTitle())}` : ""}</span></div>
+    ${report.frequent_mistakes ? `<p>${esc(report.frequent_mistakes)}</p>` : `<p class="quiet">Личные вопросы учеников на эту карту не попадают.</p>`}
+    <div class="filters" role="tablist" aria-label="Статус">
       ${filters.map(([id, label]) => `<button class="chip ${store.filters.status === id ? "is-on" : ""}" type="button" data-act="filter-status" data-status="${id}">${label}</button>`).join("")}
     </div>
-    <label class="field-label" for="topic-filter">Тема</label>
-    <select id="topic-filter" class="field" aria-label="Тема">
-      <option value="all" ${store.filters.topic === "all" ? "selected" : ""}>Все темы</option>
-      ${(report.topics || []).map((topic) => `<option value="${esc(topic.title)}" ${store.filters.topic === topic.title ? "selected" : ""}>${esc(topic.title)}</option>`).join("")}
-    </select>
-    <div class="topic-grid">
-      ${rows.map((row) => `<button class="card topic-card ${store.filters.topic === row.title ? "is-on" : ""}" type="button" data-act="focus-topic" data-topic="${esc(row.title)}">
-        <strong>${esc(row.title)}</strong>
-        ${meter(row)}
-        <span class="hint">усвоено ${row.mastered} · практика ${row.practice} · повтор ${row.repeat}</span>
-      </button>`).join("")}
+    <div class="rows">
+      ${rows.map((row) => `<div>
+        <button class="topic-row ${store.filters.topic === row.title ? "is-on" : ""}" type="button" data-act="focus-topic" data-topic="${esc(row.title)}">
+          <strong>${esc(row.title)}</strong>
+          ${meter(row)}
+          <span class="meta">усвоено ${row.mastered}, практика ${row.practice}, повтор ${row.repeat}</span>
+        </button>
+        ${store.filters.topic === row.title ? `<div class="reveal-body"><p>${weakNames.length ? `Нужна работа: ${esc(weakNames.join(", "))}.` : "По этой теме нет учеников со статусом «повторить» или «нужна практика»."}</p><button class="btn btn-primary" type="button" data-act="compose" data-topic="${esc(row.title)}">Собрать задание по теме</button></div>` : ""}
+      </div>`).join("")}
     </div>
-    ${selected ? `<section class="card">
-      <h2>${esc(selected.title)}</h2>
-      <p>${weakNames.length ? `Дополнительная работа: ${esc(weakNames.join(", "))}.` : "По этой теме нет учеников со статусом «повторить» или «нужна практика»."}</p>
-      <button class="btn btn-primary" type="button" data-act="compose" data-topic="${esc(selected.title)}">Собрать задание по теме</button>
-    </section>` : ""}
-    ${people.length ? `<div class="people">${people.map(({ student, topics }) => `<article class="card person">
-      <h2>${esc(student.display_name)}</h2>
-      <ul class="plain">${topics.map((topic) => `<li><span>${esc(topic.title)}</span>${pill(topic.status)}${topic.correct_percent == null ? "" : `<span class="hint">${topic.correct_percent}%</span>`}</li>`).join("")}</ul>
-    </article>`).join("")}</div>` : emptyBlock("Никого не нашли", "Смените фильтр — по этим условиям в классе пусто.")}
+    ${(report.priorities || []).length ? `<div><h2>Кому помочь</h2><ul class="plain">${report.priorities.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></div>` : ""}
     <div class="table-wrap map-table">
       <table>
         <thead><tr><th>Ученик</th>${(report.topics || []).filter((topic) => store.filters.topic === "all" || topic.title === store.filters.topic).map((topic) => `<th>${esc(topic.title)}</th>`).join("")}</tr></thead>
@@ -222,22 +234,32 @@ export function renderClass() {
         </tbody>
       </table>
     </div>
-    ${(report.priorities || []).length ? `<section class="card"><h2>Кому помочь</h2><ul class="plain">${report.priorities.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></section>` : ""}
   </div>`;
+}
+
+function workLine(item) {
+  const published = item.status === "published";
+  const finished = published && item.recipients && item.done >= item.recipients;
+  const label = !published ? "черновик" : finished ? "завершено" : `сдали ${item.done || 0} из ${item.recipients || 0}`;
+  return `<button class="line" type="button" data-act="open-result" data-id="${item.id}"><span><b>${esc(item.title)}</b><small>${esc(item.subject || "")} · ${label}</small></span></button>`;
 }
 
 export function renderTasks() {
   const failed = store.assignmentsError && !store.assignments;
   const items = store.assignments?.items || [];
   if (store.resultView) return renderResult(store.resultView);
+  const drafts = items.filter((item) => item.status !== "published");
+  const active = items.filter((item) => item.status === "published" && !(item.recipients && item.done >= item.recipients));
+  const done = items.filter((item) => item.status === "published" && item.recipients && item.done >= item.recipients);
+  const block = (title, list) => list.length ? `<div><p class="group-label">${title}</p><div class="rows">${list.map(workLine).join("")}</div></div>` : "";
   return `<div class="stack">
     ${topbar()}
     <div class="row-between">
-      <h1 id="page-title" tabindex="-1">Задания</h1>
-      <button class="btn btn-primary" type="button" data-act="compose">Создать</button>
+      <h1>Задания</h1>
+      ${items.length ? `<button class="btn btn-primary" type="button" data-act="compose">Создать работу</button>` : ""}
     </div>
     ${failed ? errorBlock(store.assignmentsError.message, "retry") : ""}
-    ${items.length ? `<section class="sheet-block">${items.map((item) => `<button class="line" type="button" data-act="open-result" data-id="${item.id}"><span><b>${esc(item.title)}</b><small>${esc(item.status === "published" ? "опубликовано" : "черновик")} · сдали ${item.done || 0} из ${item.recipients || 0}</small></span></button>`).join("")}</section>` : emptyBlock("Работ пока нет", store.assignments?.detail || "Создай первое задание для класса.")}
+    ${items.length ? `${block("Активные", active)}${block("Черновики", drafts)}${block("Завершённые", done)}` : `<div class="invite"><img src="/assets/logo.jpg" alt=""><div><h2>Работ ещё нет</h2><p class="quiet">Первая проверка покажет, кто в ${esc(classTitle())} уже держит тему.</p></div><button class="btn btn-primary" type="button" data-act="compose">Создать первую работу</button></div>`}
   </div>`;
 }
 
@@ -256,20 +278,16 @@ function renderResult(work) {
 
 export function renderStimul() {
   const samples = ["Собери короткую проверку по дробям", "Какие темы класса сейчас слабее", "Придумай устный вопрос на дискриминант"];
-  return `<div class="stack">
+  return `<div class="stimul">
     ${topbar()}
-    <section class="focus">
-      <h1 id="page-title" tabindex="-1">Стимул</h1>
-      <div class="pulse-line" aria-hidden="true"></div>
-      <p>Помощник учителя готовится к запуску.</p>
-      <p class="quiet">Это отдельный контекст учителя. Ответы модели не имитируются.</p>
-    </section>
-    <div class="chat">
-      ${store.stimulDraft ? `<div class="bubble me">${esc(store.stimulDraft)}</div>` : ""}
+    <div class="who"><b>Помощник учителя</b><span>модель ещё не подключена</span></div>
+    <div class="stimul-thread">
+      ${store.stimulDraft ? `<div class="bubble me">${esc(store.stimulDraft)}</div>` : `<p class="quiet">Здесь будет диалог про задания и типичные ошибки класса. Ответ модели сейчас не генерируется.</p>`}
       ${store.stimulNote ? `<div class="bubble">${esc(store.stimulNote)}</div>` : ""}
     </div>
-    <div class="chips">${samples.map((text) => `<button class="chip" type="button" data-act="stimul-sample" data-text="${esc(text)}">${esc(text)}</button>`).join("")}</div>
+    <div class="prompt-list">${samples.map((text) => `<button type="button" data-act="stimul-sample" data-text="${esc(text)}">${esc(text)}</button>`).join("")}</div>
     <form id="stimul-form" class="composer">
+      <label class="btn btn-ghost file">Фото<input type="file" accept="image/*" disabled aria-label="Вложение появится вместе с моделью"></label>
       <input id="stimul-input" class="field" placeholder="Запрос помощнику" value="${esc(store.stimulDraft)}" aria-label="Запрос помощнику">
       <button class="btn btn-primary" type="submit">Отправить</button>
     </form>
@@ -324,27 +342,21 @@ function wizardBody() {
         </article>`).join("")}</div>
         <p class="hint">Пока вы не нажали кнопку, правки живут только на этом экране.</p>` : ""}
       ${wizard.sendError ? `<div class="banner banner-warn" role="status"><strong>Отправка не выполнена</strong><p>${esc(wizard.sendError)}</p></div>` : ""}
-      <div class="actions">
-        <button class="btn btn-ghost" type="button" data-act="wizard-back">Изменить параметры</button>
-        <button class="btn btn-ghost" type="button" data-act="redraft" ${store.busy ? "disabled" : ""}>Собрать заново</button>
-        <button class="btn btn-ghost" type="button" data-act="save-draft" ${!draft || store.busy ? "disabled" : ""}>Сохранить черновик</button>
-        <button class="btn btn-primary" type="button" data-act="send-assignment" ${!draft || store.busy ? "disabled" : ""}>Опубликовать</button>
-      </div>`;
+      <button class="text-btn" type="button" data-act="redraft" ${store.busy ? "disabled" : ""}>Собрать заново</button>`;
   }
-  const nav = wizard.step < 4
-    ? `<div class="wizard-nav">
-        ${wizard.step > 1 ? `<button class="btn btn-ghost" type="button" data-act="wizard-back">Назад</button>` : ""}
-        <button class="btn btn-primary" type="button" data-act="wizard-next">Дальше</button>
-      </div>`
-    : "";
-  return `<div class="stack">
-    ${topbar()}
-    <p class="kicker">Шаг ${wizard.step} из 4</p>
-    <div class="track"><span style="width:${wizard.step * 25}%"></span></div>
-    <h1 id="page-title" tabindex="-1">${titles[wizard.step - 1]}</h1>
+  const actions = wizard.step < 4
+    ? `${wizard.step > 1 ? `<button class="btn btn-ghost" type="button" data-act="wizard-back">Назад</button>` : `<button class="btn btn-ghost" type="button" data-act="nav" data-screen="tasks">Закрыть</button>`}
+        <button class="btn btn-primary" type="button" data-act="wizard-next">Дальше</button>`
+    : `<button class="btn btn-ghost" type="button" data-act="save-draft" ${!wizard.draft || store.busy ? "disabled" : ""}>Черновик</button>
+        <button class="btn btn-primary" type="button" data-act="send-assignment" ${!wizard.draft || store.busy ? "disabled" : ""}>Опубликовать</button>`;
+  return `<div class="stack flow">
+    <header class="flow-head">
+      <div class="who"><b>${titles[wizard.step - 1]}</b><span>Шаг ${wizard.step} из 4</span></div>
+      <ol class="steps" aria-label="Этапы">${titles.map((title, index) => `<li class="${index + 1 < wizard.step ? "is-done" : index + 1 === wizard.step ? "is-now" : ""}" title="${esc(title)}"></li>`).join("")}</ol>
+    </header>
     ${wizard.fieldError ? `<p class="field-error">${esc(wizard.fieldError)}</p>` : ""}
     ${body}
-    ${nav}
+    <div class="flow-bar">${actions}</div>
   </div>`;
 }
 
@@ -385,18 +397,22 @@ export function renderResults() {
 }
 
 export function renderProfile() {
-  const name = store.displayName || "Учитель";
+  const name = store.displayName || "";
   const admin = Boolean(store.report?.can_manage_school || store.canManage);
+  const reviewer = store.report?.claims_reviewer;
+  const subject = subjectTitle();
   return `<div class="stack">
     ${topbar()}
-    <section class="profile-card">
-      <span class="avatar avatar-lg" aria-hidden="true">${esc(initials(name))}</span>
-      <h1 id="page-title" tabindex="-1">${esc(name)}</h1>
-      <p class="quiet">${admin ? "Учитель-администратор" : "Учитель"} · ${esc(classTitle())}</p>
-      <p>В кабинете статусы тем и итоги работ. Личные вопросы учеников сюда не приходят.</p>
-      <button class="btn btn-ghost" type="button" data-act="notices">Уведомления</button>
-      ${admin ? `<button class="btn btn-primary" type="button" data-act="nav" data-screen="manage">Управление школой</button>` : ""}
-    </section>
+    <h1>${esc(name || "Имя не пришло из профиля")}</h1>
+    <p>${admin ? "Учитель-администратор" : "Учитель"}</p>
+    <div class="rows">
+      <div class="line"><span><b>Класс</b><small>${esc(classTitle())}</small></span></div>
+      <div class="line"><span><b>Предмет</b><small>${esc(subject || "в назначении не указан")}</small></span></div>
+      <div class="line"><span><b>Заявки проверяет</b><small>${esc(reviewer || "ответственный не назначен")}</small></span></div>
+    </div>
+    <p class="quiet">Личные вопросы учеников в кабинет не приходят.</p>
+    <button class="btn btn-ghost" type="button" data-act="notices">Уведомления</button>
+    ${admin ? `<button class="btn btn-primary" type="button" data-act="nav" data-screen="manage">Заявки и пользователи</button>` : ""}
   </div>`;
 }
 

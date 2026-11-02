@@ -114,8 +114,8 @@ export function teacherPreview() {
       stalled: ["Кирилл — Геометрия, последняя попытка 01.10"],
       subject_title: "Математика",
       classes: [{ id: 1, title: "8Б", subjects: [{ id: 1, title: "Математика" }] }],
-      can_manage_school: false,
-      claims_reviewer: null,
+      can_manage_school: true,
+      claims_reviewer: "Марина Сергеевна",
       pending_claims: [],
     },
     assignments: {

@@ -93,10 +93,10 @@ function mast(name, klass) {
   const unread = Number(store.notices?.unread) || 0;
   return `<header class="mast">
     ${brand()}
-    <span class="class-mark">${esc(klass || "без класса")}</span>
-    <button class="bell" type="button" data-act="notices" aria-label="Уведомления">${icon("bell")}${unread ? `<i class="dot"></i>` : ""}</button>
+    <button class="icon-btn" type="button" data-act="notices" aria-label="Уведомления">${icon("bell")}${unread ? `<i class="dot"></i>` : ""}</button>
+    <button class="icon-btn" type="button" data-act="nav" data-screen="profile" aria-label="Профиль">${icon("user")}</button>
   </header>
-  <p class="quiet">${esc(name || "Ученик")}</p>`;
+  <div class="who"><b>${esc(name || "Имя не пришло")}</b><span>${esc(klass || "класс не указан")}</span></div>`;
 }
 
 function topicLine(topic) {
@@ -114,7 +114,7 @@ export function renderHome() {
   if (store.loading && !progress) return skeleton();
   if (!progress) return errorBlock(store.progressError?.message, "retry");
   const stats = summarize(progress.topics);
-  const name = progress.display_name || store.displayName || "Ученик";
+  const name = progress.display_name || store.displayName || "";
   const klass = progress.class_title || "";
   const open = inProgress(store.openLesson) ? store.openLesson : null;
   const photo = store.photoURL
@@ -134,24 +134,17 @@ export function renderHome() {
     : `<p class="quiet">Следующий шаг появится после первой проверки.</p>`;
   return `<div class="stack">
     ${mast(name, klass)}
-    <section class="focus">
-      <p class="quiet">${esc(klass ? `Математика, ${klass}` : "Математика")}</p>
-      <h1 id="page-title" tabindex="-1">Что будем разбирать сегодня?</h1>
-      <div class="pulse-line" aria-hidden="true"></div>
-      <div class="focus-actions">
+    <section>
+      <h1>Что будем разбирать сегодня?</h1>
+      <div class="ask-actions">
         <button class="btn btn-primary" type="button" data-act="toggle-ask">Задать вопрос</button>
-        <label class="btn btn-lime file">Отправить фотографию<input id="photo" type="file" accept="image/*" aria-label="Отправить фотографию"></label>
+        <label class="btn btn-ghost file">Фото страницы<input id="photo" type="file" accept="image/*" aria-label="Отправить фотографию"></label>
       </div>
       ${composer}
     </section>
     ${open ? `<button class="line" type="button" data-act="resume"><span><b>${esc(open.topic)}</b><small>Продолжить занятие</small></span></button>` : ""}
-    <section>
-      ${stats.known
-        ? `<p class="figure">${stats.known}</p><p class="figure-label">${plural(stats.known, "тема с попытками", "темы с попытками", "тем с попытками")}</p>`
-        : `<p class="figure">0</p><p class="figure-label">Проверенных ответов пока нет. Начни с вопроса выше.</p>`}
-    </section>
-    <section class="sheet-block">${next}</section>
-    <section class="sheet-block">${(progress.topics || []).map(topicLine).join("") || `<p class="quiet">Темы появятся, когда программа класса будет в базе.</p>`}</section>
+    <div class="rows">${next}${(progress.topics || []).map(topicLine).join("")}</div>
+    <p class="quiet">${stats.known ? `${stats.known} ${plural(stats.known, "тема с ответами", "темы с ответами", "тем с ответами")}.` : "Проверенных ответов пока нет. Начни с вопроса выше."}</p>
   </div>`;
 }
 
@@ -343,19 +336,18 @@ export function renderHistory() {
 export function renderProfile() {
   const progress = store.progress;
   if (!progress && store.progressError) return errorBlock(store.progressError.message, "retry");
-  const name = progress?.display_name || store.displayName || "Ученик";
+  const name = progress?.display_name || store.displayName || "";
   const done = Number(progress?.completed_tasks) || 0;
   return `<div class="stack">
     ${mast(name, progress?.class_title)}
-    <section class="profile-card">
-      <span class="avatar avatar-lg" aria-hidden="true">${esc(initials(name))}</span>
-      <h1 id="page-title" tabindex="-1">${esc(name)}</h1>
-      <p class="quiet">${esc(progress?.class_title ? `Класс ${progress.class_title}, математика` : "Математика")}</p>
-      <p>Серия ${Number(progress?.streak_days) || 0} дн. Проверено ${done} ${plural(done, "задание", "задания", "заданий")}.</p>
-      <p>Учитель видит статус темы, а не текст вопроса.</p>
-      <button class="btn btn-primary" type="button" data-act="nav" data-screen="history">История занятий</button>
-      <button class="btn btn-ghost" type="button" data-act="notices">Уведомления</button>
-    </section>
+    <h1>${esc(name || "Имя не пришло")}</h1>
+    <div class="rows">
+      <div class="line"><span><b>Класс</b><small>${esc(progress?.class_title || "не указан")}</small></span></div>
+      <div class="line"><span><b>Проверено</b><small>${done} ${plural(done, "задание", "задания", "заданий")}, серия ${Number(progress?.streak_days) || 0} дн.</small></span></div>
+    </div>
+    <p class="quiet">Учитель видит статус темы, а не текст вопроса.</p>
+    <button class="btn btn-ghost" type="button" data-act="nav" data-screen="history">История занятий</button>
+    <button class="btn btn-ghost" type="button" data-act="notices">Уведомления</button>
   </div>`;
 }
 
@@ -363,13 +355,14 @@ export function renderTasks() {
   if (store.openWork) return renderWork(store.openWork);
   if (store.worksError && !store.works) return errorBlock(store.worksError.message, "retry");
   const items = store.works?.items || [];
-  if (store.preview && !items.length) {
-    return `<div class="stack">${mast(store.displayName, "8Б")}<h1 id="page-title" tabindex="-1">Задания</h1>${emptyBlock("В демонстрации заданий нет", "Это не список с сервера. Открой кабинет из чата, чтобы увидеть свои работы.")}</div>`;
-  }
+  const groups = [
+    ["Новые", items.filter((item) => item.status !== "done")],
+    ["Сделанные", items.filter((item) => item.status === "done")],
+  ];
   return `<div class="stack">
     ${mast(store.progress?.display_name || store.displayName, store.progress?.class_title)}
-    <h1 id="page-title" tabindex="-1">Задания</h1>
-    ${items.length ? `<section class="sheet-block">${items.map((item) => `<button class="line" type="button" data-act="open-work" data-id="${item.id}"><span><b>${esc(item.title)}</b><small>${esc(item.subject)} · ${esc(item.author)} · ${item.status === "done" ? "сделано" : "новое"}</small></span></button>`).join("")}</section>` : emptyBlock("Заданий пока нет", "Когда учитель опубликует работу, она появится здесь и в чате MAX.")}
+    <h1>Задания</h1>
+    ${items.length ? groups.filter(([, list]) => list.length).map(([title, list]) => `<div><p class="group-label">${title}</p><div class="rows">${list.map((item) => `<button class="line" type="button" data-act="open-work" data-id="${item.id}"><span><b>${esc(item.title)}</b><small>${esc(item.subject)} · ${esc(item.author)}</small></span></button>`).join("")}</div></div>`).join("") : `<div class="invite"><img src="/assets/logo.jpg" alt=""><div><h2>Заданий пока нет</h2><p class="quiet">${store.preview ? "В демонстрации список с сервера не подставляется." : "Когда учитель опубликует работу, она появится здесь и в чате."}</p></div></div>`}
   </div>`;
 }
 
@@ -391,20 +384,16 @@ function renderWork(work) {
 
 export function renderStimul() {
   const samples = ["Как сложить дроби с разным знаменателем?", "Объясни дискриминант на коротком примере", "С чего начать геометрию?"];
-  return `<div class="stack">
+  return `<div class="stimul">
     ${mast(store.progress?.display_name || store.displayName, store.progress?.class_title)}
-    <section class="focus">
-      <h1 id="page-title" tabindex="-1">Стимул</h1>
-      <div class="pulse-line" aria-hidden="true"></div>
-      <p>ИИ-помощник готовится к запуску.</p>
-      <p class="quiet">Сообщение сейчас никуда не отправляется и не притворяется ответом модели.</p>
-    </section>
-    <div class="chat">
-      ${(store.stimulDraft ? `<div class="bubble me">${esc(store.stimulDraft)}</div>` : "")}
+    <div class="who"><b>Помощник по математике</b><span>модель ещё не подключена</span></div>
+    <div class="stimul-thread">
+      ${store.stimulDraft ? `<div class="bubble me">${esc(store.stimulDraft)}</div>` : `<p class="quiet">Здесь будет разбор твоих вопросов. Ответ модели сейчас не генерируется и учителю не уходит.</p>`}
       ${store.stimulNote ? `<div class="bubble">${esc(store.stimulNote)}</div>` : ""}
     </div>
-    <div class="chips">${samples.map((text) => `<button class="chip" type="button" data-act="stimul-sample" data-text="${esc(text)}">${esc(text)}</button>`).join("")}</div>
+    <div class="prompt-list">${samples.map((text) => `<button type="button" data-act="stimul-sample" data-text="${esc(text)}">${esc(text)}</button>`).join("")}</div>
     <form id="stimul-form" class="composer">
+      <label class="btn btn-ghost file">Фото<input type="file" accept="image/*" disabled aria-label="Вложение появится вместе с моделью"></label>
       <input id="stimul-input" class="field" placeholder="Вопрос помощнику" value="${esc(store.stimulDraft)}" aria-label="Вопрос помощнику">
       <button class="btn btn-primary" type="submit">Отправить</button>
     </form>

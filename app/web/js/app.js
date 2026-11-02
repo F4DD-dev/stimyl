@@ -17,7 +17,7 @@ import {
   submitAnswer,
   submitQuestion,
   takePhoto,
-} from "./student.js";
+} from "./student.js?v=6";
 import { go, refresh, store, subscribe } from "./store.js";
 import {
   focusTopic,
@@ -37,7 +37,7 @@ import {
   toggleStudent,
   wizardBack,
   wizardNext,
-} from "./teacher.js";
+} from "./teacher.js?v=6";
 import { acceptOne, appoint, changePerson, loadManage, rejectOne } from "./manage.js";
 import { brand, esc, icon, skeleton } from "./ui.js";
 
@@ -272,7 +272,7 @@ function tabs() {
   return `<nav class="tabbar" aria-label="Разделы">${items.map(([id, label, glyph]) => {
     const active = current === id;
     if (glyph === "core") {
-      return `<button type="button" class="tab tab-core${active ? " is-active" : ""}" data-act="nav" data-screen="${id}" ${active ? 'aria-current="page"' : ""}><span class="mark">С</span><span>${label}</span></button>`;
+      return `<button type="button" class="tab tab-core${active ? " is-active" : ""}" data-act="nav" data-screen="${id}" ${active ? 'aria-current="page"' : ""}><img class="tab-logo" src="/assets/logo.jpg" alt=""><span>${label}</span></button>`;
     }
     return `<button type="button" class="tab${active ? " is-active" : ""}" data-act="nav" data-screen="${id}" ${active ? 'aria-current="page"' : ""}>${icon(glyph)}<span>${label}</span></button>`;
   }).join("")}</nav>`;
@@ -301,7 +301,7 @@ function sidenav() {
     <p class="side-note">${teacher ? "Кабинет учителя" : "Кабинет ученика"}</p>
     ${items.map(([id, label, glyph]) => {
       const active = current === id;
-      const mark = glyph === "core" ? `<span class="mark">С</span>` : icon(glyph);
+      const mark = glyph === "core" ? `<img class="tab-logo" src="/assets/logo.jpg" alt="">` : icon(glyph);
       return `<button type="button" class="side-link${active ? " is-active" : ""}" data-act="nav" data-screen="${id}" ${active ? 'aria-current="page"' : ""}>${mark}<span>${label}</span></button>`;
     }).join("")}
   </aside>`;
@@ -340,7 +340,7 @@ function frame(inner) {
   return `<div class="frame">
     ${sidenav()}
     <div class="content">
-      ${store.preview ? `<div class="demo-banner">Демонстрационный просмотр. Это не результаты учеников и не ответ сервера.</div>` : ""}
+      ${store.preview ? `<div class="demo-banner">Демонстрационный просмотр. Имена и цифры из локального макета, не из базы и не из API.</div>` : ""}
       <main class="page"><div class="page-inner">${inner}</div></main>
     </div>
   </div>${tabs()}`;
@@ -412,10 +412,7 @@ function pageInner() {
 }
 
 function focusTitle() {
-  if (focused !== store.screen) {
-    focused = store.screen;
-    if (!store.fieldError) document.querySelector("#page-title")?.focus({ preventScroll: true });
-  }
+  focused = store.screen;
   if (store.fieldError) document.querySelector("#question, #answer, #goal")?.focus();
 }
 
@@ -449,6 +446,7 @@ function syncBack() {
 function paint() {
   document.body.classList.toggle("role-teacher", store.role === "teacher");
   document.body.classList.toggle("role-student", store.role === "student");
+  document.body.classList.toggle("is-flow", store.screen === "compose" || store.screen === "lesson");
   const app = document.querySelector("#app");
   if (!app) return;
   if (store.booting) {
