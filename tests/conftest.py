@@ -67,13 +67,16 @@ class MemorySender:
         return None
 
 
-def _stored_button(button: OutboundButton) -> dict[str, str]:
-    return {
+def _stored_button(button: OutboundButton) -> dict[str, str | int]:
+    stored: dict[str, str | int] = {
         "text": button.text,
         "payload": button.payload,
         "url": button.url,
         "web_app": button.web_app,
     }
+    if button.contact_id:
+        stored["contact_id"] = button.contact_id
+    return stored
 
 
 @dataclass

@@ -1,5 +1,6 @@
 """Вход в бота: согласие, роль, класс. Дальше учебный сценарий не идёт, пока нет пользователя."""
 
+import logging
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -55,6 +56,8 @@ from app.domain.directory import (
     role_reply,
     school_reply,
 )
+
+logger = logging.getLogger(__name__)
 
 CONSENT_YES = "consent_yes"
 CONSENT_NO_PAYLOAD = "consent_no"
@@ -279,11 +282,17 @@ async def _send_code(session: AsyncSession, user: User, settings: Settings) -> G
     if not issued.ok:
         return GateOutcome(user, [GateReply(issued.detail)], True)
     reply = GateReply(cabinet_text())
-    if username:
+    contact_id = int(settings.bot_contact_id or 0)
+    if username and contact_id:
         reply.app_text = "Открыть кабинет"
         reply.app_payload = issued.ticket
         reply.app_name = username
-        reply.app_contact = int(settings.bot_contact_id or 0)
+        reply.app_contact = contact_id
+    elif not link:
+        logger.warning("open_app skipped contact_id missing")
+        return GateOutcome(user, [GateReply("Кнопку в приложение сейчас не собрать.")], True)
+    elif username:
+        logger.warning("open_app skipped contact_id missing")
     if link:
         reply.link_text = "Открыть в браузере" if username else "Открыть кабинет"
         reply.link_url = f"{base}/cabinet?ticket={issued.ticket}"
@@ -297,9 +306,13 @@ async def _send_app(session: AsyncSession, user: User, settings: Settings) -> Ga
     issued: IssuedCode = await issue_app_ticket(session, user, settings)
     if not issued.ok:
         return GateOutcome(user, [GateReply(issued.detail)], True)
+    contact_id = int(settings.bot_contact_id or 0)
+    if not contact_id:
+        logger.warning("open_app skipped contact_id missing")
+        return GateOutcome(user, [GateReply("Кнопку в приложение сейчас не собрать.")], True)
     reply = GateReply("Кнопка откроет твой прогресс. Она действует 5 минут и только один раз.")
     reply.app_text = "Мой прогресс"
     reply.app_payload = issued.ticket
     reply.app_name = username
-    reply.app_contact = int(settings.bot_contact_id or 0)
+    reply.app_contact = contact_id
     return GateOutcome(user, [reply], True)

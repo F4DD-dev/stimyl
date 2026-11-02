@@ -16,6 +16,8 @@ async def test_pages_and_assets_load(api):
     script = await api.client.get("/assets/js/api.js")
     assert student.status_code == 200
     assert 'data-entry="student"' in student.text
+    assert 'src="https://st.max.ru/js/max-web-app.js"' in student.text
+    assert "max-web-app.js\" async" not in student.text
     assert 'data-entry="auto"' in root.text
     assert css.status_code == 200
     assert "#5b5cf0" in css.text

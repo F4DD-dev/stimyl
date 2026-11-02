@@ -47,6 +47,7 @@ class MaxClient:
         params: dict[str, object] = (
             {"chat_id": chat_id} if chat_id is not None else {"user_id": int(user_id)}
         )
+        _note_open_app(buttons)
         attachment = [_keyboard(buttons)] if buttons else None
         parts = _chunks(text)
         for index, part in enumerate(parts):
@@ -69,6 +70,7 @@ class MaxClient:
             if text:
                 message["text"] = text[:TEXT_LIMIT]
             if buttons:
+                _note_open_app(buttons)
                 message["attachments"] = [_keyboard(buttons)]
             body["message"] = message
         if notification:
@@ -184,6 +186,16 @@ def _error_code(response: httpx.Response) -> str:
     if isinstance(payload, dict) and isinstance(payload.get("code"), str):
         return payload["code"][:80]
     return ""
+
+
+def _note_open_app(buttons: list[OutboundButton]) -> None:
+    for button in buttons:
+        if button.web_app:
+            logger.info(
+                "open_app contact_id=%s payload=%s",
+                button.contact_id or 0,
+                "set" if button.payload else "missing",
+            )
 
 
 def _keyboard(buttons: list[OutboundButton]) -> dict[str, object]:

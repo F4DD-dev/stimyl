@@ -143,6 +143,7 @@ def _app_button(api) -> dict:
 async def test_progress_button_binds_the_miniapp_without_a_code(seeded):
     api = seeded
     api.app.state.settings.bot_username = "stimyl_bot"
+    api.app.state.settings.bot_contact_id = 515445879
     await post_update(api, message(900002, "Алексей", "/start", "progress-start"))
     await post_update(
         api,
@@ -152,6 +153,7 @@ async def test_progress_button_binds_the_miniapp_without_a_code(seeded):
     _assert_no_bare_code(text)
     button = _app_button(api)
     assert button["web_app"] == "stimyl_bot"
+    assert button["contact_id"] == 515445879
     assert button["text"] == "Мой прогресс"
     assert re.fullmatch(r"[\w-]{1,512}", button["payload"])
     assert "ticket=" not in text
@@ -234,6 +236,7 @@ async def test_teacher_cabinet_button_can_be_open_app(seeded):
     api = seeded
     _cabinet_base(api)
     api.app.state.settings.bot_username = "stimyl_bot"
+    api.app.state.settings.bot_contact_id = 515445879
     await post_update(api, message(900001, "Марина", "/start", "cabinet-start"))
     factory = api.app.state.session_factory
     async with factory() as session:
@@ -248,6 +251,7 @@ async def test_teacher_cabinet_button_can_be_open_app(seeded):
     link = _ticket_from_buttons(api)
     assert app_button["payload"] == link
     assert app_button["web_app"] == "stimyl_bot"
+    assert app_button["contact_id"] == 515445879
 
 
 def _cabinet_base(api) -> None:

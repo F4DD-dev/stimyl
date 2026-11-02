@@ -71,27 +71,46 @@ function ensureHash() {
   }
 }
 
+function hashParams() {
+  const raw = location.hash.startsWith("#") ? location.hash.slice(1) : "";
+  if (!raw || raw.startsWith("/")) return new URLSearchParams();
+  return new URLSearchParams(raw);
+}
+
 function readStartParam() {
   const unsafe = window.WebApp && window.WebApp.initDataUnsafe;
-  if (!unsafe || typeof unsafe !== "object") return "";
-  return String(unsafe.start_param || unsafe.startParam || "");
+  if (unsafe && typeof unsafe === "object") {
+    const value = unsafe.start_param || unsafe.startParam;
+    if (typeof value === "string" && value) return value;
+  }
+  const data = readInitData();
+  if (data) {
+    const fromData = new URLSearchParams(data).get("start_param") || "";
+    if (fromData) return fromData;
+  }
+  return hashParams().get("WebAppStartParam") || new URLSearchParams(location.search).get("WebAppStartParam") || "";
 }
 
 async function waitForBridge() {
-  for (let step = 0; step < 30; step += 1) {
-    const data = readInitData();
-    if (data && (readStartParam() || data.includes("start_param=") || step >= 20)) return;
+  for (let step = 0; step < 40; step += 1) {
+    if (readInitData()) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
 
 function readInitData() {
+  const fromHash = hashParams().get("WebAppData") || "";
+  if (fromHash) return fromHash;
   const fromApp = window.WebApp && typeof window.WebApp.initData === "string" ? window.WebApp.initData : "";
   if (fromApp) return fromApp;
-  const search = new URLSearchParams(location.search).get("initData");
-  if (search) return search;
-  if (!location.hash || location.hash.startsWith("#/")) return "";
-  return new URLSearchParams(location.hash.slice(1)).get("initData") || "";
+  const search = new URLSearchParams(location.search);
+  const fromSearch = search.get("WebAppData") || search.get("initData") || "";
+  if (fromSearch) return fromSearch;
+  try {
+    return sessionStorage.getItem("WebAppData") || "";
+  } catch {
+    return "";
+  }
 }
 
 function stripInit() {

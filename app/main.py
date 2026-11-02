@@ -95,19 +95,23 @@ async def _bring_up(app: FastAPI, settings: Settings) -> None:
 
 
 async def _learn_bot_name(app: FastAPI, settings: Settings) -> None:
-    """Имя бота нужно кнопке «Вернуться в чат». Короткий тестовый токен в сеть не пускаем."""
-    if (settings.bot_username or "").strip() or not settings.max_token or len(settings.max_token) <= 20:
+    """Имя и user_id бота. В open_app contact_id — это user_id, без него payload не доходит."""
+    known_name = (settings.bot_username or "").strip()
+    short_token = not settings.max_token or len(settings.max_token) <= 20
+    if short_token or (known_name and settings.bot_contact_id):
         app.state.bot_username = settings.bot_username
         return
     client = MaxClient(settings.max_token, settings.resolved_ca_path())
     try:
-        name = await client.my_username()
+        name, contact_id = await client.my_profile()
     finally:
         await client.aclose()
     if name:
         settings.bot_username = name
-        app.state.bot_username = name
-        logger.info("bot username=%s", name)
+    app.state.bot_username = settings.bot_username
+    if contact_id:
+        settings.bot_contact_id = contact_id
+    logger.info("bot username=%s contact_id=%s", settings.bot_username or "-", settings.bot_contact_id or 0)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

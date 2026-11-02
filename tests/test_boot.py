@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import text
@@ -9,6 +10,7 @@ from app.core.config import Settings, get_settings
 from app.db.migrate import upgrade_head
 from app.db.models import RuntimeFlag
 from app.jobs import HEARTBEAT_KEY
+from app.main import _learn_bot_name
 
 
 def test_listen_defaults_to_every_interface(monkeypatch):
@@ -33,6 +35,33 @@ def test_preflight_rejects_dev_on_prod():
     )
     with pytest.raises(SystemExit):
         preflight(settings)
+
+
+async def test_web_process_learns_the_bot_contact(monkeypatch):
+    class Fake:
+        def __init__(self, token: str, ca: str | None) -> None:
+            assert len(token) > 20
+            assert ca is None or isinstance(ca, str)
+
+        async def my_profile(self) -> tuple[str, int]:
+            return "se14271630_1_bot", 515445879
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr("app.main.MaxClient", Fake)
+    app = SimpleNamespace(state=SimpleNamespace())
+    settings = Settings(
+        database_url="postgresql+asyncpg://stimul:stimul@127.0.0.1:5432/stimul",
+        max_token="x" * 21,
+        session_secret="session-secret",
+        env="dev",
+        bot_username="already",
+    )
+    await _learn_bot_name(app, settings)
+    assert settings.bot_username == "se14271630_1_bot"
+    assert settings.bot_contact_id == 515445879
+    assert app.state.bot_username == "se14271630_1_bot"
 
 
 def test_shipped_root_is_one_certificate_and_the_image_does_not_rehash_a_bundle():
