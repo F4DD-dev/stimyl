@@ -16,9 +16,11 @@ from app.api.deps import DATABASE_DOWN
 from app.api.health import router as health_router
 from app.api.pages import router as pages_router
 from app.api.session import router as session_router
+from app.api.manage import router as manage_router
 from app.api.student import router as student_router
 from app.api.teacher import router as teacher_router
 from app.api.web_login import router as web_login_router
+from app.api.works import router as works_router
 from app.boot import (
     config_error,
     git_sha,
@@ -178,6 +180,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(session_router)
     app.include_router(teacher_router)
     app.include_router(student_router)
+    app.include_router(works_router)
+    app.include_router(manage_router)
     app.include_router(pages_router)
     if settings.dev and settings.env != "prod":
         from app.api.dev_whoami import router as dev_router

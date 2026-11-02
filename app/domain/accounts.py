@@ -922,6 +922,9 @@ async def approve_enrollment(session: AsyncSession, teacher_id: int, student_id:
     if row is None:
         return False
     row.status = "active"
+    student = await session.get(User, student_id)
+    if student is not None and student.status == "pending":
+        student.status = "active"
     await write_audit(session, teacher_id, "approve_join", student_id, None, str(row.class_id))
     return True
 

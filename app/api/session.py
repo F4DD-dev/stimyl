@@ -3,9 +3,11 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import client_ip, db_session, user_from_cookie
+from app.db.models import ClassTeacher, Enrollment, SchoolClass
 from app.domain.account_copy import BLOCKED, OPEN_FROM_CHAT, PENDING_BROWSER
 from app.domain.accounts import (
     BOT_PROVIDER,
@@ -94,10 +96,26 @@ async def open_session(
 async def current_session(
     request: Request,
     session: AsyncSession = Depends(db_session),
-) -> dict[str, str]:
+) -> dict:
     user = await user_from_cookie(request, session)
+    class_title = await session.scalar(
+        select(SchoolClass.title)
+        .join(Enrollment, Enrollment.class_id == SchoolClass.id)
+        .where(Enrollment.user_id == user.id, Enrollment.status == "active")
+        .order_by(SchoolClass.id)
+    )
+    if class_title is None:
+        class_title = await session.scalar(
+            select(SchoolClass.title)
+            .join(ClassTeacher, ClassTeacher.class_id == SchoolClass.id)
+            .where(ClassTeacher.user_id == user.id)
+            .order_by(SchoolClass.id)
+        )
     return {
         "role": user.role,
         "display_name": user.display_name,
         "csrf": getattr(request.state, "csrf", ""),
+        "can_manage_school": bool(user.can_manage_school),
+        "class_title": class_title or "",
+        "status": user.status,
     }

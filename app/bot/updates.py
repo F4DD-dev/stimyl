@@ -14,6 +14,8 @@ class Incoming:
     photo_token: str | None = None
     photo_url: str | None = None
     start_payload: str | None = None
+    contact_vcf: str | None = None
+    contact_hash: str | None = None
 
 
 def parse_update(update: dict) -> Incoming | None:
@@ -67,7 +69,9 @@ def _message(update: dict) -> Incoming | None:
         return None
     body = message.get("body") or {}
     text = body.get("text") if isinstance(body.get("text"), str) else None
-    photo_token, photo_url = _image(body.get("attachments") or [])
+    attachments = body.get("attachments") or []
+    photo_token, photo_url = _image(attachments)
+    contact_vcf, contact_hash = _contact(attachments)
     recipient = message.get("recipient") or {}
     chat_type = recipient.get("chat_type")
     if chat_type not in {None, "dialog"}:
@@ -75,7 +79,9 @@ def _message(update: dict) -> Incoming | None:
     stripped = text.strip() if text else ""
     folded = stripped.casefold()
     start_payload = None
-    if folded in {"/start", "start"}:
+    if contact_vcf is not None or contact_hash is not None:
+        kind = "contact"
+    elif folded in {"/start", "start"}:
         kind = "start"
     elif folded.startswith("/start ") or folded.startswith("start "):
         kind = "start"
@@ -97,7 +103,24 @@ def _message(update: dict) -> Incoming | None:
         photo_token=photo_token,
         photo_url=photo_url,
         start_payload=start_payload,
+        contact_vcf=contact_vcf,
+        contact_hash=contact_hash,
     )
+
+
+def _contact(attachments: list) -> tuple[str | None, str | None]:
+    for attachment in attachments:
+        if not isinstance(attachment, dict) or attachment.get("type") != "contact":
+            continue
+        payload = attachment.get("payload")
+        source = payload if isinstance(payload, dict) else attachment
+        vcf = source.get("vcf_info") if isinstance(source, dict) else None
+        digest = source.get("hash") if isinstance(source, dict) else None
+        return (
+            vcf if isinstance(vcf, str) else "",
+            digest if isinstance(digest, str) else "",
+        )
+    return None, None
 
 
 def _image(attachments: list) -> tuple[str | None, str | None]:

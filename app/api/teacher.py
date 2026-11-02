@@ -10,6 +10,8 @@ from app.bot.service import class_report
 from app.db.models import ClassTeacher, Enrollment, SchoolClass, User
 from app.domain.accounts import approve_enrollment, rotate_class_key, set_class_join
 from app.domain.drafts import build_check_draft
+from app.domain.onboarding import claims_for, reviewer_name
+from app.domain.schoolwork import classes_of, list_teacher_works
 
 router = APIRouter()
 
@@ -108,6 +110,16 @@ async def teacher_class(
     payload["join_open"] = bool(school_class.join_open) if school_class else False
     payload["join_key"] = school_class.join_key if school_class else ""
     payload["join_code"] = school_class.join_code if school_class else ""
+    payload["classes"] = await classes_of(session, teacher)
+    payload["can_manage_school"] = bool(teacher.can_manage_school)
+    payload["claims_reviewer"] = await reviewer_name(session)
+    payload["pending_claims"] = await claims_for(session, teacher) if teacher.can_manage_school else []
+    subjects = []
+    for item in payload["classes"]:
+        if current is not None and item["id"] == current:
+            subjects = item["subjects"]
+    payload["subjects"] = subjects
+    payload["subject_title"] = subjects[0]["title"] if subjects else ""
     return payload
 
 
@@ -117,10 +129,12 @@ async def assignments(
     session: AsyncSession = Depends(db_session),
 ) -> dict:
     await _report(request, session)
+    teacher = await user_from_cookie(request, session, "teacher")
+    items = await list_teacher_works(session, teacher, None)
     return {
-        "items": [],
-        "delivery": "unavailable",
-        "detail": "Назначенных работ пока нет. Отправка в MAX ещё не подключена.",
+        "items": items,
+        "delivery": "max" if items else "empty",
+        "detail": "" if items else "Назначенных работ пока нет.",
     }
 
 

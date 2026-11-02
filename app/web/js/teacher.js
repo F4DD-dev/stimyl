@@ -1,4 +1,5 @@
-import { getAssignments, getClass, postAssignment, postDraft } from "./api.js";
+import { getAssignments, getClass, getNotices, getWorkResult, postDraft, publishWork, saveWork } from "./api.js";
+import { renderManage } from "./manage.js";
 import { go, refresh, store } from "./store.js";
 import {
   brand,
@@ -79,9 +80,12 @@ function needText(info) {
 
 function topbar() {
   const name = store.displayName || "Учитель";
-  return `<header class="app-bar">
-    <div class="brand mobile-brand">${brand()}</div>
-    <button class="class-pill" type="button" data-act="class-info">${esc(classTitle())}</button>
+  const subject = store.report?.subject_title || "";
+  const unread = Number(store.notices?.unread) || 0;
+  return `<header class="mast">
+    ${brand()}
+    <button class="class-pill" type="button" data-act="class-sheet">${esc(classTitle())}${subject ? ` · ${esc(subject)}` : ""}</button>
+    <button class="bell" type="button" data-act="notices" aria-label="Уведомления">${icon("bell")}${unread ? `<i class="dot"></i>` : ""}</button>
     <button class="avatar" type="button" data-act="nav" data-screen="profile" aria-label="Профиль">${esc(initials(name))}</button>
   </header>`;
 }
@@ -117,44 +121,30 @@ function meter(row) {
 export function renderOverview() {
   if (!store.report) return errorBlock(store.reportError?.message, "retry");
   const info = stats(store.report);
-  const weakTopic = info.ranked[0]?.[0] || "";
+  const claims = store.report.pending_claims || [];
+  const reviewer = store.report.claims_reviewer;
   return `<div class="stack">
     ${topbar()}
-    <div>
-      <p class="kicker">Математика</p>
+    <section>
       <h1 id="page-title" tabindex="-1">${esc(classTitle())}</h1>
-      <p class="hint">Статусы тем, без личной переписки.</p>
-    </div>
-    <div class="stat-grid">
-      <section class="card">
-        <p class="kicker">Освоение</p>
-        <p class="stat-num">${info.share == null ? "—" : `${info.share}%`}</p>
-        <p class="hint">${info.share == null ? "Когда появятся попытки, здесь будет доля тем со статусом «усвоено»." : "Доля «усвоено» среди тем, где уже есть попытки."}</p>
-      </section>
-      <section class="card">
-        <p class="kicker">Нужна практика</p>
-        <p class="stat-num">${info.known ? info.weak.length : "—"}</p>
-        <p class="hint">${esc(needText(info))}</p>
-      </section>
-    </div>
-    <section class="card">
-      <h2>Где классу труднее</h2>
-      ${store.report.frequent_mistakes ? `<p>${esc(store.report.frequent_mistakes)}</p>` : ""}
-      ${info.ranked.length ? `<ul class="plain">${info.ranked.slice(0, 3).map(([title, bag]) => `<li><button type="button" data-act="focus-topic" data-topic="${esc(title)}"><strong>${esc(title)}</strong><span class="hint">повторить ${bag.repeat} · практика ${bag.practice}</span></button></li>`).join("")}</ul>` : `<p class="hint">Пока нет тем со статусом «повторить» или «нужна практика».</p>`}
+      <p class="quiet">${esc(store.report.subject_title || "Предмет появится после назначения")}</p>
     </section>
-    <section class="card">
-      <h2>Последние проверки</h2>
-      <p class="hint">Результатов работ пока нет. Статусы тем уже можно смотреть на карте класса.</p>
-      ${(store.report.stalled || []).length ? `<ul class="plain">${store.report.stalled.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>` : ""}
+    <section>
+      <p class="figure">${info.students}</p>
+      <p class="figure-label">${info.students ? "учеников в классе" : "Учеников пока нет"}</p>
     </section>
-    <section class="stack tight">
-      <h2 class="section-title">Быстрые действия</h2>
-      <div class="actions-stack">
-        <button class="btn btn-primary" type="button" data-act="compose">${icon("list")}<span>Создать проверку</span></button>
-        <button class="btn btn-ghost" type="button" data-act="compose" data-topic="${esc(weakTopic)}">${icon("send")}<span>Назначить задание</span></button>
-        <button class="btn btn-ghost" type="button" data-act="nav" data-screen="class">${icon("map")}<span>Открыть карту класса</span></button>
-      </div>
-    </section>
+    ${info.known ? `<section class="sheet-block">
+      <button class="line" type="button" data-act="nav" data-screen="class"><span><b>${info.share}%</b><small>тем со статусом «усвоено» среди уже проверенных</small></span></button>
+      <button class="line" type="button" data-act="nav" data-screen="class"><span><b>${info.weak.length}</b><small>нужна практика или повтор</small></span></button>
+      ${info.ranked.slice(0, 3).map(([title, bag]) => `<button class="line" type="button" data-act="focus-topic" data-topic="${esc(title)}"><span><b>${esc(title)}</b><small>повторить ${bag.repeat}, практика ${bag.practice}</small></span></button>`).join("")}
+    </section>` : `<section>
+      <h2>Класс готов к работе</h2>
+      <p class="quiet">Здесь появятся результаты учеников после первых проверок.</p>
+      <button class="btn btn-primary" type="button" data-act="compose">Создать первое задание</button>
+    </section>`}
+    ${reviewer ? `<p class="quiet">Заявки проверяет ${esc(reviewer)}. ${store.report.can_manage_school ? "Учитель-администратор" : ""}</p>` : ""}
+    ${store.report.can_manage_school ? `<button class="line" type="button" data-act="nav" data-screen="manage"><span><b>Заявки</b><small>${claims.length ? `${claims.length} ждут` : "новых нет"}</small></span></button>` : ""}
+    ${store.report.frequent_mistakes ? `<p>${esc(store.report.frequent_mistakes)}</p>` : ""}
   </div>`;
 }
 
@@ -237,20 +227,52 @@ export function renderClass() {
 }
 
 export function renderTasks() {
-  const note = store.assignments?.detail || store.assignmentsError?.message || "Список работ недоступен.";
   const failed = store.assignmentsError && !store.assignments;
+  const items = store.assignments?.items || [];
+  if (store.resultView) return renderResult(store.resultView);
   return `<div class="stack">
     ${topbar()}
-    <div>
-      <p class="kicker">${esc(classTitle())}</p>
+    <div class="row-between">
       <h1 id="page-title" tabindex="-1">Задания</h1>
+      <button class="btn btn-primary" type="button" data-act="compose">Создать</button>
     </div>
-    ${failed ? errorBlock(note, "retry") : `<section class="card">
-      <h2>Назначенные работы</h2>
-      <p>${esc(note)}</p>
-      <p class="hint">Когда отправка заработает, у работы будет один из статусов: черновик, активна, завершена. Сейчас таких записей нет, и я не помечаю работу отправленной.</p>
-      <button class="btn btn-primary" type="button" data-act="compose">Создать проверку</button>
-    </section>`}
+    ${failed ? errorBlock(store.assignmentsError.message, "retry") : ""}
+    ${items.length ? `<section class="sheet-block">${items.map((item) => `<button class="line" type="button" data-act="open-result" data-id="${item.id}"><span><b>${esc(item.title)}</b><small>${esc(item.status === "published" ? "опубликовано" : "черновик")} · сдали ${item.done || 0} из ${item.recipients || 0}</small></span></button>`).join("")}</section>` : emptyBlock("Работ пока нет", store.assignments?.detail || "Создай первое задание для класса.")}
+  </div>`;
+}
+
+function renderResult(work) {
+  const people = work.people || [];
+  const waiting = people.filter((person) => person.status !== "done");
+  return `<div class="stack">
+    ${topbar()}
+    <button class="text-btn" type="button" data-act="close-result">К списку</button>
+    <h1 id="page-title" tabindex="-1">${esc(work.title)}</h1>
+    <p class="quiet">${esc(work.subject)} · ${esc(work.topic)}</p>
+    ${people.length ? `<section class="sheet-block">${people.map((person) => `<div class="line"><span><b>${esc(person.display_name)}</b><small>${person.status === "done" ? `сдано, верно ${person.correct} из ${person.answered}` : "ещё не сдано"}</small></span></div>`).join("")}</section>` : `<p class="quiet">Получателей нет.</p>`}
+    ${waiting.length ? `<p class="quiet">Ещё не сдали: ${esc(waiting.map((person) => person.display_name).join(", "))}.</p>` : ""}
+  </div>`;
+}
+
+export function renderStimul() {
+  const samples = ["Собери короткую проверку по дробям", "Какие темы класса сейчас слабее", "Придумай устный вопрос на дискриминант"];
+  return `<div class="stack">
+    ${topbar()}
+    <section class="focus">
+      <h1 id="page-title" tabindex="-1">Стимул</h1>
+      <div class="pulse-line" aria-hidden="true"></div>
+      <p>Помощник учителя готовится к запуску.</p>
+      <p class="quiet">Это отдельный контекст учителя. Ответы модели не имитируются.</p>
+    </section>
+    <div class="chat">
+      ${store.stimulDraft ? `<div class="bubble me">${esc(store.stimulDraft)}</div>` : ""}
+      ${store.stimulNote ? `<div class="bubble">${esc(store.stimulNote)}</div>` : ""}
+    </div>
+    <div class="chips">${samples.map((text) => `<button class="chip" type="button" data-act="stimul-sample" data-text="${esc(text)}">${esc(text)}</button>`).join("")}</div>
+    <form id="stimul-form" class="composer">
+      <input id="stimul-input" class="field" placeholder="Запрос помощнику" value="${esc(store.stimulDraft)}" aria-label="Запрос помощнику">
+      <button class="btn btn-primary" type="submit">Отправить</button>
+    </form>
   </div>`;
 }
 
@@ -283,12 +305,12 @@ function wizardBody() {
         <div class="stack tight">${students.map((student) => {
           const on = wizard.students.includes(student.display_name);
           return `<button class="choice ${on ? "is-on" : ""}" type="button" data-act="toggle-student" data-name="${esc(student.display_name)}" aria-pressed="${on}">${esc(student.display_name)}</button>`;
-        }).join("")}</div>` : `<p class="hint">Работа рассчитана на всех учеников класса. Пока сервер её не отправляет.</p>`}`;
+        }).join("")}</div>` : `<p class="hint">Работа уйдёт ученикам ${esc(classTitle())}.</p>`}`;
   } else {
     const draft = wizard.draft;
     body = `${wizard.draftError ? `<div class="banner banner-bad"><p>${esc(wizard.draftError.message)}</p></div>` : ""}
       ${store.busy ? `<p class="statusline" role="status">Собираю черновик…</p>` : ""}
-      ${draft ? `<p class="hint">Источник: банк 8 класса. Черновик не сохранён. Эталон виден только вам.</p>
+      ${draft ? `<p class="hint">Источник: банк 8 класса. На сервер попадёт только после «Сохранить черновик» или «Опубликовать». Эталон виден только вам.</p>
         ${draft.note ? `<div class="banner banner-warn"><p>${esc(draft.note)}</p></div>` : ""}
         <p><strong>${esc(draft.topic)}</strong></p>
         <p>${esc(draft.goal)}</p>
@@ -300,12 +322,13 @@ function wizardBody() {
           ${item.choices?.length ? `<p>${item.choices.map((choice) => esc(choice)).join(" · ")}</p>` : `<p class="hint">Вариантов нет: ответ число или дробь.</p>`}
           <p class="hint">Эталон: ${esc(item.reference)}</p>
         </article>`).join("")}</div>
-        <p class="hint">Правки останутся на этом экране. Повторная сборка их сотрёт, на сервер черновик не пишется.</p>` : ""}
+        <p class="hint">Пока вы не нажали кнопку, правки живут только на этом экране.</p>` : ""}
       ${wizard.sendError ? `<div class="banner banner-warn" role="status"><strong>Отправка не выполнена</strong><p>${esc(wizard.sendError)}</p></div>` : ""}
       <div class="actions">
         <button class="btn btn-ghost" type="button" data-act="wizard-back">Изменить параметры</button>
         <button class="btn btn-ghost" type="button" data-act="redraft" ${store.busy ? "disabled" : ""}>Собрать заново</button>
-        <button class="btn btn-primary" type="button" data-act="send-assignment" ${!draft || store.busy ? "disabled" : ""}>Отправить работу</button>
+        <button class="btn btn-ghost" type="button" data-act="save-draft" ${!draft || store.busy ? "disabled" : ""}>Сохранить черновик</button>
+        <button class="btn btn-primary" type="button" data-act="send-assignment" ${!draft || store.busy ? "disabled" : ""}>Опубликовать</button>
       </div>`;
   }
   const nav = wizard.step < 4
@@ -363,14 +386,16 @@ export function renderResults() {
 
 export function renderProfile() {
   const name = store.displayName || "Учитель";
+  const admin = Boolean(store.report?.can_manage_school || store.canManage);
   return `<div class="stack">
     ${topbar()}
-    <section class="card profile-card">
+    <section class="profile-card">
       <span class="avatar avatar-lg" aria-hidden="true">${esc(initials(name))}</span>
       <h1 id="page-title" tabindex="-1">${esc(name)}</h1>
-      <p class="hint">Учитель · ${esc(classTitle())}</p>
-      <p>В кабинете видны статусы тем и итоги работ. Личные вопросы учеников сюда не приходят.</p>
-      <button class="btn btn-primary" type="button" data-act="nav" data-screen="class">Открыть карту класса</button>
+      <p class="quiet">${admin ? "Учитель-администратор" : "Учитель"} · ${esc(classTitle())}</p>
+      <p>В кабинете статусы тем и итоги работ. Личные вопросы учеников сюда не приходят.</p>
+      <button class="btn btn-ghost" type="button" data-act="notices">Уведомления</button>
+      ${admin ? `<button class="btn btn-primary" type="button" data-act="nav" data-screen="manage">Управление школой</button>` : ""}
     </section>
   </div>`;
 }
@@ -381,6 +406,8 @@ export function renderTeacher() {
   if (store.screen === "compose") return renderCompose();
   if (store.screen === "results") return renderResults();
   if (store.screen === "profile") return renderProfile();
+  if (store.screen === "stimul") return renderStimul();
+  if (store.screen === "manage") return renderManage();
   return renderOverview();
 }
 
@@ -537,6 +564,44 @@ export async function loadDraft() {
   }
 }
 
+function workBody() {
+  const payload = draftPayload();
+  return {
+    ...payload,
+    prompts: (store.wizard.draft?.items || []).map((item) => item.prompt),
+    work_id: store.wizard.workId || null,
+  };
+}
+
+export async function saveDraft() {
+  const wizard = store.wizard;
+  if (!wizard?.draft || store.busy) return;
+  readWizardFields();
+  if (store.preview) {
+    wizard.sendError = "В демонстрации черновик на сервер не пишется.";
+    refresh();
+    return;
+  }
+  store.busy = true;
+  wizard.sendError = null;
+  refresh();
+  try {
+    const saved = await saveWork(workBody());
+    if (!saved?.persisted || !saved.id) {
+      wizard.sendError = "Сервер не сохранил черновик.";
+      return;
+    }
+    wizard.workId = saved.id;
+    wizard.sendError = null;
+    await confirmDialog({ title: "Черновик сохранён", text: "Ученикам работа ещё не отправлена.", confirm: "Хорошо" });
+  } catch (error) {
+    wizard.sendError = error.message;
+  } finally {
+    store.busy = false;
+    refresh();
+  }
+}
+
 export async function sendAssignment() {
   const wizard = store.wizard;
   if (!wizard?.draft || store.busy) return;
@@ -555,19 +620,44 @@ export async function sendAssignment() {
       wizard.sendError = "В демонстрационном просмотре отправка выключена. Работа ученикам не ушла.";
       return;
     }
-    const result = await postAssignment(draftPayload());
-    if (result?.persisted) {
-      wizard.sendError = null;
-      await confirmDialog({
-        title: "Работа отправлена",
-        text: "Сервер подтвердил сохранение.",
-        confirm: "Хорошо",
-      });
-    } else {
-      wizard.sendError = result?.detail || "Сервер не сохранил работу. Ученикам ничего не ушло.";
+    const saved = await saveWork(workBody());
+    if (!saved?.persisted || !saved.id) {
+      wizard.sendError = "Сервер не сохранил работу. Ученикам ничего не ушло.";
+      return;
     }
+    const published = await publishWork(saved.id);
+    if (!published?.persisted) {
+      wizard.sendError = "Черновик записан, публикация не подтверждена. Ученикам ничего не ушло.";
+      wizard.workId = saved.id;
+      return;
+    }
+    wizard.workId = saved.id;
+    await confirmDialog({
+      title: "Работа опубликована",
+      text: `Сервер записал работу и поставил уведомления: ${published.recipients}.`,
+      confirm: "Хорошо",
+    });
+    go("tasks");
   } catch (error) {
     wizard.sendError = error.message;
+  } finally {
+    store.busy = false;
+    refresh();
+  }
+}
+
+export async function openResult(id) {
+  if (store.preview) {
+    store.assignmentsError = { message: "В демонстрации результатов с сервера нет." };
+    refresh();
+    return;
+  }
+  store.busy = true;
+  refresh();
+  try {
+    store.resultView = await getWorkResult(id);
+  } catch (error) {
+    store.assignmentsError = error;
   } finally {
     store.busy = false;
     refresh();
@@ -587,7 +677,7 @@ export async function reloadTeacher() {
   store.loading = true;
   refresh();
   try {
-    store.report = await getClass();
+    store.report = await getClass(store.classId || undefined);
     store.reportError = null;
   } catch (error) {
     store.reportError = error;
@@ -598,6 +688,12 @@ export async function reloadTeacher() {
   } catch (error) {
     store.assignmentsError = error;
   }
+  try {
+    store.notices = await getNotices();
+  } catch {
+    store.notices = { unread: 0, items: [] };
+  }
+  store.canManage = Boolean(store.report?.can_manage_school);
   store.loading = false;
   refresh();
 }

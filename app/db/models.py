@@ -24,6 +24,7 @@ class User(Base):
     __table_args__ = (
         CheckConstraint("role IN ('student', 'teacher', 'admin')", name="ck_users_role"),
         CheckConstraint("status IN ('pending', 'active', 'blocked')", name="ck_users_status"),
+        UniqueConstraint("phone_hash", name="uq_users_phone_hash"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -33,6 +34,10 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    can_manage_school: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    phone_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    phone_mask: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    test_signup: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
 
 class School(Base):
@@ -68,6 +73,16 @@ class ClassTeacher(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
 
 
+class ClassSubjectTeacher(Base):
+    """Учитель ведёт конкретный предмет в конкретном классе, не все классы сразу."""
+
+    __tablename__ = "class_subject_teachers"
+
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id"), primary_key=True)
+
+
 class JoinApplication(Base):
     __tablename__ = "join_applications"
     __table_args__ = (
@@ -76,7 +91,7 @@ class JoinApplication(Base):
             name="ck_join_applications_role",
         ),
         CheckConstraint(
-            "status IN ('draft', 'pending', 'approved')",
+            "status IN ('draft', 'pending', 'approved', 'rejected')",
             name="ck_join_applications_status",
         ),
     )
@@ -89,6 +104,8 @@ class JoinApplication(Base):
     seat_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[str] = mapped_column(String(16))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class StaffSeat(Base):
@@ -396,3 +413,104 @@ class Job(Base):
     locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Work(Base):
+    __tablename__ = "works"
+    __table_args__ = (
+        CheckConstraint("status IN ('draft', 'published')", name="ck_works_status"),
+        CheckConstraint("difficulty IN ('easy', 'normal', 'hard')", name="ck_works_difficulty"),
+        CheckConstraint("audience IN ('class', 'selected')", name="ck_works_audience"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id"))
+    subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id"))
+    topic_id: Mapped[int] = mapped_column(ForeignKey("topics.id"))
+    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    title: Mapped[str] = mapped_column(String(200))
+    goal: Mapped[str] = mapped_column(String(300))
+    difficulty: Mapped[str] = mapped_column(String(8))
+    status: Mapped[str] = mapped_column(String(16))
+    audience: Mapped[str] = mapped_column(String(16))
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WorkItem(Base):
+    __tablename__ = "work_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    work_id: Mapped[int] = mapped_column(ForeignKey("works.id"))
+    position: Mapped[int] = mapped_column(Integer)
+    prompt: Mapped[str] = mapped_column(String(500))
+    expected: Mapped[str] = mapped_column(String(64))
+
+
+class WorkRecipient(Base):
+    __tablename__ = "work_recipients"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'assigned', 'done')",
+            name="ck_work_recipients_status",
+        ),
+    )
+
+    work_id: Mapped[int] = mapped_column(ForeignKey("works.id"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    status: Mapped[str] = mapped_column(String(16), default="assigned")
+
+
+class WorkAnswer(Base):
+    __tablename__ = "work_answers"
+    __table_args__ = (
+        UniqueConstraint("item_id", "user_id", name="uq_work_answers_item_user"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    work_id: Mapped[int] = mapped_column(ForeignKey("works.id"))
+    item_id: Mapped[int] = mapped_column(ForeignKey("work_items.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    answer: Mapped[str] = mapped_column(String(200))
+    correct: Mapped[bool] = mapped_column(Boolean)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Notice(Base):
+    __tablename__ = "notices"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str] = mapped_column(String(500))
+    ref_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class OutboundNotice(Base):
+    """Сообщение в MAX. В тексте нет билета: кнопка только просит свежий."""
+
+    __tablename__ = "outbound_notices"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'sent', 'failed')",
+            name="ck_outbound_notices_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str] = mapped_column(String(200))
+    body: Mapped[str] = mapped_column(String(500))
+    button_text: Mapped[str] = mapped_column(String(128), default="")
+    button_payload: Mapped[str] = mapped_column(String(128), default="")
+    ref_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

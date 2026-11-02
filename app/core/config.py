@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     env: str = "dev"
     worker_stale_seconds: int = 30
     class_join_requires_approval: bool = True
+    first_teacher_bootstrap: bool = False
     database_ssl_ca: str | None = None
     app_timezone: str = "Asia/Vladivostok"
     photo_ttl_days: int = 7

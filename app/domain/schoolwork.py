@@ -1,0 +1,524 @@
+"""Проверочные работы. Эталон проверяет код, в уведомление билет не кладётся."""
+
+from datetime import UTC, datetime
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import Settings
+from app.db.models import (
+    Attempt,
+    ClassSubjectTeacher,
+    ClassTeacher,
+    Enrollment,
+    LearningSession,
+    SchoolClass,
+    Subject,
+    Topic,
+    User,
+    Work,
+    WorkAnswer,
+    WorkItem,
+    WorkRecipient,
+)
+from app.domain.answers import answers_match
+from app.domain.curriculum import topic_by_title
+from app.domain.drafts import build_check_draft
+from app.domain.onboarding import enqueue_notice
+from app.domain.status import Thresholds
+
+
+async def owned_class(session: AsyncSession, teacher: User, class_id: int | None) -> int | None:
+    query = select(ClassTeacher.class_id).where(ClassTeacher.user_id == teacher.id)
+    if class_id is not None:
+        query = query.where(ClassTeacher.class_id == class_id)
+    return await session.scalar(query.order_by(ClassTeacher.class_id))
+
+
+async def classes_of(session: AsyncSession, teacher: User) -> list[dict]:
+    class_ids = list(
+        await session.scalars(
+            select(ClassTeacher.class_id)
+            .where(ClassTeacher.user_id == teacher.id)
+            .order_by(ClassTeacher.class_id)
+        )
+    )
+    items = []
+    for class_id in class_ids:
+        school_class = await session.get(SchoolClass, class_id)
+        if school_class is None:
+            continue
+        subjects = (
+            await session.execute(
+                select(Subject.id, Subject.title)
+                .join(ClassSubjectTeacher, ClassSubjectTeacher.subject_id == Subject.id)
+                .where(
+                    ClassSubjectTeacher.class_id == class_id,
+                    ClassSubjectTeacher.user_id == teacher.id,
+                )
+                .order_by(Subject.title)
+            )
+        ).all()
+        items.append(
+            {
+                "id": school_class.id,
+                "title": school_class.title,
+                "subjects": [{"id": row.id, "title": row.title} for row in subjects],
+            }
+        )
+    return items
+
+
+async def save_work(
+    session: AsyncSession,
+    teacher: User,
+    *,
+    class_id: int | None,
+    topic: str,
+    goal: str,
+    count: int,
+    difficulty: str,
+    audience: str,
+    students: list[str],
+    prompts: list[str] | None,
+    due_at: datetime | None,
+    work_id: int | None = None,
+) -> tuple[dict | None, str | None, int]:
+    current = await owned_class(session, teacher, class_id)
+    if current is None:
+        return None, "Нет доступа к классу", 403
+    topic_row = await session.scalar(select(Topic).where(Topic.title == topic))
+    if topic_row is None:
+        return None, "Этой темы нет в программе класса", 404
+    appointed = await session.scalar(
+        select(ClassSubjectTeacher.subject_id).where(
+            ClassSubjectTeacher.class_id == current,
+            ClassSubjectTeacher.user_id == teacher.id,
+            ClassSubjectTeacher.subject_id == topic_row.subject_id,
+        )
+    )
+    if appointed is None:
+        return None, "Нет назначения на этот предмет", 403
+    names = await _active_names(session, current)
+    if audience == "class":
+        picked = names
+    else:
+        known = set(names)
+        picked = []
+        for name in students:
+            cleaned = name.strip()
+            if cleaned not in known or cleaned in picked:
+                return None, "Выберите учеников этого класса", 422
+            picked.append(cleaned)
+        if not picked:
+            return None, "Выберите учеников этого класса", 422
+    draft = build_check_draft(topic, goal, count, difficulty, audience, picked)
+    if draft is None:
+        return None, "По этой теме нет банка заданий. Не выдумываю вопросы.", 409
+    bank_answers = {item["reference"] for item in draft["items"]}
+    built = []
+    for index, item in enumerate(draft["items"]):
+        prompt = item["prompt"]
+        if prompts is not None:
+            if index >= len(prompts) or not prompts[index].strip():
+                return None, "Заполните текст каждого задания", 422
+            prompt = prompts[index].strip()
+        if item["reference"] not in bank_answers:
+            return None, "Эталон задания не из банка темы", 422
+        built.append((prompt[:500], item["reference"][:64]))
+    now = datetime.now(UTC)
+    if work_id is None:
+        work = Work(
+            class_id=current,
+            subject_id=topic_row.subject_id,
+            topic_id=topic_row.id,
+            author_id=teacher.id,
+            title=topic_row.title[:200],
+            goal=goal.strip()[:300],
+            difficulty=difficulty,
+            status="draft",
+            audience=audience,
+            due_at=due_at,
+            created_at=now,
+        )
+        session.add(work)
+        await session.flush()
+    else:
+        work = await session.get(Work, work_id)
+        if work is None or work.author_id != teacher.id or work.class_id != current:
+            return None, "Черновик не найден", 404
+        if work.status != "draft":
+            return None, "Опубликованную работу уже не меняю", 409
+        work.topic_id = topic_row.id
+        work.subject_id = topic_row.subject_id
+        work.title = topic_row.title[:200]
+        work.goal = goal.strip()[:300]
+        work.difficulty = difficulty
+        work.audience = audience
+        work.due_at = due_at
+        old = list(await session.scalars(select(WorkItem).where(WorkItem.work_id == work.id)))
+        for row in old:
+            await session.delete(row)
+        await session.flush()
+    for position, (prompt, expected) in enumerate(built, start=1):
+        session.add(WorkItem(work_id=work.id, position=position, prompt=prompt, expected=expected))
+    old_recipients = list(
+        await session.scalars(select(WorkRecipient).where(WorkRecipient.work_id == work.id))
+    )
+    for row in old_recipients:
+        await session.delete(row)
+    if audience == "selected":
+        ids = await _ids_for_names(session, current, picked)
+        for user_id in ids:
+            session.add(WorkRecipient(work_id=work.id, user_id=user_id, status="draft"))
+    await session.flush()
+    return await _teacher_work(session, work, include_expected=True), None, 200
+
+
+async def publish_work(session: AsyncSession, teacher: User, work_id: int) -> tuple[dict | None, str | None, int]:
+    work = await session.get(Work, work_id)
+    if work is None or work.author_id != teacher.id:
+        return None, "Черновик не найден", 404
+    if await owned_class(session, teacher, work.class_id) is None:
+        return None, "Нет доступа к классу", 403
+    if work.status == "published":
+        return None, "Работа уже опубликована", 409
+    recipients = await _activate_recipients(session, work)
+    if not recipients:
+        return None, "В классе нет учеников, которым можно отправить работу", 409
+    now = datetime.now(UTC)
+    work.status = "published"
+    work.published_at = now
+    subject = await session.get(Subject, work.subject_id)
+    subject_title = subject.title if subject is not None else ""
+    for user_id in recipients:
+        await enqueue_notice(
+            session,
+            user_id,
+            kind="work",
+            title=work.title,
+            body=f"Новое задание: {work.title}. {subject_title}. {work.goal}"[:500],
+            button_text="Открыть задание",
+            button_payload=f"open_work:{work.id}",
+            ref_id=work.id,
+        )
+    await session.flush()
+    payload = await _teacher_work(session, work, include_expected=True)
+    payload["persisted"] = True
+    payload["recipients"] = len(recipients)
+    return payload, None, 200
+
+
+async def list_teacher_works(session: AsyncSession, teacher: User, class_id: int | None) -> list[dict]:
+    current = await owned_class(session, teacher, class_id)
+    if current is None:
+        return []
+    rows = list(
+        await session.scalars(
+            select(Work)
+            .where(Work.class_id == current, Work.author_id == teacher.id)
+            .order_by(Work.id.desc())
+        )
+    )
+    return [await _teacher_work(session, work, include_expected=False) for work in rows]
+
+
+async def list_student_works(session: AsyncSession, student: User) -> list[dict]:
+    rows = (
+        await session.execute(
+            select(Work, WorkRecipient, Subject, User)
+            .join(WorkRecipient, WorkRecipient.work_id == Work.id)
+            .join(Subject, Subject.id == Work.subject_id)
+            .join(User, User.id == Work.author_id)
+            .where(WorkRecipient.user_id == student.id, Work.status == "published")
+            .order_by(Work.id.desc())
+        )
+    ).all()
+    items = []
+    for work, recipient, subject, author in rows:
+        questions = list(
+            await session.scalars(
+                select(WorkItem).where(WorkItem.work_id == work.id).order_by(WorkItem.position)
+            )
+        )
+        answers = {
+            row.item_id: row
+            for row in await session.scalars(
+                select(WorkAnswer).where(
+                    WorkAnswer.work_id == work.id,
+                    WorkAnswer.user_id == student.id,
+                )
+            )
+        }
+        items.append(
+            {
+                "id": work.id,
+                "title": work.title,
+                "goal": work.goal,
+                "subject": subject.title,
+                "topic": work.title,
+                "author": author.display_name,
+                "status": recipient.status,
+                "due_at": work.due_at.isoformat() if work.due_at else None,
+                "items": [
+                    {
+                        "id": question.id,
+                        "position": question.position,
+                        "prompt": question.prompt,
+                        "answered": question.id in answers,
+                        "correct": answers[question.id].correct if question.id in answers else None,
+                    }
+                    for question in questions
+                ],
+            }
+        )
+    return items
+
+
+async def submit_work(
+    session: AsyncSession,
+    student: User,
+    work_id: int,
+    answers: list[tuple[int, str]],
+    settings: Settings,
+) -> tuple[dict | None, str | None, int]:
+    work = await session.get(Work, work_id)
+    recipient = await session.scalar(
+        select(WorkRecipient).where(
+            WorkRecipient.work_id == work_id,
+            WorkRecipient.user_id == student.id,
+            WorkRecipient.status.in_(("assigned", "done")),
+        )
+    )
+    if work is None or work.status != "published" or recipient is None:
+        return None, "Этого задания нет", 404
+    questions = {
+        row.id: row
+        for row in await session.scalars(select(WorkItem).where(WorkItem.work_id == work.id))
+    }
+    if not answers or any(item_id not in questions for item_id, _text in answers):
+        return None, "Нужен ответ на задание этой работы", 422
+    now = datetime.now(UTC)
+    lesson = LearningSession(
+        user_id=student.id,
+        mode="submission",
+        topic_id=work.topic_id,
+        step="done",
+        created_at=now,
+    )
+    session.add(lesson)
+    await session.flush()
+    checked = []
+    for item_id, text in answers:
+        question = questions[item_id]
+        given = text.strip()[:200]
+        if not given:
+            return None, "Введите ответ", 422
+        correct = answers_match(question.expected, given)
+        existing = await session.scalar(
+            select(WorkAnswer).where(WorkAnswer.item_id == item_id, WorkAnswer.user_id == student.id)
+        )
+        if existing is None:
+            session.add(
+                WorkAnswer(
+                    work_id=work.id,
+                    item_id=item_id,
+                    user_id=student.id,
+                    answer=given,
+                    correct=correct,
+                    created_at=now,
+                )
+            )
+        else:
+            existing.answer = given
+            existing.correct = correct
+            existing.created_at = now
+        session.add(
+            Attempt(
+                user_id=student.id,
+                topic_id=work.topic_id,
+                session_id=lesson.id,
+                mode="submission",
+                prompt=question.prompt[:500],
+                expected=question.expected[:64],
+                answer=given,
+                correct=correct,
+                hinted=False,
+                feedback="Верно." if correct else "Пока не сходится.",
+                created_at=now,
+            )
+        )
+        checked.append({"id": item_id, "correct": correct})
+    await session.flush()
+    from app.bot.service import _recompute, _today
+
+    await _recompute(
+        session,
+        student.id,
+        work.topic_id,
+        _today(settings),
+        Thresholds(settings.status_repeat_below, settings.status_mastered_from),
+    )
+    stored = await session.scalar(
+        select(func.count()).select_from(WorkAnswer).where(
+            WorkAnswer.work_id == work.id,
+            WorkAnswer.user_id == student.id,
+        )
+    )
+    if int(stored or 0) >= len(questions):
+        recipient.status = "done"
+    await session.flush()
+    return {"ok": True, "persisted": True, "items": checked, "status": recipient.status}, None, 200
+
+
+async def work_results(session: AsyncSession, teacher: User, work_id: int) -> tuple[dict | None, str | None, int]:
+    work = await session.get(Work, work_id)
+    if work is None or work.author_id != teacher.id:
+        return None, "Работы нет", 404
+    if await owned_class(session, teacher, work.class_id) is None:
+        return None, "Нет доступа к классу", 403
+    payload = await _teacher_work(session, work, include_expected=False)
+    payload["people"] = await _result_people(session, work)
+    return payload, None, 200
+
+
+async def _active_names(session: AsyncSession, class_id: int) -> list[str]:
+    rows = (
+        await session.execute(
+            select(User.display_name)
+            .join(Enrollment, Enrollment.user_id == User.id)
+            .where(
+                Enrollment.class_id == class_id,
+                Enrollment.status == "active",
+                User.role == "student",
+                User.deleted_at.is_(None),
+            )
+            .order_by(User.id)
+        )
+    ).all()
+    return [row.display_name for row in rows]
+
+
+async def _ids_for_names(session: AsyncSession, class_id: int, names: list[str]) -> list[int]:
+    rows = (
+        await session.execute(
+            select(User.id, User.display_name)
+            .join(Enrollment, Enrollment.user_id == User.id)
+            .where(
+                Enrollment.class_id == class_id,
+                Enrollment.status == "active",
+                User.role == "student",
+                User.display_name.in_(names),
+            )
+        )
+    ).all()
+    by_name = {row.display_name: row.id for row in rows}
+    return [by_name[name] for name in names if name in by_name]
+
+
+async def _activate_recipients(session: AsyncSession, work: Work) -> list[int]:
+    if work.audience == "selected":
+        rows = list(
+            await session.scalars(
+                select(WorkRecipient).where(
+                    WorkRecipient.work_id == work.id,
+                    WorkRecipient.status == "draft",
+                )
+            )
+        )
+        for row in rows:
+            row.status = "assigned"
+        return [row.user_id for row in rows]
+    rows = (
+        await session.execute(
+            select(User.id)
+            .join(Enrollment, Enrollment.user_id == User.id)
+            .where(
+                Enrollment.class_id == work.class_id,
+                Enrollment.status == "active",
+                User.role == "student",
+                User.deleted_at.is_(None),
+            )
+            .order_by(User.id)
+        )
+    ).all()
+    ids = []
+    for row in rows:
+        ids.append(row.id)
+        session.add(WorkRecipient(work_id=work.id, user_id=row.id, status="assigned"))
+    return ids
+
+
+async def _teacher_work(session: AsyncSession, work: Work, *, include_expected: bool) -> dict:
+    questions = list(
+        await session.scalars(
+            select(WorkItem).where(WorkItem.work_id == work.id).order_by(WorkItem.position)
+        )
+    )
+    recipient_rows = list(
+        await session.scalars(select(WorkRecipient).where(WorkRecipient.work_id == work.id))
+    )
+    done = sum(1 for row in recipient_rows if row.status == "done")
+    subject = await session.get(Subject, work.subject_id)
+    topic = await session.get(Topic, work.topic_id)
+    return {
+        "id": work.id,
+        "title": work.title,
+        "goal": work.goal,
+        "status": work.status,
+        "difficulty": work.difficulty,
+        "audience": work.audience,
+        "subject": subject.title if subject else "",
+        "topic": topic.title if topic else work.title,
+        "due_at": work.due_at.isoformat() if work.due_at else None,
+        "created_at": work.created_at.isoformat(),
+        "published_at": work.published_at.isoformat() if work.published_at else None,
+        "recipients": len(recipient_rows),
+        "done": done,
+        "persisted": True,
+        "items": [
+            {
+                "id": question.id,
+                "position": question.position,
+                "prompt": question.prompt,
+                **({"reference": question.expected} if include_expected else {}),
+            }
+            for question in questions
+        ],
+    }
+
+
+async def _result_people(session: AsyncSession, work: Work) -> list[dict]:
+    rows = (
+        await session.execute(
+            select(User, WorkRecipient)
+            .join(WorkRecipient, WorkRecipient.user_id == User.id)
+            .where(WorkRecipient.work_id == work.id)
+            .order_by(User.display_name)
+        )
+    ).all()
+    people = []
+    for person, recipient in rows:
+        answers = list(
+            await session.scalars(
+                select(WorkAnswer).where(
+                    WorkAnswer.work_id == work.id,
+                    WorkAnswer.user_id == person.id,
+                )
+            )
+        )
+        correct = sum(1 for row in answers if row.correct)
+        people.append(
+            {
+                "user_id": person.id,
+                "display_name": person.display_name,
+                "status": recipient.status,
+                "answered": len(answers),
+                "correct": correct,
+            }
+        )
+    return people
+
+
+def topic_material_ok(title: str) -> bool:
+    return topic_by_title(title) is not None

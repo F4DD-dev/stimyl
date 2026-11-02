@@ -42,20 +42,9 @@ from app.domain.accounts import (
     take_hint,
     touch,
 )
-from app.domain.directory import (
-    application_of,
-    approve,
-    choose_city,
-    choose_role,
-    choose_school,
-    choose_seat,
-    city_reply,
-    ensure_directory,
-    pending_reply,
-    placed,
-    role_reply,
-    school_reply,
-)
+from app.domain.directory import application_of, approve, pending_reply, placed
+from app.domain.onboarding import accept_claim, claims_for, register_phone
+from app.domain.phone import normalize_phone, phone_from_vcard, verify_contact_hash
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +63,7 @@ class GateReply:
     app_payload: str = ""
     app_name: str = ""
     app_contact: int = 0
+    request_contact: bool = False
 
 
 @dataclass
@@ -142,17 +132,33 @@ async def open_gate(
     folded = _fold(text)
     action = _named_action(incoming.payload)
     if action == "apps" or folded == "заявки":
+        if user.can_manage_school:
+            return await _claim_list(session, user)
         text_out, buttons = await pending_reply(session, user)
         return GateOutcome(user, [GateReply(text_out, buttons)], True)
     if action.startswith("approve:") and action.split(":", 1)[1].isdigit():
-        text_out, buttons = await approve(session, user, int(action.split(":", 1)[1]))
+        target_id = int(action.split(":", 1)[1])
+        if user.can_manage_school:
+            ok, detail = await accept_claim(session, user, target_id)
+            text_out = f"Принял {detail}." if ok else detail
+            follow = await _claim_list(session, user)
+            return GateOutcome(user, [GateReply(text_out)] + follow.replies, True)
+        text_out, buttons = await approve(session, user, target_id)
         return GateOutcome(user, [GateReply(text_out, buttons)], True)
     if action in {WEB_LOGIN, "open_cabinet"} or folded in {"войти в кабинет", "открыть кабинет"}:
         return await _send_code(session, user, settings)
+    if action.startswith("open_work:"):
+        return await _send_app(
+            session,
+            user,
+            settings,
+            label="Открыть задание",
+            lead="Кнопка откроет задание. Она действует 5 минут и только один раз.",
+        )
     if action == "progress" or folded == "мой прогресс":
         return await _send_app(session, user, settings)
 
-    if folded == "я учитель":
+    if folded == "я учитель" and await placed(session, user):
         reply = await start_application(session, user)
         return GateOutcome(user, [GateReply(reply)], True)
 
@@ -191,9 +197,9 @@ async def open_gate(
         if reply:
             replies.append(GateReply(reply))
 
-    if not await placed(session, user):
-        reply = await _directory(session, user, incoming, settings)
-        return GateOutcome(user, replies + [reply], True)
+    if incoming.kind == "contact" or not await placed(session, user):
+        phone = await _phone_gate(session, user, incoming, settings)
+        return GateOutcome(user, replies + phone.replies, True)
     return GateOutcome(user, replies, False)
 
 
@@ -202,8 +208,11 @@ async def _without_account(
 ) -> GateOutcome:
     if incoming.payload == CONSENT_YES:
         user = await accept_consent(session, incoming.max_user_id, incoming.name, settings)
-        text_out, buttons = role_reply()
-        replies = [GateReply(text_out, buttons)]
+        replies = [
+            GateReply(
+                "Стимул на связи. Сначала подтверди номер кнопкой ниже: так учитель увидит заявку."
+            )
+        ]
         payload = await take_hint(session, incoming.max_user_id)
         if payload:
             joined = await join_by_key(
@@ -215,6 +224,10 @@ async def _without_account(
             reply = _join_reply(joined, unknown=True)
             if reply:
                 replies.append(GateReply(reply))
+        if await placed(session, user):
+            replies.append(GateReply("Можно заниматься."))
+        else:
+            replies.append(_ask_phone())
         return GateOutcome(user, replies, True)
     if incoming.payload == CONSENT_NO_PAYLOAD:
         return GateOutcome(None, [GateReply(CONSENT_NO)], True)
@@ -235,41 +248,82 @@ def _join_reply(joined, *, unknown: bool) -> str | None:
     return None
 
 
-async def _directory(session: AsyncSession, user: User, incoming: Incoming, settings: Settings) -> GateReply:
-    await ensure_directory(session)
-    action = _named_action(incoming.payload)
-    allow_bootstrap = settings.env != "prod"
-    row = await application_of(session, user)
-    if row is not None and row.status == "pending":
-        return GateReply("Заявка ещё на проверке у администратора школы. Когда примут, напиши /start.")
-    if row is not None and row.status == "approved" and not await placed(session, user):
-        return GateReply("Заявку приняли. Напиши /start ещё раз.")
-    if action.startswith("role:"):
-        text_out, buttons = await choose_role(session, user, action.split(":", 1)[1])
-        return GateReply(text_out, buttons)
-    if action.startswith("city:") and action.split(":", 1)[1].isdigit():
-        text_out, buttons = await choose_city(session, user, int(action.split(":", 1)[1]))
-        return GateReply(text_out, buttons)
-    if action.startswith("school:"):
-        text_out, buttons = await choose_school(
-            session, user, action.split(":", 1)[1], allow_admin_bootstrap=allow_bootstrap
+def _ask_phone() -> GateReply:
+    return GateReply(
+        "Нажми «Поделиться номером». Номер текстом и пересланную карточку не принимаю.",
+        request_contact=True,
+    )
+
+
+def _looks_like_phone(text: str) -> bool:
+    digits = "".join(ch for ch in text if ch.isdigit())
+    return len(digits) >= 10 and len(text.strip()) <= 24
+
+
+async def _claim_list(session: AsyncSession, user: User) -> GateOutcome:
+    rows = await claims_for(session, user)
+    if not rows:
+        return GateOutcome(user, [GateReply("Заявок нет.")], True)
+    buttons = tuple(
+        (f"Принять {row['display_name']}"[:80], f"approve:{row['user_id']}") for row in rows[:8]
+    )
+    return GateOutcome(user, [GateReply("Новые заявки в класс.", buttons)], True)
+
+
+async def _phone_gate(
+    session: AsyncSession, user: User, incoming: Incoming, settings: Settings
+) -> GateOutcome:
+    if incoming.kind != "contact":
+        if user.phone_hash:
+            row = await application_of(session, user)
+            if row is not None and row.status == "pending":
+                return GateOutcome(
+                    user,
+                    [GateReply("Заявка отправлена учителю и ждёт подтверждения.")],
+                    True,
+                )
+            if row is not None and row.status == "rejected":
+                return GateOutcome(
+                    user,
+                    [GateReply("Заявку отклонили. Если это ошибка, напиши учителю.")],
+                    True,
+                )
+        if incoming.kind == "text" and _looks_like_phone(incoming.text or ""):
+            return GateOutcome(
+                user,
+                [GateReply("Номер текстом не принимаю. Нажми «Поделиться номером».", request_contact=True)],
+                True,
+            )
+        return GateOutcome(user, [_ask_phone()], True)
+
+    vcf = incoming.contact_vcf or ""
+    digest = incoming.contact_hash or ""
+    token = settings.max_token or ""
+    if not verify_contact_hash(vcf, digest, token):
+        return GateOutcome(
+            user,
+            [GateReply("Контакт не подтверждён. Нажми «Поделиться номером» ещё раз.", request_contact=True)],
+            True,
         )
-        return GateReply(text_out, buttons)
-    if action.startswith("seat:"):
-        text_out, buttons = await choose_seat(
-            session, user, action.split(":", 1)[1], allow_admin_bootstrap=allow_bootstrap
+    digits = normalize_phone(phone_from_vcard(vcf) or "")
+    if digits is None:
+        return GateOutcome(
+            user,
+            [GateReply("В контакте нет номера. Нажми «Поделиться номером» ещё раз.", request_contact=True)],
+            True,
         )
-        return GateReply(text_out, buttons)
-    if row is None:
-        text_out, buttons = role_reply()
-        return GateReply(text_out, buttons)
-    if not row.city:
-        text_out, buttons = city_reply()
-        return GateReply(text_out, buttons)
-    if row.school_id is None:
-        text_out, buttons = school_reply(row.city)
-        return GateReply(text_out, buttons)
-    return GateReply("Выбери себя кнопкой ниже или напиши /start.")
+    result = await register_phone(session, user, digits, settings)
+    replies = [GateReply(result.text)]
+    if result.ok and result.kind == "teacher":
+        cabinet = await _send_code(session, user, settings)
+        return GateOutcome(user, replies + cabinet.replies, True)
+    if result.ok and result.kind == "known" and user.role == "teacher" and user.status == "active":
+        cabinet = await _send_code(session, user, settings)
+        return GateOutcome(user, replies + cabinet.replies, True)
+    if result.ok and user.role == "student" and user.status == "active":
+        opened = await _send_app(session, user, settings)
+        return GateOutcome(user, replies + opened.replies, True)
+    return GateOutcome(user, replies, True)
 
 
 async def _send_code(session: AsyncSession, user: User, settings: Settings) -> GateOutcome:
@@ -299,7 +353,14 @@ async def _send_code(session: AsyncSession, user: User, settings: Settings) -> G
     return GateOutcome(user, [reply], True)
 
 
-async def _send_app(session: AsyncSession, user: User, settings: Settings) -> GateOutcome:
+async def _send_app(
+    session: AsyncSession,
+    user: User,
+    settings: Settings,
+    *,
+    label: str = "Мой прогресс",
+    lead: str | None = None,
+) -> GateOutcome:
     username = bot_name(settings)
     if not username:
         return GateOutcome(user, [GateReply("Кнопку в приложение сейчас не собрать.")], True)
@@ -310,8 +371,8 @@ async def _send_app(session: AsyncSession, user: User, settings: Settings) -> Ga
     if not contact_id:
         logger.warning("open_app skipped contact_id missing")
         return GateOutcome(user, [GateReply("Кнопку в приложение сейчас не собрать.")], True)
-    reply = GateReply("Кнопка откроет твой прогресс. Она действует 5 минут и только один раз.")
-    reply.app_text = "Мой прогресс"
+    reply = GateReply(lead or "Кнопка откроет твой прогресс. Она действует 5 минут и только один раз.")
+    reply.app_text = label
     reply.app_payload = issued.ticket
     reply.app_name = username
     reply.app_contact = contact_id

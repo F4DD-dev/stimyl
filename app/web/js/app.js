@@ -1,4 +1,4 @@
-import { approveJoin, getHistory, getLesson, getProgress, getSession, openSession, openTicket, setCsrf } from "./api.js";
+import { approveJoin, getHistory, getLesson, getNotices, getProgress, getSession, getStudentWorks, openSession, openTicket, readNotice, setCsrf } from "./api.js";
 import { previewRole, studentPreview, teacherPreview } from "./preview.js";
 import {
   checkSubmission,
@@ -9,6 +9,7 @@ import {
   openSubmission,
   pickTopic,
   renderStudent,
+  submitWork,
   resume,
   retryLesson,
   runLessonAction,
@@ -23,6 +24,8 @@ import {
   loadDraft,
   reloadTeacher,
   renderTeacher,
+  openResult,
+  saveDraft,
   sendAssignment,
   setAudience,
   setCount,
@@ -35,19 +38,22 @@ import {
   wizardBack,
   wizardNext,
 } from "./teacher.js";
+import { acceptOne, appoint, changePerson, loadManage, rejectOne } from "./manage.js";
 import { brand, esc, icon, skeleton } from "./ui.js";
 
 const TITLES = {
   home: "Главная",
   lesson: "Занятие",
-  map: "Моя карта",
+  map: "Темы",
   history: "История",
   profile: "Профиль",
   overview: "Обзор",
-  class: "Карта класса",
+  class: "Класс",
   tasks: "Задания",
   compose: "Проверка",
   results: "Результаты",
+  stimul: "Стимул",
+  manage: "Управление",
 };
 
 let bootId = 0;
@@ -56,8 +62,8 @@ let backFn = null;
 
 function screenFromHash() {
   const raw = location.hash.startsWith("#/") ? location.hash.slice(2).split(/[?#]/)[0] : "";
-  const student = ["home", "map", "history", "profile", "lesson"];
-  const teacher = ["overview", "class", "tasks", "compose", "results", "profile"];
+  const student = ["home", "map", "stimul", "tasks", "profile", "lesson", "history"];
+  const teacher = ["overview", "class", "tasks", "stimul", "profile", "compose", "results", "manage"];
   const allowed = store.role === "teacher" ? teacher : student;
   if (allowed.includes(raw)) return raw;
   return store.role === "teacher" ? "overview" : "home";
@@ -129,16 +135,21 @@ async function settle(fn) {
 }
 
 async function loadStudent() {
-  const [progress, history, lesson] = await Promise.all([
+  const [progress, history, lesson, works, notices] = await Promise.all([
     settle(getProgress),
     settle(getHistory),
     settle(getLesson),
+    settle(getStudentWorks),
+    settle(getNotices),
   ]);
   store.progress = progress.value;
   store.progressError = progress.error;
   store.history = history.value;
   store.historyError = history.error;
   store.openLesson = lesson.value;
+  store.works = works.value;
+  store.worksError = works.error;
+  store.notices = notices.value || { unread: 0, items: [] };
 }
 
 function enterPreview(role) {
@@ -147,6 +158,9 @@ function enterPreview(role) {
   store.booting = false;
   store.gate = null;
   store.loading = false;
+  store.notices = { unread: 0, items: [] };
+  store.works = { items: [] };
+  store.canManage = false;
   if (role === "teacher") {
     const data = teacherPreview();
     store.displayName = data.displayName;
@@ -197,6 +211,8 @@ async function boot() {
     if (id !== bootId) return;
     store.role = me.role;
     store.displayName = me.display_name || "";
+    store.canManage = Boolean(me.can_manage_school);
+    store.classTitle = me.class_title || "";
     store.preview = false;
     if (!store.fromMax && entry !== "auto" && entry !== me.role) {
       store.booting = false;
@@ -240,42 +256,84 @@ function tabs() {
   const items = teacher
     ? [
         ["overview", "Обзор", "grid"],
-        ["class", "Карта", "map"],
+        ["class", "Класс", "map"],
+        ["stimul", "Стимул", "core"],
         ["tasks", "Задания", "list"],
-        ["results", "Результаты", "check"],
         ["profile", "Профиль", "user"],
       ]
     : [
         ["home", "Главная", "home"],
-        ["map", "Моя карта", "map"],
-        ["history", "История", "clock"],
+        ["map", "Темы", "map"],
+        ["stimul", "Стимул", "core"],
+        ["tasks", "Задания", "list"],
         ["profile", "Профиль", "user"],
       ];
-  const current = store.screen === "lesson" ? "home" : store.screen === "compose" ? "tasks" : store.screen;
+  const current = store.screen === "lesson" ? "home" : store.screen === "compose" || store.screen === "results" ? "tasks" : store.screen === "manage" || store.screen === "history" ? "profile" : store.screen;
   return `<nav class="tabbar" aria-label="Разделы">${items.map(([id, label, glyph]) => {
     const active = current === id;
+    if (glyph === "core") {
+      return `<button type="button" class="tab tab-core${active ? " is-active" : ""}" data-act="nav" data-screen="${id}" ${active ? 'aria-current="page"' : ""}><span class="mark">С</span><span>${label}</span></button>`;
+    }
     return `<button type="button" class="tab${active ? " is-active" : ""}" data-act="nav" data-screen="${id}" ${active ? 'aria-current="page"' : ""}>${icon(glyph)}<span>${label}</span></button>`;
   }).join("")}</nav>`;
 }
 
 function sidenav() {
-  if (store.role !== "teacher") return "";
-  const items = [
-    ["overview", "Обзор", "grid"],
-    ["class", "Карта класса", "map"],
-    ["tasks", "Задания", "list"],
-    ["results", "Результаты", "check"],
-    ["profile", "Профиль", "user"],
-  ];
-  const current = store.screen === "compose" ? "tasks" : store.screen;
+  const teacher = store.role === "teacher";
+  const items = teacher
+    ? [
+        ["overview", "Обзор", "grid"],
+        ["class", "Класс", "map"],
+        ["stimul", "Стимул", "core"],
+        ["tasks", "Задания", "list"],
+        ["profile", "Профиль", "user"],
+      ]
+    : [
+        ["home", "Главная", "home"],
+        ["map", "Темы", "map"],
+        ["stimul", "Стимул", "core"],
+        ["tasks", "Задания", "list"],
+        ["profile", "Профиль", "user"],
+      ];
+  const current = store.screen === "lesson" ? "home" : store.screen === "compose" || store.screen === "results" ? "tasks" : store.screen === "manage" || store.screen === "history" ? "profile" : store.screen;
   return `<aside class="sidenav">
     <div class="side-brand">${brand()}</div>
-    <p class="side-note">Кабинет учителя</p>
+    <p class="side-note">${teacher ? "Кабинет учителя" : "Кабинет ученика"}</p>
     ${items.map(([id, label, glyph]) => {
       const active = current === id;
-      return `<button type="button" class="side-link${active ? " is-active" : ""}" data-act="nav" data-screen="${id}" ${active ? 'aria-current="page"' : ""}>${icon(glyph)}<span>${label}</span></button>`;
+      const mark = glyph === "core" ? `<span class="mark">С</span>` : icon(glyph);
+      return `<button type="button" class="side-link${active ? " is-active" : ""}" data-act="nav" data-screen="${id}" ${active ? 'aria-current="page"' : ""}>${mark}<span>${label}</span></button>`;
     }).join("")}
   </aside>`;
+}
+
+function openSheet(html) {
+  const dialog = document.querySelector("#dialog");
+  if (!dialog) return;
+  dialog.innerHTML = `<div class="grab"></div>${html}`;
+  if (typeof dialog.showModal === "function" && !dialog.open) dialog.showModal();
+}
+
+function classSheet() {
+  const classes = store.report?.classes || [];
+  const only = classes.length <= 1;
+  const rows = classes.map((item) => {
+    const subject = (item.subjects || []).map((row) => row.title).join(", ");
+    const note = only ? "основной тестовый класс" : subject;
+    return `<button class="line" type="button" data-act="pick-class" data-id="${item.id}"><span><b>${esc(item.title)}</b><small>${esc(note)}</small></span></button>`;
+  }).join("");
+  openSheet(`<h2>Класс</h2>${only ? `<p class="quiet">Пока доступен один класс.</p>` : ""}<section class="sheet-block">${rows || `<p class="quiet">Класс ещё не назначен.</p>`}</section>`);
+}
+
+async function noticesSheet() {
+  const items = store.notices?.items || [];
+  openSheet(`<h2>Уведомления</h2>${items.length ? `<section class="sheet-block">${items.map((item) => `<article class="line"><span><b>${esc(item.title)}</b><small>${esc(item.body)}</small></span></article>`).join("")}</section>` : `<p class="quiet">Уведомлений нет.</p>`}`);
+  if (store.preview) return;
+  const unread = items.filter((item) => !item.read);
+  for (const item of unread) {
+    try { await readNotice(item.id); } catch { /* остаётся непрочитанным, если сервер не ответил */ }
+  }
+  if (unread.length) store.notices = { ...store.notices, unread: 0, items: items.map((item) => ({ ...item, read: true })) };
 }
 
 function frame(inner) {
@@ -411,6 +469,94 @@ function paint() {
 async function onAction(act, button) {
   if (act === "nav") {
     go(button.dataset.screen);
+    if (button.dataset.screen === "manage") await loadManage();
+    return;
+  }
+  if (act === "toggle-ask") {
+    store.composer = !store.composer;
+    refresh();
+    return;
+  }
+  if (act === "notices") {
+    await noticesSheet();
+    return;
+  }
+  if (act === "class-sheet") {
+    classSheet();
+    return;
+  }
+  if (act === "pick-class") {
+    store.classId = Number(button.dataset.id);
+    document.querySelector("#dialog")?.close();
+    await reloadTeacher();
+    return;
+  }
+  if (act === "open-work") {
+    const work = (store.works?.items || []).find((item) => String(item.id) === button.dataset.id);
+    store.openWork = work || null;
+    refresh();
+    return;
+  }
+  if (act === "close-work") {
+    store.openWork = null;
+    refresh();
+    return;
+  }
+  if (act === "submit-work") {
+    await submitWork();
+    return;
+  }
+  if (act === "stimul-sample") {
+    store.stimulDraft = button.dataset.text || "";
+    store.stimulNote = "ИИ-помощник готовится к запуску. Сообщение не отправлено.";
+    refresh();
+    return;
+  }
+  if (act === "save-draft") {
+    await saveDraft();
+    return;
+  }
+  if (act === "open-result") {
+    await openResult(button.dataset.id);
+    return;
+  }
+  if (act === "close-result") {
+    store.resultView = null;
+    refresh();
+    return;
+  }
+  if (act === "accept-claim") {
+    await acceptOne(button.dataset.id);
+    if (store.role === "teacher") await reloadTeacher();
+    return;
+  }
+  if (act === "reject-claim") {
+    await rejectOne(button.dataset.id);
+    return;
+  }
+  if (act === "people-role") {
+    store.peopleRole = button.dataset.role || "";
+    await loadManage();
+    return;
+  }
+  if (act === "make-teacher") {
+    await changePerson(button.dataset.id, { role: "teacher", status: "active" });
+    return;
+  }
+  if (act === "block-person") {
+    await changePerson(button.dataset.id, { status: "blocked" });
+    return;
+  }
+  if (act === "unblock-person") {
+    await changePerson(button.dataset.id, { status: "active" });
+    return;
+  }
+  if (act === "appoint") {
+    await appoint();
+    return;
+  }
+  if (act === "reload-manage") {
+    await loadManage();
     return;
   }
   if (act === "approve-join") {
@@ -489,6 +635,14 @@ function bind() {
   document.addEventListener("submit", (event) => {
     event.preventDefault();
     if (event.target.id === "answer-form") submitAnswer();
+    if (event.target.id === "stimul-form") {
+      const value = document.querySelector("#stimul-input")?.value.trim() || "";
+      store.stimulDraft = value;
+      store.stimulNote = value
+        ? "ИИ-помощник готовится к запуску. Сообщение не отправлено."
+        : "Напишите вопрос. Ответ модели пока не подключён.";
+      refresh();
+    }
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && event.target.id === "question") {
@@ -504,6 +658,8 @@ function bind() {
       syncCloseConfirm(Boolean(target.value.trim()));
     }
     if (target.id === "goal" && store.wizard) store.wizard.goal = target.value;
+    if (target.id === "stimul-input") store.stimulDraft = target.value;
+    if (target.id === "people-q") store.peopleQuery = target.value;
     if (target.dataset.prompt != null && store.wizard?.draft?.items) {
       const item = store.wizard.draft.items[Number(target.dataset.prompt)];
       if (item) item.prompt = target.value;
@@ -523,6 +679,10 @@ function bind() {
     }
     if (target.id === "topic" && store.wizard) store.wizard.topic = target.value;
     if (target.id === "material") toggleMaterial(target.checked);
+    if (target.id === "people-q") {
+      store.peopleQuery = target.value;
+      loadManage();
+    }
   });
   window.addEventListener("hashchange", () => {
     if (store.booting || store.gate) return;

@@ -11,6 +11,7 @@ const PATHS = {
   grid: '<rect x="4" y="4" width="7" height="7" rx="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.6"/>',
   list: '<path d="M9 7h11M9 12h11M9 17h11"/><path d="M5 7h.01M5 12h.01M5 17h.01"/>',
   check: '<path d="m5 12 5 5 9-10"/>',
+  bell: '<path d="M6 16h12l-1.2-2.2V10a4.8 4.8 0 0 0-9.6 0v3.8L6 16z"/><path d="M10 16a2 2 0 0 0 4 0"/>',
 };
 
 export function icon(name) {

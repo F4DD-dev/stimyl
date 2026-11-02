@@ -8,6 +8,7 @@ class OutboundButton:
     url: str = ""
     web_app: str = ""
     contact_id: int = 0
+    request_contact: bool = False
 
 
 class NullSender:

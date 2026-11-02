@@ -31,6 +31,21 @@ export const store = {
   lastJob: null,
   wizard: null,
   filters: { status: "all", topic: "all" },
+  canManage: false,
+  classTitle: "",
+  composer: false,
+  notices: null,
+  works: null,
+  worksError: null,
+  openWork: null,
+  peopleQuery: "",
+  peopleRole: "",
+  claims: null,
+  people: null,
+  catalog: null,
+  manageError: null,
+  stimulDraft: "",
+  stimulNote: "",
 };
 
 const listeners = new Set();

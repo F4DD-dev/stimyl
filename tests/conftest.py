@@ -76,6 +76,8 @@ def _stored_button(button: OutboundButton) -> dict[str, str | int]:
     }
     if button.contact_id:
         stored["contact_id"] = button.contact_id
+    if button.request_contact:
+        stored["type"] = "request_contact"
     return stored
 
 

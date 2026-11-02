@@ -153,8 +153,44 @@ export function sendPhoto(file, text) {
   return request("/api/student/practice/photo", { method: "POST", body });
 }
 
-export const getClass = () => request("/api/teacher/class");
+export const getClass = (classId) =>
+  request(classId ? `/api/teacher/class?class_id=${encodeURIComponent(classId)}` : "/api/teacher/class");
 export const getAssignments = () => request("/api/teacher/assignments");
+export const getStudentWorks = () => request("/api/student/works");
+export const answerWork = (id, answers) =>
+  request(`/api/student/works/${id}/answers`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ answers }),
+  });
+export const getNotices = () => request("/api/notices");
+export const readNotice = (id) => request(`/api/notices/${id}/read`, { method: "POST" });
+export const saveWork = (body) =>
+  request("/api/teacher/works", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+export const publishWork = (id) => request(`/api/teacher/works/${id}/publish`, { method: "POST" });
+export const getWorkResult = (id) => request(`/api/teacher/works/${id}`);
+export const getClaims = () => request("/api/manage/claims");
+export const acceptClaim = (id) => request(`/api/manage/claims/${id}/accept`, { method: "POST" });
+export const rejectClaim = (id) => request(`/api/manage/claims/${id}/reject`, { method: "POST" });
+export const getPeople = (q, role) =>
+  request(`/api/manage/people?q=${encodeURIComponent(q || "")}&role=${encodeURIComponent(role || "")}`);
+export const savePerson = (id, body) =>
+  request(`/api/manage/people/${id}`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+export const getCatalog = () => request("/api/manage/catalog");
+export const appointTeacher = (body) =>
+  request("/api/manage/appointments", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
 
 export const postDraft = (body) =>
   request("/api/teacher/drafts", {

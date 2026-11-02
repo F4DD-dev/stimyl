@@ -112,11 +112,16 @@ export function teacherPreview() {
       ],
       frequent_mistakes: "Чаще всего ошибки в теме «Квадратные уравнения и дискриминант».",
       stalled: ["Кирилл — Геометрия, последняя попытка 01.10"],
+      subject_title: "Математика",
+      classes: [{ id: 1, title: "8Б", subjects: [{ id: 1, title: "Математика" }] }],
+      can_manage_school: false,
+      claims_reviewer: null,
+      pending_claims: [],
     },
     assignments: {
       items: [],
-      delivery: "unavailable",
-      detail: "Назначенных работ пока нет. Отправка в MAX ещё не подключена.",
+      delivery: "sample",
+      detail: "Демонстрационный список. Это не работы класса и не ответ сервера.",
     },
   };
 }

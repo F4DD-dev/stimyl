@@ -6,6 +6,7 @@ import time
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.bot.delivery import send_pending_notices
 from app.bot.service import process_update
 from app.core.config import get_settings
 from app.core.logging import configure_logging
@@ -123,6 +124,12 @@ async def serve() -> None:
                 logger.error("worker loop: %s", type(exc).__name__)
                 await asyncio.sleep(2)
                 continue
+            try:
+                async with factory() as session:
+                    await send_pending_notices(session, sender)
+                    await session.commit()
+            except Exception as exc:
+                logger.error("notice delivery failed: %s", type(exc).__name__)
             await asyncio.sleep(0.2)
     finally:
         heart.cancel()

@@ -418,6 +418,8 @@ def _gate_buttons(replies: list[GateReply]) -> list[OutboundButton]:
     buttons: list[OutboundButton] = []
     for reply in replies:
         buttons.extend(OutboundButton(text, payload) for text, payload in reply.buttons)
+        if reply.request_contact:
+            buttons.append(OutboundButton("Поделиться номером", "", request_contact=True))
         if reply.app_payload and reply.app_name:
             buttons.append(
                 OutboundButton(

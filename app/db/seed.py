@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.db.models import (
     AuthIdentity,
+    ClassSubjectTeacher,
     ClassTeacher,
     Consent,
     Enrollment,
@@ -149,6 +150,23 @@ async def _link_teacher(session: AsyncSession, school: SchoolClass, max_id: str)
     )
     if link is None:
         session.add(ClassTeacher(class_id=school.id, user_id=user.id))
+    subject = await session.scalar(select(Subject).where(Subject.title == DEMO_SUBJECT_TITLE))
+    if subject is not None:
+        post = await session.scalar(
+            select(ClassSubjectTeacher).where(
+                ClassSubjectTeacher.class_id == school.id,
+                ClassSubjectTeacher.user_id == user.id,
+                ClassSubjectTeacher.subject_id == subject.id,
+            )
+        )
+        if post is None:
+            session.add(
+                ClassSubjectTeacher(
+                    class_id=school.id,
+                    user_id=user.id,
+                    subject_id=subject.id,
+                )
+            )
     enrollment = await session.scalar(
         select(Enrollment).where(Enrollment.class_id == school.id, Enrollment.user_id == user.id)
     )
