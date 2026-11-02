@@ -1,4 +1,5 @@
 import logging
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
@@ -24,6 +25,17 @@ logger = logging.getLogger(__name__)
 
 class SessionBody(BaseModel):
     init_data: str
+    start_param: str = ""
+
+
+def launch_param(signed: str, hinted: str) -> str:
+    """Билет из подписи важнее. Отдельное поле принимаем только как тот же формат payload."""
+    if signed:
+        return signed
+    hinted = (hinted or "").strip()
+    if re.fullmatch(r"[\w-]{1,512}", hinted):
+        return hinted
+    return ""
 
 
 @router.post("/api/session")
@@ -41,7 +53,12 @@ async def open_session(
         logger.info("miniapp session rejected reason=unsigned")
         raise HTTPException(status_code=401, detail="Не удалось проверить вход")
     external_id = fields["user_id"]
-    start_param = fields.get("start_param") or ""
+    signed_param = fields.get("start_param") or ""
+    start_param = launch_param(signed_param, body.start_param)
+    logger.info(
+        "miniapp start_param=%s",
+        "signed" if signed_param else "hint" if start_param else "absent",
+    )
     user = await user_by_provider(session, WEBAPP_PROVIDER, external_id)
     if user is None and settings.allow_id_match:
         matched = await user_by_provider(session, BOT_PROVIDER, external_id)

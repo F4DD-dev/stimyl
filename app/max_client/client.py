@@ -94,19 +94,28 @@ class MaxClient:
     async def set_commands(self, commands: list[dict[str, str]]) -> None:
         await self._request("PATCH", "/me/commands", json={"commands": commands})
 
-    async def my_username(self) -> str:
-        """Публичное имя бота для кнопки open_app. Пусто, если MAX не ответил."""
+    async def my_profile(self) -> tuple[str, int]:
+        """Имя и user_id бота. contact_id в open_app — это user_id, без него payload не доходит."""
         try:
             response = await self._client.get("/me")
             _raise_for_status(response)
             payload = response.json()
         except Exception as exc:
             logger.error("bot profile failed: %s", type(exc).__name__)
-            return ""
+            return "", 0
         user = payload.get("user") if isinstance(payload, dict) else None
         if not isinstance(user, dict):
             user = payload if isinstance(payload, dict) else {}
-        return str(user.get("username") or "").strip().lstrip("@")
+        username = str(user.get("username") or "").strip().lstrip("@")
+        try:
+            contact_id = int(user.get("user_id") or 0)
+        except (TypeError, ValueError):
+            contact_id = 0
+        return username, contact_id
+
+    async def my_username(self) -> str:
+        username, _contact = await self.my_profile()
+        return username
 
     async def get_updates(self, marker: int | None, timeout: int = 30) -> dict:
         params: dict[str, object] = {
@@ -184,11 +193,17 @@ def _keyboard(buttons: list[OutboundButton]) -> dict[str, object]:
     }
 
 
-def _button(button: OutboundButton) -> dict[str, str]:
+def _button(button: OutboundButton) -> dict[str, str | int]:
     if button.web_app:
-        rendered = {"type": "open_app", "text": button.text, "web_app": button.web_app}
+        rendered: dict[str, str | int] = {
+            "type": "open_app",
+            "text": button.text,
+            "web_app": button.web_app,
+        }
         if button.payload:
             rendered["payload"] = button.payload
+        if button.contact_id:
+            rendered["contact_id"] = button.contact_id
         return rendered
     if button.url:
         return {"type": "link", "text": button.text, "url": button.url}

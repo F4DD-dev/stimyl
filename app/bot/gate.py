@@ -70,6 +70,7 @@ class GateReply:
     app_text: str = ""
     app_payload: str = ""
     app_name: str = ""
+    app_contact: int = 0
 
 
 @dataclass
@@ -282,6 +283,7 @@ async def _send_code(session: AsyncSession, user: User, settings: Settings) -> G
         reply.app_text = "Открыть кабинет"
         reply.app_payload = issued.ticket
         reply.app_name = username
+        reply.app_contact = int(settings.bot_contact_id or 0)
     if link:
         reply.link_text = "Открыть в браузере" if username else "Открыть кабинет"
         reply.link_url = f"{base}/cabinet?ticket={issued.ticket}"
@@ -299,4 +301,5 @@ async def _send_app(session: AsyncSession, user: User, settings: Settings) -> Ga
     reply.app_text = "Мой прогресс"
     reply.app_payload = issued.ticket
     reply.app_name = username
+    reply.app_contact = int(settings.bot_contact_id or 0)
     return GateOutcome(user, [reply], True)

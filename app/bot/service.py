@@ -420,7 +420,12 @@ def _gate_buttons(replies: list[GateReply]) -> list[OutboundButton]:
         buttons.extend(OutboundButton(text, payload) for text, payload in reply.buttons)
         if reply.app_payload and reply.app_name:
             buttons.append(
-                OutboundButton(reply.app_text or "Открыть", reply.app_payload, web_app=reply.app_name)
+                OutboundButton(
+                    reply.app_text or "Открыть",
+                    reply.app_payload,
+                    web_app=reply.app_name,
+                    contact_id=reply.app_contact,
+                )
             )
         if reply.link_url:
             buttons.append(OutboundButton(reply.link_text or "Открыть", "", reply.link_url))

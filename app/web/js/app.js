@@ -71,10 +71,16 @@ function ensureHash() {
   }
 }
 
+function readStartParam() {
+  const unsafe = window.WebApp && window.WebApp.initDataUnsafe;
+  if (!unsafe || typeof unsafe !== "object") return "";
+  return String(unsafe.start_param || unsafe.startParam || "");
+}
+
 async function waitForBridge() {
-  if (readInitData()) return;
-  for (let step = 0; step < 16; step += 1) {
-    if (readInitData()) return;
+  for (let step = 0; step < 30; step += 1) {
+    const data = readInitData();
+    if (data && (readStartParam() || data.includes("start_param=") || step >= 20)) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
@@ -162,7 +168,7 @@ async function boot() {
     const initData = readInitData();
     store.fromMax = Boolean(initData);
     if (initData) {
-      const opened = await openSession(initData);
+      const opened = await openSession(initData, readStartParam());
       setCsrf(opened.csrf);
       stripInit();
     }

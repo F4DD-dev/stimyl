@@ -85,11 +85,11 @@ export async function request(path, options = {}) {
 
 export const getSession = () => request("/api/session");
 
-export const openSession = (initData) =>
+export const openSession = (initData, startParam) =>
   request("/api/session", {
     method: "POST",
     headers: JSON_HEADERS,
-    body: JSON.stringify({ init_data: initData }),
+    body: JSON.stringify({ init_data: initData, start_param: startParam || "" }),
   });
 
 export const webLogin = (publicId, code) =>

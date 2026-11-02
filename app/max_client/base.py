@@ -7,6 +7,7 @@ class OutboundButton:
     payload: str
     url: str = ""
     web_app: str = ""
+    contact_id: int = 0
 
 
 class NullSender:

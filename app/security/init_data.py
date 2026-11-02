@@ -41,4 +41,5 @@ def read_init_data(init_data: str, bot_token: str, max_age_seconds: int = 3600) 
         user_id = str(user["id"])
     except (KeyError, TypeError, json.JSONDecodeError):
         return None
-    return {"user_id": user_id, "start_param": fields.get("start_param") or ""}
+    start_param = fields.get("start_param") or fields.get("startapp") or ""
+    return {"user_id": user_id, "start_param": start_param}
