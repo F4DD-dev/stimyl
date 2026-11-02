@@ -111,7 +111,7 @@ async def truncate(url: str) -> None:
                 "user_sessions, consents, auth_identities, teacher_applications, "
                 "teacher_invites, transfer_codes, signup_hints, login_guards, "
                 "audit_log, inbound_events, runtime_flags, enrollments, class_teachers, "
-                "users, topics, subjects, classes, schools "
+                "staff_seats, join_applications, users, topics, subjects, classes, schools "
                 "RESTART IDENTITY CASCADE"
             )
         )

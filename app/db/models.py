@@ -41,6 +41,9 @@ class School(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     title: Mapped[str] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    region: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    external_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class SchoolClass(Base):
@@ -63,6 +66,43 @@ class ClassTeacher(Base):
 
     class_id: Mapped[int] = mapped_column(ForeignKey("classes.id"), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+
+
+class JoinApplication(Base):
+    __tablename__ = "join_applications"
+    __table_args__ = (
+        CheckConstraint(
+            "wanted_role IN ('student', 'teacher', 'admin')",
+            name="ck_join_applications_role",
+        ),
+        CheckConstraint(
+            "status IN ('draft', 'pending', 'approved')",
+            name="ck_join_applications_status",
+        ),
+    )
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    wanted_role: Mapped[str] = mapped_column(String(16))
+    city: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    school_id: Mapped[int | None] = mapped_column(ForeignKey("schools.id"), nullable=True)
+    class_id: Mapped[int | None] = mapped_column(ForeignKey("classes.id"), nullable=True)
+    seat_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class StaffSeat(Base):
+    __tablename__ = "staff_seats"
+    __table_args__ = (
+        UniqueConstraint("class_id", "code", name="uq_staff_seats_class_code"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    school_id: Mapped[int] = mapped_column(ForeignKey("schools.id"))
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id"))
+    code: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str] = mapped_column(String(120))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
 
 class Enrollment(Base):
