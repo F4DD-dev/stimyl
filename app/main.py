@@ -63,6 +63,7 @@ async def _bring_up(app: FastAPI, settings: Settings) -> None:
             await connection.execute(text("SELECT 1"))
         app.state.engine = engine
         app.state.session_factory = make_session_factory(engine)
+        await _learn_bot_name(app, settings)
         async with app.state.session_factory() as session:
             try:
                 rows = await session.execute(text("SELECT version_num FROM alembic_version"))
@@ -91,6 +92,22 @@ async def _bring_up(app: FastAPI, settings: Settings) -> None:
         ",".join(missing_required(settings)) or "-",
         "set" if settings.max_token else "missing",
     )
+
+
+async def _learn_bot_name(app: FastAPI, settings: Settings) -> None:
+    """Имя бота нужно кнопке «Вернуться в чат». Короткий тестовый токен в сеть не пускаем."""
+    if (settings.bot_username or "").strip() or not settings.max_token or len(settings.max_token) <= 20:
+        app.state.bot_username = settings.bot_username
+        return
+    client = MaxClient(settings.max_token, settings.resolved_ca_path())
+    try:
+        name = await client.my_username()
+    finally:
+        await client.aclose()
+    if name:
+        settings.bot_username = name
+        app.state.bot_username = name
+        logger.info("bot username=%s", name)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

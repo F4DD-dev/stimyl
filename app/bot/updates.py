@@ -73,10 +73,11 @@ def _message(update: dict) -> Incoming | None:
     if chat_type not in {None, "dialog"}:
         return None
     stripped = text.strip() if text else ""
+    folded = stripped.casefold()
     start_payload = None
-    if stripped == "/start" or stripped == "start":
+    if folded in {"/start", "start"}:
         kind = "start"
-    elif stripped.startswith("/start ") or stripped.startswith("start "):
+    elif folded.startswith("/start ") or folded.startswith("start "):
         kind = "start"
         start_payload = _payload(stripped.split(None, 1)[1])
     elif stripped:

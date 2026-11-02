@@ -22,6 +22,9 @@ def _page(entry: str, bot_name: str | None) -> HTMLResponse:
 
 
 def _bot_name(request: Request) -> str | None:
+    learned = getattr(request.app.state, "bot_username", None)
+    if learned:
+        return str(learned)
     return getattr(request.app.state.settings, "bot_username", None)
 
 

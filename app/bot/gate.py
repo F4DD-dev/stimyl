@@ -18,7 +18,6 @@ from app.domain.account_copy import (
     JOIN_UNKNOWN,
     JOINED,
     UNLINKED,
-    WELCOME,
     cabinet_text,
     consent_text,
 )
@@ -26,7 +25,6 @@ from app.domain.accounts import (
     BOT_PROVIDER,
     IssuedCode,
     accept_consent,
-    admin_ids,
     claim_invite,
     claim_transfer,
     continue_application,
@@ -42,6 +40,20 @@ from app.domain.accounts import (
     start_application,
     take_hint,
     touch,
+)
+from app.domain.directory import (
+    application_of,
+    approve,
+    choose_city,
+    choose_role,
+    choose_school,
+    choose_seat,
+    city_reply,
+    ensure_directory,
+    pending_reply,
+    placed,
+    role_reply,
+    school_reply,
 )
 
 CONSENT_YES = "consent_yes"
@@ -102,9 +114,7 @@ async def open_gate(
     if command.lower().startswith("/whoami"):
         if settings.env == "prod":
             return GateOutcome(None, [GateReply("Команда недоступна.")], True)
-        if settings.dev or external in admin_ids(settings):
-            return GateOutcome(None, [GateReply(f"user_id: {external}")], True)
-        return GateOutcome(None, [GateReply("Команда только для администратора.")], True)
+        return GateOutcome(None, [GateReply(f"user_id: {external}")], True)
     if incoming.start_payload:
         await remember_payload(session, external, incoming.start_payload)
 
@@ -127,6 +137,12 @@ async def open_gate(
     text = incoming.text or ""
     folded = _fold(text)
     action = _named_action(incoming.payload)
+    if action == "apps" or folded == "заявки":
+        text_out, buttons = await pending_reply(session, user)
+        return GateOutcome(user, [GateReply(text_out, buttons)], True)
+    if action.startswith("approve:") and action.split(":", 1)[1].isdigit():
+        text_out, buttons = await approve(session, user, int(action.split(":", 1)[1]))
+        return GateOutcome(user, [GateReply(text_out, buttons)], True)
     if action in {WEB_LOGIN, "open_cabinet"} or folded in {"войти в кабинет", "открыть кабинет"}:
         return await _send_code(session, user, settings)
     if action == "progress" or folded == "мой прогресс":
@@ -171,6 +187,9 @@ async def open_gate(
         if reply:
             replies.append(GateReply(reply))
 
+    if not await placed(session, user):
+        reply = await _directory(session, user, incoming, settings)
+        return GateOutcome(user, replies + [reply], True)
     return GateOutcome(user, replies, False)
 
 
@@ -179,7 +198,8 @@ async def _without_account(
 ) -> GateOutcome:
     if incoming.payload == CONSENT_YES:
         user = await accept_consent(session, incoming.max_user_id, incoming.name, settings)
-        replies = [GateReply(WELCOME)]
+        text_out, buttons = role_reply()
+        replies = [GateReply(text_out, buttons)]
         payload = await take_hint(session, incoming.max_user_id)
         if payload:
             joined = await join_by_key(
@@ -209,6 +229,43 @@ def _join_reply(joined, *, unknown: bool) -> str | None:
     if not joined.found and unknown:
         return JOIN_UNKNOWN
     return None
+
+
+async def _directory(session: AsyncSession, user: User, incoming: Incoming, settings: Settings) -> GateReply:
+    await ensure_directory(session)
+    action = _named_action(incoming.payload)
+    allow_bootstrap = settings.env != "prod"
+    row = await application_of(session, user)
+    if row is not None and row.status == "pending":
+        return GateReply("Заявка ещё на проверке у администратора школы. Когда примут, напиши /start.")
+    if row is not None and row.status == "approved" and not await placed(session, user):
+        return GateReply("Заявку приняли. Напиши /start ещё раз.")
+    if action.startswith("role:"):
+        text_out, buttons = await choose_role(session, user, action.split(":", 1)[1])
+        return GateReply(text_out, buttons)
+    if action.startswith("city:") and action.split(":", 1)[1].isdigit():
+        text_out, buttons = await choose_city(session, user, int(action.split(":", 1)[1]))
+        return GateReply(text_out, buttons)
+    if action.startswith("school:"):
+        text_out, buttons = await choose_school(
+            session, user, action.split(":", 1)[1], allow_admin_bootstrap=allow_bootstrap
+        )
+        return GateReply(text_out, buttons)
+    if action.startswith("seat:"):
+        text_out, buttons = await choose_seat(
+            session, user, action.split(":", 1)[1], allow_admin_bootstrap=allow_bootstrap
+        )
+        return GateReply(text_out, buttons)
+    if row is None:
+        text_out, buttons = role_reply()
+        return GateReply(text_out, buttons)
+    if not row.city:
+        text_out, buttons = city_reply()
+        return GateReply(text_out, buttons)
+    if row.school_id is None:
+        text_out, buttons = school_reply(row.city)
+        return GateReply(text_out, buttons)
+    return GateReply("Выбери себя кнопкой ниже или напиши /start.")
 
 
 async def _send_code(session: AsyncSession, user: User, settings: Settings) -> GateOutcome:

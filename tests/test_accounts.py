@@ -384,8 +384,10 @@ def test_ticket_query_is_redacted_in_logs():
 
 async def test_whoami_is_only_for_listed_admins(seeded):
     api = seeded
+    api.app.state.settings.env = "prod"
     await post_update(api, message(900002, "Алексей", "/whoami", "who-student"))
-    assert "администратора" in api.memory.sent[-1]["text"].casefold()
+    assert "недоступна" in api.memory.sent[-1]["text"].casefold()
+    api.app.state.settings.env = "dev"
     api.app.state.settings.admin_max_ids = "900001"
     await post_update(api, message(900001, "Марина", "/whoami", "who-admin"))
     assert api.memory.sent[-1]["text"] == "user_id: 900001"

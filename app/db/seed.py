@@ -180,6 +180,9 @@ async def _run() -> None:
     factory = make_session_factory(engine)
     async with factory() as session:
         await seed_topics(session)
+        from app.domain.directory import ensure_directory
+
+        await ensure_directory(session)
         if settings.seed_demo:
             await seed_demo_people(session, settings.teacher_max_user_id)
         await session.commit()

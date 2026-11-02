@@ -47,7 +47,7 @@ export function initials(name) {
 }
 
 export function brand() {
-  return `<span class="brand"><span class="mark" aria-hidden="true"></span><span class="logo">стимул</span></span>`;
+  return `<span class="brand"><img src="/assets/logo.jpg" alt="" width="32" height="32"><span class="logo">стимул</span></span>`;
 }
 
 export function pill(status) {
