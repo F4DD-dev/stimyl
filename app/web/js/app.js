@@ -306,10 +306,15 @@ function sidenav() {
   </aside>`;
 }
 
+function closeSheet() {
+  const dialog = document.querySelector("#dialog");
+  if (dialog?.open && typeof dialog.close === "function") dialog.close();
+}
+
 function openSheet(html) {
   const dialog = document.querySelector("#dialog");
   if (!dialog) return;
-  dialog.innerHTML = `<div class="grab"></div>${html}`;
+  dialog.innerHTML = `<div class="sheet-top"><div class="grab"></div><button type="button" class="sheet-close" data-act="close-sheet">Закрыть</button></div>${html}`;
   if (typeof dialog.showModal === "function" && !dialog.open) dialog.showModal();
 }
 
@@ -474,6 +479,10 @@ async function onAction(act, button) {
     refresh();
     return;
   }
+  if (act === "close-sheet") {
+    closeSheet();
+    return;
+  }
   if (act === "notices") {
     await noticesSheet();
     return;
@@ -631,6 +640,10 @@ async function onAction(act, button) {
 }
 
 function bind() {
+  const dialog = document.querySelector("#dialog");
+  dialog?.addEventListener("click", (event) => {
+    if (event.target === dialog) closeSheet();
+  });
   document.addEventListener("click", (event) => {
     const button = event.target.closest("[data-act]");
     if (!button || button.disabled) return;
