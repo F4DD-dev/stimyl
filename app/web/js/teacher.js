@@ -564,14 +564,6 @@ export function renderProfile() {
         <button class="setting-row" type="button" data-act="class-sheet"><span>Предмет</span><strong>${esc(subject || "не указан")}</strong>${icon("arrow")}</button>
         <button class="setting-row" type="button" ${claimsAct}><span>Заявки проверяет</span><strong>${esc(reviewer || "Ответственный не назначен")}</strong>${icon("arrow")}</button>
       </div>
-      <div class="privacy-card">
-        <div class="privacy-card__icon">${icon("bell")}</div>
-        <div>
-          <strong>Уведомления</strong>
-          <p>Личные вопросы учеников в кабинет не приходят.</p>
-        </div>
-        <button type="button" data-act="notices">Настроить</button>
-      </div>
     </div>
   </div>`;
 }
