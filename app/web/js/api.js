@@ -110,6 +110,13 @@ export async function request(path, options = {}) {
 
 export const getSession = () => request("/api/session");
 
+export const renameMe = (displayName) =>
+  request("/api/profile/name", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ display_name: displayName }),
+  });
+
 export const openSession = (initData, startParam) =>
   request("/api/session", {
     method: "POST",

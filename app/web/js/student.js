@@ -1,4 +1,4 @@
-import { answerWork, getHistory, getProgress, getStudentWorks, practice, sendPhoto } from "./api.js";
+import { answerWork, getHistory, getProgress, getStudentWorks, practice, sendPhoto } from "./api.js?v=3";
 import { sampleLesson } from "./preview.js";
 import { go, refresh, store } from "./store.js";
 import {
@@ -429,7 +429,7 @@ export function renderProfile() {
           <h1 id="page-title">${esc(firstName(name) || name || "Имя не пришло")}</h1>
           <p>${esc(progress?.class_title || "класс не указан")}${subject ? ` · ${esc(subject)}` : ""}</p>
         </div>
-        <button class="profile-card__edit" type="button" data-act="profile-note">Изменить профиль</button>
+        ${store.nameChanged ? "" : `<button class="profile-card__edit" type="button" data-act="profile-note">Изменить имя</button>`}
       </div>
       <div class="student-stats">
         <article><span>Работы</span><strong>${works}</strong><small>${works ? "назначены" : "ещё не было"}</small></article>

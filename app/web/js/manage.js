@@ -1,4 +1,4 @@
-import { acceptClaim, appointTeacher, getCatalog, getClaims, getPeople, rejectClaim, savePerson } from "./api.js";
+import { acceptClaim, appointTeacher, getCatalog, getClaims, getPeople, rejectClaim, savePerson } from "./api.js?v=3";
 import { refresh, store } from "./store.js";
 import { emptyBlock, errorBlock, esc } from "./ui.js";
 

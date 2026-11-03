@@ -1,4 +1,4 @@
-import { getAssignments, getClass, getNotices, getWorkResult, postDraft, publishWork, saveWork } from "./api.js";
+import { getAssignments, getClass, getNotices, getWorkResult, postDraft, publishWork, saveWork } from "./api.js?v=3";
 import { renderManage } from "./manage.js";
 import { go, refresh, store } from "./store.js";
 import {
@@ -511,7 +511,7 @@ export function renderProfile() {
           <h1 id="page-title">${esc(firstName(name) || name || "Имя не пришло из профиля")}</h1>
           <p>Куратор класса ${esc(classTitle())}</p>
         </div>
-        <button class="profile-card__edit" type="button" data-act="profile-note">Изменить</button>
+        ${store.nameChanged ? "" : `<button class="profile-card__edit" type="button" data-act="profile-note">Изменить имя</button>`}
       </div>
       <div class="settings-card">
         <div class="settings-card__heading">

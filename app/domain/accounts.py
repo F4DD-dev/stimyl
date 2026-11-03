@@ -148,6 +148,31 @@ async def user_by_provider(
     return user
 
 
+_NAME = re.compile(r"^[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё.'\- ]{0,79}$")
+
+
+def clean_display_name(raw: str) -> str | None:
+    text = " ".join((raw or "").split())
+    if not _NAME.fullmatch(text) or len(text) < 2:
+        return None
+    return text
+
+
+async def rename_once(session: AsyncSession, user: User, raw: str) -> tuple[str | None, str | None]:
+    """Человек меняет своё имя сам и только один раз."""
+    if user.name_changed:
+        return None, "Имя можно сменить только один раз."
+    cleaned = clean_display_name(raw)
+    if cleaned is None:
+        return None, "Имя: 2–80 букв, можно пробел и дефис."
+    if cleaned == user.display_name:
+        return None, "Это уже ваше имя."
+    user.display_name = cleaned
+    user.name_changed = True
+    await session.flush()
+    return cleaned, None
+
+
 async def remember_payload(session: AsyncSession, external_id: str, payload: str | None) -> None:
     if not payload:
         return

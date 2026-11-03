@@ -30,6 +30,7 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     role: Mapped[str] = mapped_column(String(16))
     display_name: Mapped[str] = mapped_column(String(200))
+    name_changed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     status: Mapped[str] = mapped_column(String(16), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

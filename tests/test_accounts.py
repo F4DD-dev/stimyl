@@ -680,6 +680,26 @@ async def test_transfer_keeps_history_on_the_old_profile(seeded):
     assert int(kept or 0) == 1
 
 
+async def test_person_renames_once(seeded):
+    api = seeded
+    await post_update(api, _started(6363, "Ира"))
+    await post_update(api, _consent(6363, "Ира"))
+    await auth_as(api, "6363")
+    bad = await api.client.post("/api/profile/name", json={"display_name": "1"})
+    assert bad.status_code == 422
+    first = await api.client.post("/api/profile/name", json={"display_name": "Ирина"})
+    assert first.status_code == 200, first.text
+    assert first.json()["display_name"] == "Ирина"
+    assert first.json()["name_changed"] is True
+    second = await api.client.post("/api/profile/name", json={"display_name": "Мария"})
+    assert second.status_code == 409
+    same = await api.client.get("/api/session")
+    assert same.json()["display_name"] == "Ирина"
+    assert same.json()["name_changed"] is True
+    junk = await api.client.post("/api/profile/name", json={"display_name": "12"})
+    assert junk.status_code == 409
+
+
 async def _attempts(api, user_id: int) -> int:
     factory = api.app.state.session_factory
     async with factory() as session:

@@ -15,6 +15,7 @@ from app.domain.accounts import (
     claim_webapp_ticket,
     ensure_webapp_identity,
     open_browser_session,
+    rename_once,
     user_by_provider,
     write_audit,
 )
@@ -28,6 +29,10 @@ logger = logging.getLogger(__name__)
 class SessionBody(BaseModel):
     init_data: str
     start_param: str = ""
+
+
+class RenameBody(BaseModel):
+    display_name: str = ""
 
 
 def launch_param(signed: str, hinted: str) -> str:
@@ -114,8 +119,25 @@ async def current_session(
     return {
         "role": user.role,
         "display_name": user.display_name,
+        "name_changed": bool(user.name_changed),
         "csrf": getattr(request.state, "csrf", ""),
         "can_manage_school": bool(user.can_manage_school),
         "class_title": class_title or "",
         "status": user.status,
     }
+
+
+@router.post("/api/profile/name")
+async def rename_profile(
+    body: RenameBody,
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    user = await user_from_cookie(request, session)
+    name, error = await rename_once(session, user, body.display_name)
+    if error:
+        status = 409 if user.name_changed else 422
+        raise HTTPException(status_code=status, detail=error)
+    await write_audit(session, user.id, "rename_once", user.id, client_ip(request), None)
+    await session.commit()
+    return {"display_name": name, "name_changed": True}

@@ -1,4 +1,4 @@
-import { approveJoin, getHistory, getLesson, getNotices, getProgress, getSession, getStudentWorks, openSession, openTicket, readNotice, setCsrf } from "./api.js";
+import { approveJoin, getHistory, getLesson, getNotices, getProgress, getSession, getStudentWorks, openSession, openTicket, readNotice, renameMe, setCsrf } from "./api.js?v=3";
 import { previewRole, studentPreview, teacherPreview } from "./preview.js?v=8";
 import {
   checkSubmission,
@@ -17,7 +17,7 @@ import {
   submitAnswer,
   submitQuestion,
   takePhoto,
-} from "./student.js?v=9";
+} from "./student.js?v=10";
 import { go, refresh, store, subscribe } from "./store.js";
 import {
   focusTopic,
@@ -37,9 +37,9 @@ import {
   toggleStudent,
   wizardBack,
   wizardNext,
-} from "./teacher.js?v=8";
-import { acceptOne, appoint, changePerson, loadManage, rejectOne } from "./manage.js?v=8";
-import { brand, confirmDialog, esc, icon, mark, skeleton } from "./ui.js?v=2";
+} from "./teacher.js?v=9";
+import { acceptOne, appoint, changePerson, loadManage, rejectOne } from "./manage.js?v=9";
+import { brand, confirmDialog, esc, icon, mark, skeleton, toast } from "./ui.js?v=2";
 
 const TITLES = {
   home: "Главная",
@@ -212,6 +212,7 @@ async function boot() {
     if (id !== bootId) return;
     store.role = me.role;
     store.displayName = me.display_name || "";
+    store.nameChanged = Boolean(me.name_changed);
     store.canManage = Boolean(me.can_manage_school);
     store.classTitle = me.class_title || "";
     store.preview = false;
@@ -304,6 +305,67 @@ function sidenav() {
       return `<button type="button" class="side-link${active ? " is-active" : ""}" data-act="nav" data-screen="${id}" ${active ? 'aria-current="page"' : ""}>${badge}<span>${label}</span></button>`;
     }).join("")}
   </aside>`;
+}
+
+function askName(current) {
+  const dialog = document.querySelector("#dialog");
+  if (!dialog) return Promise.resolve("");
+  dialog.innerHTML = `<h2>Новое имя</h2><p>Сменить можно один раз. Так имя сохранится в кабинете и в классе.</p><label class="field-label" for="rename-input">Имя</label><input id="rename-input" class="field" maxlength="80" value="${esc(current)}" autocomplete="name"><div class="dialog-actions"><button type="button" class="btn btn-ghost" data-cancel>Отмена</button><button type="button" class="btn btn-primary" data-ok>Сохранить</button></div>`;
+  if (typeof dialog.showModal === "function" && !dialog.open) dialog.showModal();
+  const input = dialog.querySelector("#rename-input");
+  input?.focus();
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      if (dialog.open && typeof dialog.close === "function") dialog.close();
+      resolve(value);
+    };
+    dialog.querySelector("[data-ok]")?.addEventListener("click", () => finish(input?.value.trim() || ""));
+    dialog.querySelector("[data-cancel]")?.addEventListener("click", () => finish(""));
+    dialog.addEventListener("close", () => finish(""), { once: true });
+    input?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        finish(input.value.trim());
+      }
+    });
+  });
+}
+
+async function renameProfile() {
+  if (store.preview) {
+    await confirmDialog({
+      title: "Демонстрация",
+      text: "В просмотре имя не записывается.",
+      confirm: "Понятно",
+    });
+    return;
+  }
+  if (store.nameChanged) {
+    await confirmDialog({
+      title: "Имя уже изменено",
+      text: "Сменить имя можно только один раз.",
+      confirm: "Понятно",
+    });
+    return;
+  }
+  const next = await askName(store.displayName || "");
+  if (!next) return;
+  store.busy = true;
+  try {
+    const saved = await renameMe(next);
+    store.displayName = saved.display_name || next;
+    store.nameChanged = true;
+    if (store.progress) store.progress = { ...store.progress, display_name: store.displayName };
+    toast("Имя сохранено.");
+    refresh();
+  } catch (error) {
+    toast(error.message || "Не получилось сохранить имя.");
+  } finally {
+    store.busy = false;
+  }
 }
 
 function closeSheet() {
@@ -618,13 +680,7 @@ async function onAction(act, button) {
   else if (act === "check-submission") await checkSubmission();
   else if (act === "retry-lesson") retryLesson();
   else if (act === "exit-lesson") await exitLesson();
-  else if (act === "profile-note") {
-    await confirmDialog({
-      title: "Имя из профиля",
-      text: "Имя приходит из MAX. В кабинете его отдельно не сохраняю.",
-      confirm: "Понятно",
-    });
-  }
+  else if (act === "profile-note") await renameProfile();
   else if (act === "class-info") await showClassInfo();
   else if (act === "compose") startCompose(button.dataset.topic || "");
   else if (act === "focus-topic") focusTopic(button.dataset.topic);
