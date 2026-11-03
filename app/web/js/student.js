@@ -119,7 +119,7 @@ function formatDue(iso) {
 }
 
 function workMeta(item) {
-  const bits = [item.subject, item.topic && item.topic !== item.title ? item.topic : "", item.author ? `назначил ${item.author}` : ""];
+  const bits = [item.status === "done" ? "сдано" : "", item.subject, item.topic && item.topic !== item.title ? item.topic : "", item.author ? `назначил ${item.author}` : ""];
   const due = formatDue(item.due_at);
   if (due) bits.push(`срок ${due}`);
   return bits.filter(Boolean).join(" · ");
@@ -275,7 +275,7 @@ export function renderLesson() {
   const submission = mode === "submission" && !lesson?.task
     ? `<section class="card">
         <h2>Жду работу от учителя</h2>
-        <p>В сдаче принимаю ответы на выданные задания и не разбираю новую страницу. Личный вопрос сам не отправляю.</p>
+        <p>Здесь я принимаю ответы на выданную работу и не разбираю новую страницу. Личный вопрос учителю не уходит.</p>
         <button class="btn btn-primary" type="button" data-act="check-submission" ${disabled()}>Проверить, есть ли работа</button>
       </section>`
     : "";
@@ -359,7 +359,7 @@ export function renderMap() {
       <div class="page-heading">
         <span class="eyebrow">Личный прогресс</span>
         <h1 id="page-title">Карта знаний</h1>
-        <p>${stats.known ? `Усвоено ${stats.mastered}. Нужна практика ${stats.practice}. Повторить ${stats.repeat}. Статус считается по твоим ответам.` : "Пока нет проверенных ответов. Задай вопрос на обзоре, и тема получит статус."}</p>
+        <p>${stats.known ? `Усвоено ${stats.mastered}. Нужна практика ${stats.practice}. Повторить ${stats.repeat}. Статус считается по твоим ответам.` : "Пока нет проверенных ответов. Открой тему на обзоре или сдай работу из заданий."}</p>
       </div>
       ${progress.next_topic ? `<article class="learn-card learn-card--compact"><span class="eyebrow">Дальше</span><h2>${esc(progress.next_step || progress.next_topic)}</h2><button class="primary-button primary-button--light" type="button" data-act="open-next">Разобрать<span>${icon("arrow")}</span></button></article>` : ""}
       ${groups.map(([status, title]) => block(status, title)).join("")}
@@ -507,6 +507,7 @@ function renderWork(work) {
         <span class="eyebrow">${esc(work.subject || "Работа")}</span>
         <h1 id="page-title">${esc(work.title)}</h1>
         <p>${esc(work.topic && work.topic !== work.title ? work.topic : work.goal || "")}${work.author ? ` Назначил ${esc(work.author)}.` : ""}${due ? ` Срок ${esc(due)}.` : ""}</p>
+        ${work.study ? `<p>${esc(work.study)}</p>` : ""}
       </div>
       <div class="work-sheet">
         ${(work.items || []).map((item) => `<section>
@@ -529,11 +530,11 @@ export function renderStimul() {
         <div class="assistant-intro__icon">${icon("spark")}</div>
         <div>
           <span class="eyebrow">Личный помощник</span>
-          <h1 id="page-title">Скоро здесь</h1>
-          <p>Стимул готовится к запуску. Ответ модели не генерируется, сообщение никуда не уходит, учитель личный диалог не видит.</p>
+          <h1 id="page-title">Пока без чата</h1>
+          <p>Сообщение отсюда никуда не уходит, учитель его не видит. Вопрос по теме задавайте на обзоре, работу сдавайте в заданиях.</p>
         </div>
       </div>
-      <div class="assistant-notice" role="status">${icon("spark")}<span>Пока можно задать вопрос на обзоре: это тренировка, не чат помощника.</span></div>
+      <div class="assistant-notice" role="status">${icon("spark")}<span>Вопрос по теме задаётся на обзоре. Это тренировка, учитель текст не видит.</span></div>
       <form class="composer" aria-disabled="true">
         <button class="composer__attach" type="button" disabled aria-label="Добавить фото">${icon("camera")}</button>
         <input disabled placeholder="Помощник ещё не отвечает" aria-label="Вопрос помощнику" value="">
@@ -668,6 +669,12 @@ export function runLessonAction(action, topic, version) {
 
 export function pickTopic(title) {
   if (!title) return;
+  const pending = (store.works?.items || []).find((item) => item.status !== "done" && (item.title === title || item.topic === title));
+  if (pending) {
+    store.openWork = pending;
+    go("tasks");
+    return;
+  }
   store.lesson = null;
   store.busyLabel = "Открываю тему…";
   queue({ type: "action", action: "pick", topic: title });

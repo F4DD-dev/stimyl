@@ -46,6 +46,7 @@ export const store = {
   manageError: null,
   stimulDraft: "",
   stimulNote: "",
+  focusStudent: "",
 };
 
 const listeners = new Set();

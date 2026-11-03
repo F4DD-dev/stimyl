@@ -9,7 +9,7 @@ from app.api.deps import db_session, user_from_cookie
 from app.bot.service import class_report
 from app.db.models import ClassTeacher, Enrollment, SchoolClass, User
 from app.domain.accounts import approve_enrollment, rotate_class_key, set_class_join
-from app.domain.drafts import build_check_draft
+from app.domain.drafts import build_check_draft, build_stimul_draft
 from app.domain.onboarding import claims_for, reviewer_name
 from app.domain.schoolwork import classes_of, list_teacher_works
 
@@ -22,7 +22,7 @@ MATERIAL_MISSING = (
 DELIVERY_MISSING = (
     "Отправка работ в MAX ещё не подключена. Черновик не сохранён и ученикам не ушёл."
 )
-NO_BANK = "По этой теме нет банка заданий. Не выдумываю вопросы."
+NO_BANK = "По этой теме задания сам не соберу. Напишите вопросы и верные ответы."
 
 
 class DraftBody(BaseModel):
@@ -66,17 +66,24 @@ def _prepare(report, body: DraftBody, quiz_enabled: bool) -> dict:
         raise HTTPException(status_code=404, detail="Сборка проверок выключена")
     if body.use_material:
         raise HTTPException(status_code=409, detail=MATERIAL_MISSING)
-    titles = {topic.title for topic in report.topics}
-    if body.topic not in titles:
-        raise HTTPException(status_code=404, detail="Этой темы нет в программе класса")
+    students = _students(report, body)
     draft = build_check_draft(
         body.topic,
         body.goal,
         body.count,
         body.difficulty,
         body.audience,
-        _students(report, body),
+        students,
     )
+    if draft is None:
+        draft = build_stimul_draft(
+            body.topic,
+            body.goal,
+            body.count,
+            body.difficulty,
+            body.audience,
+            students,
+        )
     if draft is None:
         raise HTTPException(status_code=409, detail=NO_BANK)
     return draft
@@ -151,6 +158,8 @@ async def assignments(
     await _report(request, session)
     teacher = await user_from_cookie(request, session, "teacher")
     items = await list_teacher_works(session, teacher, None)
+    if session.info.get("work_repaired"):
+        await session.commit()
     return {
         "items": items,
         "delivery": "max" if items else "empty",

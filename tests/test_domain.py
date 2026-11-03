@@ -2,7 +2,8 @@ from datetime import UTC, date, datetime, timedelta
 
 from app.domain.answers import answers_match
 from app.domain.curriculum import detect_topic
-from app.domain.drafts import build_check_draft
+from app.domain.drafts import build_check_draft, build_stimul_draft
+from app.domain.report import activity_line
 from app.domain.messages_ru import LINES
 from app.domain.progress import TopicProgress, choose_next, streak
 from app.domain.report import StateFact, TopicColumn, build_report
@@ -179,6 +180,29 @@ def test_check_draft_comes_from_the_bank_and_is_not_stored():
     assert draft["items"][0]["reference"] == "1/2"
     assert draft["note"]
     assert build_check_draft("История", "Цель", 1, "easy", "class", []) is None
+
+
+def test_stimul_draft_follows_a_known_family_and_refuses_the_rest():
+    draft = build_stimul_draft(
+        "Дроби с разными знаменателями",
+        "Проверить сложение",
+        2,
+        "normal",
+        "class",
+        ["Аня"],
+    )
+    assert draft is not None
+    assert draft["topic"] == "Дроби с разными знаменателями"
+    assert len(draft["items"]) == 2
+    assert draft["items"][0]["reference"]
+    assert "8 класса" in draft["note"]
+    assert build_stimul_draft("История Древнего мира", "Даты", 1, "easy", "class", []) is None
+
+
+def test_activity_line_names_the_topic_and_not_the_answer():
+    assert activity_line(mode="training", step="practice", title="Дроби", open_work=None) == "Сейчас разбирает «Дроби»"
+    assert activity_line(mode=None, step=None, title=None, open_work="Проценты") == "Не сдал «Проценты»"
+    assert "1/2" not in activity_line(mode="training", step="check", title="Дроби", open_work=None)
 
 
 def test_submission_does_not_solve_a_page():

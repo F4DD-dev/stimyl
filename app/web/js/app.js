@@ -1,5 +1,5 @@
 import { approveJoin, getHistory, getLesson, getNotices, getProgress, getSession, getStudentWorks, openSession, openTicket, readNotice, renameMe, setCsrf } from "./api.js?v=3";
-import { previewRole, studentPreview, teacherPreview } from "./preview.js?v=8";
+import { previewRole, studentPreview, teacherPreview } from "./preview.js?v=9";
 import {
   checkSubmission,
   clearPhoto,
@@ -17,11 +17,13 @@ import {
   submitAnswer,
   submitQuestion,
   takePhoto,
-} from "./student.js?v=10";
+} from "./student.js?v=11";
 import { go, refresh, store, subscribe } from "./store.js";
 import {
+  focusStudent,
   focusTopic,
   loadDraft,
+  reloadQuiet,
   reloadTeacher,
   renderTeacher,
   openResult,
@@ -37,7 +39,8 @@ import {
   toggleStudent,
   wizardBack,
   wizardNext,
-} from "./teacher.js?v=9";
+  writeOwn,
+} from "./teacher.js?v=11";
 import { acceptOne, appoint, changePerson, loadManage, rejectOne } from "./manage.js?v=9";
 import { brand, confirmDialog, esc, icon, mark, skeleton, toast } from "./ui.js?v=2";
 
@@ -532,8 +535,10 @@ function paint() {
 
 async function onAction(act, button) {
   if (act === "nav") {
-    go(button.dataset.screen);
-    if (button.dataset.screen === "manage") await loadManage();
+    const screen = button.dataset.screen;
+    go(screen);
+    if (screen === "manage") await loadManage();
+    if (store.role === "teacher" && ["tasks", "class", "overview"].includes(screen)) await reloadQuiet();
     return;
   }
   if (act === "toggle-ask") {
@@ -576,7 +581,7 @@ async function onAction(act, button) {
   }
   if (act === "stimul-sample") {
     store.stimulDraft = button.dataset.text || "";
-    store.stimulNote = "ИИ-помощник готовится к запуску. Сообщение не отправлено.";
+    store.stimulNote = "Из этого поля сообщение не уходит. Проверку собирайте кнопкой «Попросить Стимула» в заданиях.";
     refresh();
     return;
   }
@@ -682,7 +687,9 @@ async function onAction(act, button) {
   else if (act === "exit-lesson") await exitLesson();
   else if (act === "profile-note") await renameProfile();
   else if (act === "class-info") await showClassInfo();
-  else if (act === "compose") startCompose(button.dataset.topic || "");
+  else if (act === "compose") startCompose(button.dataset.topic || "", button.dataset.mode || "own");
+  else if (act === "compose-own") writeOwn();
+  else if (act === "focus-student") focusStudent(button.dataset.name || "");
   else if (act === "focus-topic") focusTopic(button.dataset.topic);
   else if (act === "filter-status") setFilter(button.dataset.status);
   else if (act === "wizard-next") wizardNext();
@@ -712,8 +719,8 @@ function bind() {
       const value = document.querySelector("#stimul-input")?.value.trim() || "";
       store.stimulDraft = value;
       store.stimulNote = value
-        ? "ИИ-помощник готовится к запуску. Сообщение не отправлено."
-        : "Напишите вопрос. Ответ модели пока не подключён.";
+        ? "Из этого поля сообщение не уходит. Проверку собирайте в заданиях."
+        : "Напишите, что нужно. Отсюда сообщение никуда не отправляется.";
       refresh();
     }
   });

@@ -20,6 +20,11 @@ from app.domain.schoolwork import (
 router = APIRouter()
 
 
+class OwnItem(BaseModel):
+    prompt: str = Field(min_length=1, max_length=500)
+    reference: str = Field(min_length=1, max_length=64)
+
+
 class WorkBody(BaseModel):
     topic: str = Field(min_length=1, max_length=200)
     goal: str = Field(min_length=1, max_length=300)
@@ -28,6 +33,8 @@ class WorkBody(BaseModel):
     audience: str = Field(pattern="^(class|selected)$")
     students: list[str] = Field(default_factory=list, max_length=40)
     prompts: list[str] | None = Field(default=None, max_length=6)
+    items: list[OwnItem] | None = Field(default=None, max_length=6)
+    blurb: str = Field(default="", max_length=800)
     due_at: str | None = Field(default=None, max_length=40)
     class_id: int | None = None
     work_id: int | None = None
@@ -79,6 +86,10 @@ async def create_work(
         prompts=body.prompts,
         due_at=_due(body.due_at),
         work_id=body.work_id,
+        own_items=None
+        if body.items is None
+        else [(item.prompt, item.reference) for item in body.items],
+        blurb=body.blurb,
     )
     return await _finish(session, payload, error, status)
 
@@ -104,6 +115,8 @@ async def teacher_work(
     payload, error, status = await work_results(session, teacher, work_id)
     if error:
         raise HTTPException(status_code=status, detail=error)
+    if session.info.get("work_repaired"):
+        await session.commit()
     return payload
 
 

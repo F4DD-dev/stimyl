@@ -22,8 +22,8 @@ from app.db.models import (
     WorkRecipient,
 )
 from app.domain.answers import answers_match
-from app.domain.curriculum import topic_by_title
-from app.domain.drafts import build_check_draft
+from app.domain.curriculum import fold_text, topic_by_title
+from app.domain.drafts import build_check_draft, build_stimul_draft
 from app.domain.onboarding import enqueue_notice
 from app.domain.status import Thresholds
 
@@ -83,22 +83,16 @@ async def save_work(
     prompts: list[str] | None,
     due_at: datetime | None,
     work_id: int | None = None,
+    own_items: list[tuple[str, str]] | None = None,
+    blurb: str = "",
 ) -> tuple[dict | None, str | None, int]:
     current = await owned_class(session, teacher, class_id)
     if current is None:
         return None, "Нет доступа к классу", 403
-    topic_row = await session.scalar(select(Topic).where(Topic.title == topic))
-    if topic_row is None:
-        return None, "Этой темы нет в программе класса", 404
-    appointed = await session.scalar(
-        select(ClassSubjectTeacher.subject_id).where(
-            ClassSubjectTeacher.class_id == current,
-            ClassSubjectTeacher.user_id == teacher.id,
-            ClassSubjectTeacher.subject_id == topic_row.subject_id,
-        )
-    )
-    if appointed is None:
-        return None, "Нет назначения на этот предмет", 403
+    topic_row, topic_error = await _topic_for_teacher(session, teacher, current, topic, blurb)
+    if topic_error or topic_row is None:
+        status = 422 if topic_error == "Напишите тему" else 403
+        return None, topic_error or "Тему не удалось записать", status
     names = await _active_names(session, current)
     if audience == "class":
         picked = names
@@ -112,20 +106,33 @@ async def save_work(
             picked.append(cleaned)
         if not picked:
             return None, "Выберите учеников этого класса", 422
-    draft = build_check_draft(topic, goal, count, difficulty, audience, picked)
-    if draft is None:
-        return None, "По этой теме нет банка заданий. Не выдумываю вопросы.", 409
-    bank_answers = {item["reference"] for item in draft["items"]}
-    built = []
-    for index, item in enumerate(draft["items"]):
-        prompt = item["prompt"]
-        if prompts is not None:
-            if index >= len(prompts) or not prompts[index].strip():
-                return None, "Заполните текст каждого задания", 422
-            prompt = prompts[index].strip()
-        if item["reference"] not in bank_answers:
-            return None, "Эталон задания не из банка темы", 422
-        built.append((prompt[:500], item["reference"][:64]))
+    if own_items is not None:
+        if not own_items:
+            return None, "Нужно хотя бы одно задание", 422
+        built = []
+        for prompt, expected in own_items[:6]:
+            question = prompt.strip()
+            answer = expected.strip()
+            if not question or not answer:
+                return None, "У каждого задания нужны текст и верный ответ", 422
+            built.append((question[:500], answer[:64]))
+    else:
+        draft = build_check_draft(topic_row.title, goal, count, difficulty, audience, picked)
+        if draft is None:
+            draft = build_stimul_draft(topic_row.title, goal, count, difficulty, audience, picked)
+        if draft is None:
+            return None, "По этой теме задания сам не соберу. Напишите вопросы и верные ответы.", 409
+        bank_answers = {item["reference"] for item in draft["items"]}
+        built = []
+        for index, item in enumerate(draft["items"]):
+            prompt = item["prompt"]
+            if prompts is not None:
+                if index >= len(prompts) or not prompts[index].strip():
+                    return None, "Заполните текст каждого задания", 422
+                prompt = prompts[index].strip()
+            if item["reference"] not in bank_answers:
+                return None, "Верный ответ не из собранных заданий", 422
+            built.append((prompt[:500], item["reference"][:64]))
     now = datetime.now(UTC)
     if work_id is None:
         work = Work(
@@ -258,6 +265,7 @@ async def list_student_works(session: AsyncSession, student: User) -> list[dict]
                 "subject": subject.title,
                 "topic": work.title,
                 "author": author.display_name,
+                "study": await _study_text(session, work),
                 "status": recipient.status,
                 "due_at": work.due_at.isoformat() if work.due_at else None,
                 "items": [
@@ -455,9 +463,7 @@ async def _teacher_work(session: AsyncSession, work: Work, *, include_expected: 
             select(WorkItem).where(WorkItem.work_id == work.id).order_by(WorkItem.position)
         )
     )
-    recipient_rows = list(
-        await session.scalars(select(WorkRecipient).where(WorkRecipient.work_id == work.id))
-    )
+    recipient_rows, handed, started = await _sync_recipients(session, work, questions)
     done = sum(1 for row in recipient_rows if row.status == "done")
     subject = await session.get(Subject, work.subject_id)
     topic = await session.get(Topic, work.topic_id)
@@ -475,6 +481,8 @@ async def _teacher_work(session: AsyncSession, work: Work, *, include_expected: 
         "published_at": work.published_at.isoformat() if work.published_at else None,
         "recipients": len(recipient_rows),
         "done": done,
+        "handed": handed,
+        "started": started,
         "persisted": True,
         "items": [
             {
@@ -522,3 +530,106 @@ async def _result_people(session: AsyncSession, work: Work) -> list[dict]:
 
 def topic_material_ok(title: str) -> bool:
     return topic_by_title(title) is not None
+
+
+async def _appointed_subject(session: AsyncSession, teacher: User, class_id: int) -> int | None:
+    return await session.scalar(
+        select(ClassSubjectTeacher.subject_id)
+        .where(
+            ClassSubjectTeacher.class_id == class_id,
+            ClassSubjectTeacher.user_id == teacher.id,
+        )
+        .order_by(ClassSubjectTeacher.subject_id)
+    )
+
+
+async def _topic_for_teacher(
+    session: AsyncSession,
+    teacher: User,
+    class_id: int,
+    title: str,
+    blurb: str,
+) -> tuple[Topic | None, str | None]:
+    cleaned = " ".join(title.split()).strip()[:200]
+    if len(cleaned) < 2:
+        return None, "Напишите тему"
+    subject_id = await _appointed_subject(session, teacher, class_id)
+    if subject_id is None:
+        return None, "Нет назначения на этот предмет"
+    rows = list(await session.scalars(select(Topic).where(Topic.subject_id == subject_id)))
+    folded = fold_text(cleaned)
+    found = next((row for row in rows if fold_text(row.title) == folded), None)
+    if found is None:
+        position = await session.scalar(
+            select(func.max(Topic.position)).where(Topic.subject_id == subject_id)
+        )
+        found = Topic(
+            subject_id=subject_id,
+            title=cleaned,
+            position=int(position or 0) + 1,
+            blurb="",
+        )
+        session.add(found)
+        await session.flush()
+    note = " ".join(blurb.split()).strip()[:800]
+    if note:
+        found.blurb = note
+    return found, None
+
+
+async def _study_text(session: AsyncSession, work: Work) -> str:
+    topic = await session.get(Topic, work.topic_id)
+    material = topic_by_title(topic.title if topic is not None else work.title)
+    if material is not None:
+        return material.explanation
+    if topic is not None and topic.blurb.strip():
+        return topic.blurb.strip()
+    return ""
+
+
+async def _sync_recipients(
+    session: AsyncSession,
+    work: Work,
+    questions: list[WorkItem],
+) -> tuple[list[WorkRecipient], list[str], list[str]]:
+    recipient_rows = list(
+        await session.scalars(select(WorkRecipient).where(WorkRecipient.work_id == work.id))
+    )
+    answers = list(
+        await session.scalars(select(WorkAnswer).where(WorkAnswer.work_id == work.id))
+    )
+    by_user: dict[int, set[int]] = {}
+    for answer in answers:
+        by_user.setdefault(answer.user_id, set()).add(answer.item_id)
+    ids = [row.user_id for row in recipient_rows]
+    names: dict[int, str] = {}
+    if ids:
+        people = (
+            await session.execute(select(User.id, User.display_name).where(User.id.in_(ids)))
+        ).all()
+        names = {row.id: row.display_name for row in people}
+    question_ids = {row.id for row in questions}
+    changed = False
+    for recipient in recipient_rows:
+        got = by_user.get(recipient.user_id, set())
+        if (
+            recipient.status == "assigned"
+            and question_ids
+            and question_ids <= got
+        ):
+            recipient.status = "done"
+            changed = True
+    if changed:
+        await session.flush()
+        session.info["work_repaired"] = True
+    handed = [
+        names[row.user_id]
+        for row in recipient_rows
+        if row.status == "done" and row.user_id in names
+    ]
+    started = [
+        names[row.user_id]
+        for row in recipient_rows
+        if row.status != "done" and by_user.get(row.user_id) and row.user_id in names
+    ]
+    return recipient_rows, handed, started

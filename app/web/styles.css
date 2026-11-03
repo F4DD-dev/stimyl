@@ -953,6 +953,41 @@ body.is-flow .tabbar { display: none; }
   font-weight: 750;
 }
 .filter-chip--active { border-color: #5831bb; background: #5831bb; color: #fff; }
+.task-actions { display: flex; align-items: center; gap: 8px; }
+.roster { display: flex; flex-wrap: wrap; gap: 16px 12px; margin: 8px 0 18px; }
+.roster-person {
+  width: 76px;
+  min-height: 96px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.roster-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 3px solid #c8c4d2;
+  background: #fff;
+  font-weight: 750;
+}
+.roster-avatar--green { border-color: #537437; background: #def4cf; color: #31493d; }
+.roster-avatar--yellow { border-color: #806326; background: #ffefbe; color: #5c4818; }
+.roster-avatar--coral { border-color: #a33b32; background: #ffd9d4; color: #6d241f; }
+.roster-avatar--idle { border-color: #c8c4d2; background: #fff; color: var(--ink); }
+.roster-person.is-on .roster-avatar { outline: 2px solid var(--ink); outline-offset: 3px; }
+.student-sheet { margin: 0 0 22px; padding-top: 4px; }
+.student-sheet h2 { margin: 0 0 6px; font-size: 22px; }
+.student-sheet > p { margin: 0 0 12px; }
 .map-summary {
   display: flex;
   justify-content: space-between;

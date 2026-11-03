@@ -23,6 +23,7 @@ class Cell:
 class StudentRow:
     display_name: str
     cells: tuple[Cell, ...]
+    activity: str = ""
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,7 @@ class ClassReport:
             "students": [
                 {
                     "display_name": student.display_name,
+                    "activity": student.activity,
                     "topics": [
                         {
                             "title": cell.title,
@@ -66,6 +68,25 @@ class StateFact:
     last_attempt_on: date
 
 
+def activity_line(
+    *,
+    mode: str | None,
+    step: str | None,
+    title: str | None,
+    open_work: str | None,
+) -> str:
+    """What the teacher may see. Never a private message."""
+    if mode == "training" and step in {"explain", "practice", "check"} and title:
+        return f"Сейчас разбирает «{title}»"
+    if mode == "submission" and step and step != "done" and title:
+        return f"Сдаёт «{title}»"
+    if open_work:
+        return f"Не сдал «{open_work}»"
+    if title and step == "done":
+        return f"Последнее занятие: «{title}»"
+    return "Ещё не открывал темы"
+
+
 def build_report(
     class_title: str,
     topics: list[TopicColumn],
@@ -74,6 +95,7 @@ def build_report(
     wrong_counts: dict[str, int],
     today: date,
     stall_days: int = 7,
+    activity: dict[str, str] | None = None,
 ) -> ClassReport:
     ordered_topics = tuple(sorted(topics, key=lambda topic: topic.position))
     horizon = today - timedelta(days=stall_days)
@@ -99,10 +121,10 @@ def build_report(
                 stalled.append(
                     f"{name} — {topic.title}, последняя попытка {fact.last_attempt_on:%d.%m}"
                 )
-        rows.append(StudentRow(name, tuple(cells)))
+        rows.append(StudentRow(name, tuple(cells), (activity or {}).get(name, "")))
 
     priorities = tuple(
-        f"{title}: {STATUS_LABEL[TopicStatus.repeat]} — {', '.join(names)}"
+        f"{title}: {STATUS_LABEL[TopicStatus.repeat]}, {', '.join(names)}"
         for title, names in repeat_names.items()
         if names
     )

@@ -17,11 +17,14 @@ from app.db.models import (
     Topic,
     TopicState,
     User,
+    Work,
+    WorkRecipient,
 )
 from app.domain.account_copy import PHOTO_OFF
 from app.domain.messages_ru import LINES, SUBMISSION_UNAVAILABLE
 from app.domain.progress import STATUS_LABEL, TopicProgress, choose_next, streak
-from app.domain.report import StateFact, TopicColumn, build_report
+from app.domain.curriculum import topic_by_title
+from app.domain.report import StateFact, TopicColumn, activity_line, build_report
 from app.domain.status import Thresholds, TopicStatus, decide_status, mark_of, show_percent
 from app.domain.training import (
     Action,
@@ -139,6 +142,58 @@ async def _seen(session: AsyncSession, key: str) -> bool:
 
 async def _topics(session: AsyncSession) -> list[Topic]:
     return list(await session.scalars(select(Topic).order_by(Topic.position)))
+
+
+def _custom_topic(topics: list[Topic], action: str | None, title: str | None) -> Topic | None:
+    if action != "pick" or not title or topic_by_title(title) is not None:
+        return None
+    return next((item for item in topics if item.title == title), None)
+
+
+async def _class_activity(session: AsyncSession, class_id: int, students) -> dict[str, str]:
+    ids = [row.id for row in students]
+    if not ids:
+        return {}
+    names = {row.id: row.display_name for row in students}
+    lessons = (
+        await session.execute(
+            select(
+                LearningSession.user_id,
+                LearningSession.mode,
+                LearningSession.step,
+                Topic.title,
+            )
+            .outerjoin(Topic, Topic.id == LearningSession.topic_id)
+            .where(LearningSession.user_id.in_(ids))
+            .order_by(LearningSession.id.desc())
+        )
+    ).all()
+    latest: dict[int, tuple[str, str, str | None]] = {}
+    for user_id, mode, step, title in lessons:
+        if user_id not in latest:
+            latest[user_id] = (mode, step, title)
+    open_rows = (
+        await session.execute(
+            select(WorkRecipient.user_id, Work.title)
+            .join(Work, Work.id == WorkRecipient.work_id)
+            .where(
+                WorkRecipient.user_id.in_(ids),
+                WorkRecipient.status == "assigned",
+                Work.status == "published",
+                Work.class_id == class_id,
+            )
+            .order_by(Work.id.desc())
+        )
+    ).all()
+    waiting: dict[int, str] = {}
+    for user_id, title in open_rows:
+        if user_id not in waiting:
+            waiting[user_id] = title
+    lines = {}
+    for user_id, name in names.items():
+        mode, step, title = latest.get(user_id, (None, None, None))
+        lines[name] = activity_line(mode=mode, step=step, title=title, open_work=waiting.get(user_id))
+    return lines
 
 
 def _event(incoming: Incoming, id_to_title: dict[int, str]):
@@ -521,6 +576,7 @@ async def class_report(
             last_on,
         )
     wrong = {title: count for title, count in wrong_rows}
+    activity = await _class_activity(session, class_id, student_rows)
     return build_report(
         class_title or "",
         [TopicColumn(title, position) for _id, title, position in topic_rows],
@@ -528,6 +584,7 @@ async def class_report(
         states,
         wrong,
         _today(settings),
+        activity=activity,
     )
 
 
@@ -657,6 +714,35 @@ async def student_turn(
     title_to_id = {item.title: item.id for item in topics}
     id_to_title = {item.id: item.title for item in topics}
     row, state = await _load_state(session, user, id_to_title)
+    custom = _custom_topic(topics, action, topic)
+    if custom is not None and (row is None or row.mode != "submission"):
+        if row is None:
+            row = _new_session(user)
+            session.add(row)
+            await session.flush()
+        row.mode = "training"
+        row.step = "explain"
+        row.topic_id = custom.id
+        note = custom.blurb.strip() or f"Тема «{custom.title}». Задания к ней лежат в разделе «Задания»."
+        return {
+            "ok": True,
+            "mode": "training",
+            "step": "explain",
+            "topic": custom.title,
+            "explanation": note,
+            "example": None,
+            "task": None,
+            "feedback": None,
+            "correct": None,
+            "given": None,
+            "actions": [],
+            "notice": "Ответы на работу учителя сдаются в заданиях.",
+            "status_line": None,
+            "version": row.state_version,
+            "awaiting_answer": False,
+            "photo_received": False,
+            "photo_note": None,
+        }
     if row is not None and row.mode == "submission":
         return {
             "ok": False,

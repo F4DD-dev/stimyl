@@ -173,16 +173,16 @@ export function renderOverview() {
   const fresh = !checks && !info.known;
   const rows = rollup(store.report);
   const lead = fresh
-    ? "Класс только начинает работу. Создайте первую проверку, чтобы увидеть общую картину."
+    ? "Класс ещё без проверок. Соберите первую, и на карте будет видно, кто что сдал."
     : (info.weak.length
-      ? "По проверкам уже видно, каким темам нужна практика."
-      : "Проверки уже были. Новая работа дополнит карту класса.");
+      ? "По ответам уже видно, какие темы стоит повторить."
+      : "Проверки уже были. Новая работа дополнит карту.");
   const heroTitle = fresh
-    ? "Узнайте, что классу стоит повторить"
+    ? "Первая проверка по вашей теме"
     : (info.ranked[0] ? `Стоит вернуться к теме «${info.ranked[0][0]}»` : "Можно дать ещё одну короткую проверку");
   const heroCopy = fresh
-    ? "Короткая проверка покажет сильные темы и точки роста каждого ученика."
-    : "Короткая работа покажет, кто уже держит тему и кому нужна поддержка.";
+    ? "После неё на карте класса будет видно, кто тему уже держит."
+    : "Короткая работа покажет, кто тему держит и кому она ещё трудна.";
   const topics = rows.slice(0, 3).map((row, index) => `<button class="topic-preview__item" type="button" data-act="focus-topic" data-topic="${esc(row.title)}">
       <span class="topic-number topic-number--${topicTone(row, index)}">${String(index + 1).padStart(2, "0")}</span>
       <span><strong>${esc(row.title)}</strong><small>${esc(topicDetail(row, index, checks || info.known))}</small></span>
@@ -229,7 +229,6 @@ export function renderOverview() {
       </div>
       <div class="section-heading">
         <div>
-          <span class="eyebrow">Фокус недели</span>
           <h2>Темы класса</h2>
         </div>
         <button class="text-button" type="button" data-act="nav" data-screen="class">Вся карта ${icon("arrow")}</button>
@@ -260,57 +259,86 @@ export function renderClass() {
     if (store.filters.status === "repeat") return row.repeat > 0;
     return true;
   });
-  const shareLabel = stats(report).known ? "Есть проверенные ответы" : "Пока нет данных";
   return `<div class="fig">
     ${topbar()}
     <div class="fig-page">
     <div class="page-heading">
-      <span class="eyebrow">Прогресс ${esc(classTitle())}</span>
       <h1 id="page-title">Карта класса</h1>
-      <p>${report.frequent_mistakes ? esc(report.frequent_mistakes) : "Здесь появится общая картина знаний после первой проверки."}</p>
+      <p>${report.frequent_mistakes ? esc(report.frequent_mistakes) : "Нажмите на кружок. Зелёный: усвоено. Жёлтый: нужна практика. Красный: повторить."}</p>
     </div>
     <div class="filter-row" role="tablist" aria-label="Фильтр тем">
       ${filters.map(([id, label]) => `<button class="filter-chip ${store.filters.status === id ? "filter-chip--active" : ""}" type="button" data-act="filter-status" data-status="${id}">${label}</button>`).join("")}
     </div>
-    <div class="map-summary">
-      <div><span>Общий прогресс</span><strong>${shareLabel}</strong></div>
-      <div class="map-summary__visual" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
-    </div>
+    <div class="roster" role="list">${rosterPeople(report)}</div>
+    ${studentSheet(report)}
     <div class="topic-list">
       ${visible.map((row, index) => `<article class="topic-row">
         <div class="topic-row__marker topic-row__marker--${topicTone(row, index)}">${String(index + 1).padStart(2, "0")}</div>
         <div class="topic-row__content">
           <strong>${esc(row.title)}</strong>
-          <span>${esc(topicDetail(row, index, publishedCount()))}</span>
+          <span>${esc(topicDetail(row, index, publishedCount() || stats(report).known))}</span>
           <div class="progress-track"><i style="width:${row.mastered + row.practice + row.repeat + row.none ? Math.max(4, Math.round((row.mastered / Math.max(1, row.mastered + row.practice + row.repeat + row.none)) * 100)) : 4}%"></i></div>
         </div>
         <button type="button" aria-label="Открыть тему ${esc(row.title)}" data-act="focus-topic" data-topic="${esc(row.title)}">${icon("arrow")}</button>
-        ${store.filters.topic === row.title ? `<div class="reveal-body"><p>${weakNames.length ? `Нужна работа: ${esc(weakNames.join(", "))}.` : "По этой теме нет учеников со статусом «повторить» или «нужна практика»."}</p><button class="btn btn-primary" type="button" data-act="compose" data-topic="${esc(row.title)}">Собрать задание по теме</button></div>` : ""}
+        ${store.filters.topic === row.title ? `<div class="reveal-body"><p>${weakNames.length ? `Нужна работа: ${esc(weakNames.join(", "))}.` : "По этой теме нет учеников со статусом «повторить» или «нужна практика»."}</p><div class="flow-bar"><button class="btn btn-ghost" type="button" data-act="compose" data-mode="own" data-topic="${esc(row.title)}">Написать самому</button><button class="btn btn-primary" type="button" data-act="compose" data-mode="stimul" data-topic="${esc(row.title)}">Попросить Стимула</button></div></div>` : ""}
       </article>`).join("") || `<p class="quiet">Таких тем пока нет.</p>`}
     </div>
     ${(report.priorities || []).length ? `<div><h2>Кому помочь</h2><ul class="plain">${report.priorities.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></div>` : ""}
-    <div class="table-wrap map-table">
-      <table>
-        <thead><tr><th>Ученик</th>${(report.topics || []).filter((topic) => store.filters.topic === "all" || topic.title === store.filters.topic).map((topic) => `<th>${esc(topic.title)}</th>`).join("")}</tr></thead>
-        <tbody>
-          ${(report.students || []).map((student) => {
-            const topics = (student.topics || []).filter((topic) => store.filters.topic === "all" || topic.title === store.filters.topic);
-            const cells = topics.filter((topic) => store.filters.status === "all" || (store.filters.status === "none" ? !topic.status : topic.status === store.filters.status));
-            if (store.filters.status !== "all" && !cells.length) return "";
-            return `<tr><th>${esc(student.display_name)}</th>${topics.map((topic) => `<td>${pill(topic.status)}</td>`).join("")}</tr>`;
-          }).join("")}
-        </tbody>
-      </table>
-    </div>
     </div>
   </div>`;
 }
 
+function studentTone(student) {
+  const topics = student.topics || [];
+  if (topics.some((topic) => topic.status === "repeat")) return "coral";
+  if (topics.some((topic) => topic.status === "needs_practice")) return "yellow";
+  if (topics.some((topic) => topic.status === "mastered")) return "green";
+  return "idle";
+}
+
+function matchesFilter(student) {
+  if (store.filters.status === "all") return true;
+  return (student.topics || []).some((topic) => {
+    if (store.filters.topic !== "all" && topic.title !== store.filters.topic) return false;
+    if (store.filters.status === "none") return !topic.status;
+    return topic.status === store.filters.status;
+  });
+}
+
+function rosterPeople(report) {
+  const people = (report.students || []).filter(matchesFilter);
+  if (!people.length) return `<p class="quiet">Таких учеников нет.</p>`;
+  return people.map((student) => {
+    const on = store.focusStudent === student.display_name;
+    return `<button class="roster-person ${on ? "is-on" : ""}" type="button" role="listitem" data-act="focus-student" data-name="${esc(student.display_name)}" aria-pressed="${on}">
+      <span class="roster-avatar roster-avatar--${studentTone(student)}">${esc(initials(student.display_name))}</span>
+      <span>${esc(firstName(student.display_name) || student.display_name)}</span>
+    </button>`;
+  }).join("");
+}
+
+function studentSheet(report) {
+  const person = (report.students || []).find((student) => student.display_name === store.focusStudent);
+  if (!person) return `<p class="quiet">Нажмите на кружок ученика, чтобы увидеть темы и чем он занят.</p>`;
+  const topics = (person.topics || []).filter((topic) => store.filters.topic === "all" || topic.title === store.filters.topic);
+  return `<article class="student-sheet">
+    <h2>${esc(person.display_name)}</h2>
+    <p>${esc(person.activity || "Пока нет занятий.")}</p>
+    <div class="stack tight">${topics.map((topic) => `<div class="line"><span><b>${esc(topic.title)}</b><small>${topic.correct_percent != null ? `${topic.correct_percent}% верных` : "попыток ещё нет"}</small></span>${pill(topic.status)}</div>`).join("")}</div>
+  </article>`;
+}
+
 function workLine(item) {
   const published = item.status === "published";
+  const handed = item.handed || [];
+  const started = item.started || [];
   const finished = published && item.recipients && item.done >= item.recipients;
-  const label = !published ? "черновик" : finished ? "завершено" : `сдали ${item.done || 0} из ${item.recipients || 0}`;
-  return `<button class="line" type="button" data-act="open-result" data-id="${item.id}"><span><b>${esc(item.title)}</b><small>${esc(item.subject || "")} · ${label}</small></span></button>`;
+  let label = "черновик";
+  if (published && finished) label = handed.length ? `сдали ${handed.join(", ")}` : "все сдали";
+  else if (published && handed.length) label = `сдали ${handed.join(", ")} · ещё ${(item.recipients || 0) - (item.done || 0)}`;
+  else if (published && started.length) label = `начали ${started.join(", ")}`;
+  else if (published) label = `сдали 0 из ${item.recipients || 0}`;
+  return `<button class="line" type="button" data-act="open-result" data-id="${item.id}"><span><b>${esc(item.title)}</b><small>${esc(item.subject || "")} · ${esc(label)}</small></span></button>`;
 }
 
 export function renderTasks() {
@@ -328,24 +356,25 @@ export function renderTasks() {
         <span class="art-dot art-dot--one"></span>
         <span class="art-dot art-dot--two"></span>
       </div>
-      <span class="eyebrow">Всё готово к старту</span>
       <h2>Работ ещё не было</h2>
-      <p>Первая проверка поможет понять, кто уже держит тему, а кому нужна поддержка.</p>
-      <button class="primary-button" type="button" data-act="compose">Создать первую работу ${icon("arrow")}</button>
+      <p>Напишите тему и вопросы сами или попросите Стимула собрать проверку.</p>
+      <button class="primary-button" type="button" data-act="compose" data-mode="own">Новая тема ${icon("arrow")}</button>
     </article>
     <div class="tip-card">
       <div class="tip-card__icon">${icon("spark")}</div>
-      <div><strong>Начните с 5–7 вопросов</strong><p>Так ученики не устанут, а вы быстро получите первую картину класса.</p></div>
+      <div><strong>Трёх вопросов обычно хватает</strong><p>Так видно, кто тему держит, и ученики не сидят над листом слишком долго.</p></div>
     </div>`;
   return `<div class="fig">
     ${topbar()}
     <div class="fig-page">
       <div class="page-heading page-heading--row">
         <div>
-          <span class="eyebrow">Работы класса</span>
           <h1 id="page-title">Задания</h1>
         </div>
-        <button class="round-add" type="button" data-act="compose" aria-label="Создать задание">${icon("plus")}</button>
+        <div class="task-actions">
+          <button class="text-button" type="button" data-act="compose" data-mode="stimul">Попросить Стимула</button>
+          <button class="round-add" type="button" data-act="compose" data-mode="own" aria-label="Новая тема">${icon("plus")}</button>
+        </div>
       </div>
       ${failed ? errorBlock(store.assignmentsError.message, "retry") : ""}
       ${items.length ? `${block("Активные", active)}${block("Черновики", drafts)}${block("Завершённые", done)}` : empty}
@@ -361,8 +390,9 @@ function renderResult(work) {
     <button class="text-btn" type="button" data-act="close-result">К списку</button>
     <h1 id="page-title" tabindex="-1">${esc(work.title)}</h1>
     <p class="quiet">${esc(work.subject)} · ${esc(work.topic)}</p>
-    ${people.length ? `<section class="sheet-block">${people.map((person) => `<div class="line"><span><b>${esc(person.display_name)}</b><small>${person.status === "done" ? `сдано, верно ${person.correct} из ${person.answered}` : "ещё не сдано"}</small></span></div>`).join("")}</section>` : `<p class="quiet">Получателей нет.</p>`}
-    ${waiting.length ? `<p class="quiet">Ещё не сдали: ${esc(waiting.map((person) => person.display_name).join(", "))}.</p>` : ""}
+    ${people.length ? `<section class="sheet-block">${people.map((person) => `<div class="line"><span><b>${esc(person.display_name)}</b><small>${person.status === "done" ? `сдано, верно ${person.correct} из ${person.answered}` : person.answered ? `ответил на ${person.answered}, работа ещё не закрыта` : "ещё не сдано"}</small></span></div>`).join("")}</section>` : `<p class="quiet">Получателей нет.</p>`}
+    ${waiting.length ? `<p class="quiet">Ещё не сдали: ${esc(waiting.map((person) => person.display_name).join(", "))}.</p>` : `<p class="quiet">Все, кому работа назначена, её сдали.</p>`}
+    ${!people.some((person) => person.status === "done" || person.answered) ? `<p class="quiet">Если ученик только разбирал тему у себя, это видно на карте класса. В эту работу ответ попадает, когда он сдаёт её в заданиях.</p>` : ""}
   </div>`;
 }
 
@@ -374,9 +404,8 @@ export function renderStimul() {
       <div class="assistant-intro">
         <div class="assistant-intro__icon">${icon("spark")}</div>
         <div>
-          <span class="eyebrow">Помощник учителя</span>
-          <h1 id="page-title">С чего начнём?</h1>
-          <p>Помогу подготовить задание или разобраться, чему уделить внимание.</p>
+          <h1 id="page-title">Чем помочь?</h1>
+          <p>Могу собрать проверку по теме или показать, кому сейчас трудно.</p>
         </div>
       </div>
       <div class="prompt-grid">
@@ -396,22 +425,36 @@ function wizardBody() {
   const wizard = store.wizard;
   const topics = (store.report?.topics || []).map((topic) => topic.title);
   if (!wizard) return "";
-  const titles = ["Тема и цель", "Объём и сложность", "Кому отправить", "Просмотр"];
+  const titles = wizard.mode === "stimul"
+    ? ["Тема", "Сколько заданий", "Кому отправить", "Просмотр"]
+    : ["Тема", "Вопросы", "Кому отправить", "Просмотр"];
   const students = store.report?.students || [];
   let body = "";
   if (wizard.step === 1) {
     body = `<label class="field-label" for="topic">Тема</label>
-      <select id="topic" class="field">${topics.map((title) => `<option value="${esc(title)}" ${title === wizard.topic ? "selected" : ""}>${esc(title)}</option>`).join("")}</select>
-      <label class="field-label" for="goal">Цель проверки</label>
-      <textarea id="goal" class="area" placeholder="Например: проверить общий знаменатель">${esc(wizard.goal)}</textarea>
-      <label class="check"><input id="material" type="checkbox" ${wizard.useMaterial ? "checked" : ""}><span>Собрать по загруженному материалу</span></label>
-      ${wizard.useMaterial ? `<p class="hint">Фрагментов урока на сервере нет. С этой отметкой черновик не соберётся — параграф не выдумываю.</p>` : `<p class="hint">Пока задания берутся из банка 8 класса, не из учебника.</p>`}`;
+      <input id="topic" class="field" list="topic-list" value="${esc(wizard.topic)}" placeholder="Например: проценты" autocomplete="off">
+      <datalist id="topic-list">${topics.map((title) => `<option value="${esc(title)}"></option>`).join("")}</datalist>
+      <label class="field-label" for="goal">Что проверить</label>
+      <textarea id="goal" class="area" placeholder="Например: найти процент от числа">${esc(wizard.goal)}</textarea>
+      <label class="field-label" for="blurb">Коротко для учеников</label>
+      <textarea id="blurb" class="area" placeholder="Два предложения перед заданиями. Можно оставить пустым.">${esc(wizard.blurb || "")}</textarea>
+      <p class="hint">${wizard.mode === "stimul" ? "Стимул соберёт вопросы, если тема похожа на программу 8 класса. Если нет, напишите их сами." : "Название может быть любым. Вопросы и верные ответы вы напишете на следующем шаге."}</p>`;
+  } else if (wizard.step === 2 && wizard.mode === "own") {
+    const rows = Array.from({ length: wizard.count }, (_, index) => wizard.own?.[index] || { prompt: "", reference: "" });
+    body = `<p class="field-label">Сколько заданий</p>
+      <div class="chips">${[1, 2, 3, 4, 5, 6].map((count) => `<button class="chip ${wizard.count === count ? "is-on" : ""}" type="button" data-act="count" data-value="${count}">${count}</button>`).join("")}</div>
+      ${rows.map((item, index) => `<label class="field-label" for="own-prompt-${index}">Задание ${index + 1}</label>
+        <textarea id="own-prompt-${index}" class="area" data-own-prompt="${index}">${esc(item.prompt || "")}</textarea>
+        <label class="field-label" for="own-answer-${index}">Верный ответ</label>
+        <input id="own-answer-${index}" class="field" data-own-answer="${index}" value="${esc(item.reference || "")}" autocomplete="off">`).join("")}
+      <p class="hint">Ученик увидит вопрос. Верный ответ останется у вас, по нему программа проверит сдачу.</p>`;
   } else if (wizard.step === 2) {
     body = `<p class="field-label">Сколько заданий</p>
       <div class="chips">${[1, 2, 3, 4, 5, 6].map((count) => `<button class="chip ${wizard.count === count ? "is-on" : ""}" type="button" data-act="count" data-value="${count}">${count}</button>`).join("")}</div>
       <p class="field-label">Сложность</p>
       <div class="chips">${DIFFICULTIES.map(([id, label]) => `<button class="chip ${wizard.difficulty === id ? "is-on" : ""}" type="button" data-act="difficulty" data-value="${id}">${label}</button>`).join("")}</div>
-      <p class="hint">В банке каждой темы два задания. Если попросить больше, пункты повторятся — это будет видно в просмотре.</p>`;
+      <p class="hint">Стимул возьмёт вопросы из программы 8 класса и посчитает ответы. На просмотре их можно поправить.</p>
+      <button class="text-btn" type="button" data-act="compose-own">Лучше напишите вопросы сами</button>`;
   } else if (wizard.step === 3) {
     body = `<div class="segment">
         <button type="button" class="${wizard.audience === "class" ? "is-on" : ""}" data-act="audience" data-value="class">Весь класс</button>
@@ -424,9 +467,9 @@ function wizardBody() {
         }).join("")}</div>` : `<p class="hint">Работа уйдёт ученикам ${esc(classTitle())}.</p>`}`;
   } else {
     const draft = wizard.draft;
-    body = `${wizard.draftError ? `<div class="banner banner-bad"><p>${esc(wizard.draftError.message)}</p></div>` : ""}
+    body = `${wizard.draftError ? `<div class="banner banner-bad"><p>${esc(wizard.draftError.message)}</p><button class="text-btn" type="button" data-act="compose-own">Написать вопросы самому</button></div>` : ""}
       ${store.busy ? `<p class="statusline" role="status">Собираю черновик…</p>` : ""}
-      ${draft ? `<p class="hint">Источник: банк 8 класса. На сервер попадёт только после «Сохранить черновик» или «Опубликовать». Эталон виден только вам.</p>
+      ${draft ? `<p class="hint">${draft.source === "own" ? "Это ваши вопросы." : "Проверьте вопросы перед отправкой."} Ученики увидят их только после «Опубликовать». Верный ответ виден только вам.</p>
         ${draft.note ? `<div class="banner banner-warn"><p>${esc(draft.note)}</p></div>` : ""}
         <p><strong>${esc(draft.topic)}</strong></p>
         <p>${esc(draft.goal)}</p>
@@ -435,12 +478,12 @@ function wizardBody() {
           <h2>Задание ${item.number}</h2>
           <label class="field-label" for="prompt-${index}">Формулировка</label>
           <textarea id="prompt-${index}" class="area" data-prompt="${index}">${esc(item.prompt)}</textarea>
-          ${item.choices?.length ? `<p>${item.choices.map((choice) => esc(choice)).join(" · ")}</p>` : `<p class="hint">Вариантов нет: ответ число или дробь.</p>`}
-          <p class="hint">Эталон: ${esc(item.reference)}</p>
+          <label class="field-label" for="reference-${index}">Верный ответ</label>
+          <input id="reference-${index}" class="field" data-reference="${index}" value="${esc(item.reference || "")}" autocomplete="off">
         </article>`).join("")}</div>
-        <p class="hint">Пока вы не нажали кнопку, правки живут только на этом экране.</p>` : ""}
+        <p class="hint">Пока вы не нажали кнопку, правки остаются на этом экране.</p>` : ""}
       ${wizard.sendError ? `<div class="banner banner-warn" role="status"><strong>Отправка не выполнена</strong><p>${esc(wizard.sendError)}</p></div>` : ""}
-      <button class="text-btn" type="button" data-act="redraft" ${store.busy ? "disabled" : ""}>Собрать заново</button>`;
+      ${wizard.mode === "own" ? "" : `<button class="text-btn" type="button" data-act="redraft" ${store.busy ? "disabled" : ""}>Собрать заново</button>`}`;
   }
   const actions = wizard.step < 4
     ? `${wizard.step > 1 ? `<button class="btn btn-ghost" type="button" data-act="wizard-back">Назад</button>` : `<button class="btn btn-ghost" type="button" data-act="nav" data-screen="tasks">Закрыть</button>`}
@@ -460,7 +503,6 @@ function wizardBody() {
 
 export function renderCompose() {
   if (!store.report) return errorBlock(store.reportError?.message, "retry");
-  if (!(store.report.topics || []).length) return emptyBlock("Нет тем", "В программе класса пока нет тем для проверки.");
   if (!store.wizard) startCompose();
   return wizardBody();
 }
@@ -557,17 +599,18 @@ export function setFilter(status) {
   refresh();
 }
 
-export function startCompose(topic) {
-  const topics = (store.report?.topics || []).map((item) => item.title);
-  const preset = topic && topics.includes(topic) ? topic : topics[0] || "";
+export function startCompose(topic = "", mode = "own") {
   store.wizard = {
     step: 1,
-    topic: preset,
+    mode: mode === "stimul" ? "stimul" : "own",
+    topic: topic || "",
     goal: "",
+    blurb: "",
     count: 3,
     difficulty: "normal",
     audience: "class",
     students: [],
+    own: [],
     useMaterial: false,
     draft: null,
     draftError: null,
@@ -575,6 +618,7 @@ export function startCompose(topic) {
     fieldError: "",
   };
   if (store.screen !== "compose") go("compose");
+  else refresh();
 }
 
 function readWizardFields() {
@@ -582,11 +626,27 @@ function readWizardFields() {
   if (!wizard) return;
   const topic = document.querySelector("#topic");
   const goal = document.querySelector("#goal");
+  const blurb = document.querySelector("#blurb");
   if (topic) wizard.topic = topic.value;
   if (goal) wizard.goal = goal.value;
+  if (blurb) wizard.blurb = blurb.value;
+  const own = [...(wizard.own || [])];
+  document.querySelectorAll("[data-own-prompt]").forEach((node) => {
+    const index = Number(node.dataset.ownPrompt);
+    own[index] = { ...(own[index] || {}), prompt: node.value };
+  });
+  document.querySelectorAll("[data-own-answer]").forEach((node) => {
+    const index = Number(node.dataset.ownAnswer);
+    own[index] = { ...(own[index] || {}), reference: node.value };
+  });
+  if (document.querySelector("[data-own-prompt]")) wizard.own = own;
   document.querySelectorAll("[data-prompt]").forEach((node) => {
     const index = Number(node.dataset.prompt);
     if (wizard.draft?.items?.[index]) wizard.draft.items[index].prompt = node.value;
+  });
+  document.querySelectorAll("[data-reference]").forEach((node) => {
+    const index = Number(node.dataset.reference);
+    if (wizard.draft?.items?.[index]) wizard.draft.items[index].reference = node.value;
   });
 }
 
@@ -596,13 +656,22 @@ export function wizardNext() {
   readWizardFields();
   wizard.fieldError = "";
   if (wizard.step === 1) {
-    if (!wizard.topic) {
-      wizard.fieldError = "Выберите тему.";
+    if (wizard.topic.trim().length < 2) {
+      wizard.fieldError = "Напишите тему.";
       refresh();
       return;
     }
     if (wizard.goal.trim().length < 3) {
       wizard.fieldError = "Напишите цель проверки.";
+      refresh();
+      return;
+    }
+  }
+  if (wizard.step === 2 && wizard.mode === "own") {
+    const missing = (wizard.own || []).slice(0, wizard.count).some((item) => !String(item?.prompt || "").trim() || !String(item?.reference || "").trim());
+    const short = (wizard.own || []).length < wizard.count;
+    if (missing || short) {
+      wizard.fieldError = "У каждого задания нужны текст и верный ответ.";
       refresh();
       return;
     }
@@ -613,8 +682,9 @@ export function wizardNext() {
     return;
   }
   wizard.step += 1;
+  if (wizard.step === 4 && wizard.mode === "own") sealOwnDraft();
   refresh();
-  if (wizard.step === 4) loadDraft();
+  if (wizard.step === 4 && wizard.mode !== "own") loadDraft();
 }
 
 export function wizardBack() {
@@ -623,13 +693,13 @@ export function wizardBack() {
   readWizardFields();
   wizard.fieldError = "";
   wizard.sendError = null;
-  if (wizard.step === 4) wizard.step = 1;
-  else wizard.step = Math.max(1, wizard.step - 1);
+  wizard.step = Math.max(1, wizard.step - 1);
   refresh();
 }
 
 export function setCount(value) {
   if (!store.wizard) return;
+  readWizardFields();
   store.wizard.count = Number(value) || 1;
   refresh();
 }
@@ -664,13 +734,37 @@ export function toggleMaterial(checked) {
 function draftPayload() {
   const wizard = store.wizard;
   return {
-    topic: wizard.topic,
+    topic: wizard.topic.trim(),
     goal: wizard.goal.trim(),
     count: wizard.count,
     difficulty: wizard.difficulty,
     audience: wizard.audience,
     students: wizard.audience === "selected" ? wizard.students : [],
-    use_material: wizard.useMaterial,
+    use_material: false,
+  };
+}
+
+function sealOwnDraft() {
+  const wizard = store.wizard;
+  if (!wizard) return;
+  const items = (wizard.own || []).slice(0, wizard.count).map((item, index) => ({
+    number: index + 1,
+    prompt: String(item?.prompt || "").trim(),
+    reference: String(item?.reference || "").trim(),
+    choices: [],
+  }));
+  const names = wizard.audience === "selected"
+    ? wizard.students
+    : (store.report?.students || []).map((student) => student.display_name);
+  wizard.draft = {
+    topic: wizard.topic.trim(),
+    goal: wizard.goal.trim(),
+    audience: wizard.audience,
+    students: names,
+    source: "own",
+    items,
+    persisted: false,
+    note: "",
   };
 }
 
@@ -700,9 +794,15 @@ export async function loadDraft() {
 
 function workBody() {
   const payload = draftPayload();
+  const items = (store.wizard.draft?.items || []).map((item) => ({
+    prompt: String(item.prompt || "").trim(),
+    reference: String(item.reference || "").trim(),
+  }));
   return {
     ...payload,
-    prompts: (store.wizard.draft?.items || []).map((item) => item.prompt),
+    prompts: items.map((item) => item.prompt),
+    items,
+    blurb: (store.wizard.blurb || "").trim(),
     work_id: store.wizard.workId || null,
   };
 }
@@ -740,9 +840,9 @@ export async function sendAssignment() {
   const wizard = store.wizard;
   if (!wizard?.draft || store.busy) return;
   readWizardFields();
-  const empty = wizard.draft.items.some((item) => !String(item.prompt || "").trim());
+    const empty = wizard.draft.items.some((item) => !String(item.prompt || "").trim() || !String(item.reference || "").trim());
   if (empty) {
-    wizard.sendError = "Заполните текст каждого задания.";
+    wizard.sendError = "У каждого задания нужны текст и верный ответ.";
     refresh();
     return;
   }
@@ -768,7 +868,7 @@ export async function sendAssignment() {
     wizard.workId = saved.id;
     await confirmDialog({
       title: "Работа опубликована",
-      text: `Сервер записал работу и поставил уведомления: ${published.recipients}.`,
+      text: `Работа ушла ученикам: ${published.recipients}. Когда кто-то сдаст, имя появится в списке.`,
       confirm: "Хорошо",
     });
     go("tasks");
@@ -805,6 +905,38 @@ export async function showClassInfo() {
     text: `Сейчас в кабинете один класс: ${title}. Других классов в данных нет, поэтому переключать не на что.`,
     confirm: "Понятно",
   });
+}
+
+export async function reloadQuiet() {
+  try {
+    const report = await getClass(store.classId || undefined);
+    store.report = report;
+    store.reportError = null;
+  } catch (error) {
+    store.reportError = error;
+  }
+  try {
+    store.assignments = await getAssignments();
+    store.assignmentsError = null;
+  } catch (error) {
+    store.assignmentsError = error;
+  }
+  refresh();
+}
+
+export function focusStudent(name) {
+  store.focusStudent = store.focusStudent === name ? "" : name;
+  refresh();
+}
+
+export function writeOwn() {
+  if (!store.wizard) return;
+  readWizardFields();
+  store.wizard.mode = "own";
+  store.wizard.step = 2;
+  store.wizard.draft = null;
+  store.wizard.draftError = null;
+  refresh();
 }
 
 export async function reloadTeacher() {

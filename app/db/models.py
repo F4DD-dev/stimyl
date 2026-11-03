@@ -152,6 +152,7 @@ class Topic(Base):
     subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id"))
     title: Mapped[str] = mapped_column(String(200))
     position: Mapped[int] = mapped_column(Integer)
+    blurb: Mapped[str] = mapped_column(String(800), default="", server_default="")
 
 
 class LearningSession(Base):
