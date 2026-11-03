@@ -6,13 +6,14 @@ from dataclasses import dataclass
 import pytest
 from alembic.config import Config
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from alembic import command
 from app.core.config import Settings
-from app.db.models import RuntimeFlag
+from app.db.models import RuntimeFlag, User
 from app.db.seed import seed
 from app.db.session import make_engine
+from app.domain.phone import hash_phone, mask_phone
 from app.jobs import HEARTBEAT_KEY
 from app.llm.explainer import NullExplainer
 from app.main import create_app
@@ -163,5 +164,12 @@ async def seeded(api: Api) -> Api:
     factory = api.app.state.session_factory
     async with factory() as session:
         await seed(session)
+        people = list(await session.scalars(select(User).order_by(User.id)))
+        for index, person in enumerate(people, start=1):
+            if person.phone_hash:
+                continue
+            digits = f"7901000{index:04d}"
+            person.phone_hash = hash_phone(api.settings.session_secret, digits)
+            person.phone_mask = mask_phone(digits)
         await session.commit()
     return api

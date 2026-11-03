@@ -2,18 +2,16 @@ import { answerWork, getHistory, getProgress, getStudentWorks, practice, sendPho
 import { sampleLesson } from "./preview.js";
 import { go, refresh, store } from "./store.js";
 import {
-  brand,
+  classbar,
   confirmDialog,
   emptyBlock,
   errorBlock,
   esc,
+  firstName,
   icon,
   initials,
   nl,
   pill,
-  plural,
-  ring,
-  track,
 } from "./ui.js";
 
 let photoFile = null;
@@ -62,25 +60,9 @@ function recentTopics() {
   };
 }
 
-function hello(name) {
-  const clean = String(name || "").trim();
-  if (!clean) return "Привет";
-  return `Привет, <strong>${esc(clean)}</strong>`;
-}
-
-function topbar(name) {
-  return `<div class="top">
-    <div>
-      ${brand()}
-      <p class="hello">${hello(name)}</p>
-    </div>
-    <button class="avatar" type="button" data-act="nav" data-screen="profile" aria-label="Профиль">${esc(initials(name))}</button>
-  </div>`;
-}
-
 function topicButton(topic) {
   const percent = topic.correct_percent == null ? "" : `${topic.correct_percent}%`;
-  return `<button class="topic-row" type="button" data-act="pick" data-topic="${esc(topic.title)}" ${disabled()}>
+  return `<button class="line" type="button" data-act="pick" data-topic="${esc(topic.title)}" ${disabled()}>
     <span>
       <strong>${esc(topic.title)}</strong>
       ${percent ? `<span class="hint">${esc(percent)}</span>` : ""}
@@ -91,12 +73,12 @@ function topicButton(topic) {
 
 function mast(name, klass) {
   const unread = Number(store.notices?.unread) || 0;
-  return `<header class="mast">
-    ${brand()}
-    <button class="icon-btn" type="button" data-act="notices" aria-label="Уведомления">${icon("bell")}${unread ? `<i class="dot"></i>` : ""}</button>
-    <button class="icon-btn" type="button" data-act="nav" data-screen="profile" aria-label="Профиль">${icon("user")}</button>
-  </header>
-  <div class="who"><b>${esc(name || "Имя не пришло")}</b><span>${esc(klass || "класс не указан")}</span></div>`;
+  return classbar({
+    title: klass || "Класс",
+    subject: store.progress?.subject_title || "",
+    letter: initials(name),
+    unread,
+  });
 }
 
 function topicLine(topic) {
@@ -109,14 +91,49 @@ function topicLine(topic) {
   </button>`;
 }
 
-export function renderHome() {
-  const progress = store.progress;
-  if (store.loading && !progress) return skeleton();
-  if (!progress) return errorBlock(store.progressError?.message, "retry");
-  const stats = summarize(progress.topics);
-  const name = progress.display_name || store.displayName || "";
-  const klass = progress.class_title || "";
-  const open = inProgress(store.openLesson) ? store.openLesson : null;
+function tone(status) {
+  if (status === "mastered") return "green";
+  if (status === "needs_practice") return "yellow";
+  if (status === "repeat") return "coral";
+  return "violet";
+}
+
+function statusLabel(status) {
+  if (status === "mastered") return "Уже получается";
+  if (status === "needs_practice") return "Нужна практика";
+  if (status === "repeat") return "Повторить";
+  return "Ещё без попыток";
+}
+
+function workBucket(item) {
+  if (item.status === "done") return "done";
+  const started = (item.items || []).some((question) => question.answered);
+  return started ? "active" : "fresh";
+}
+
+function formatDue(iso) {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(date);
+}
+
+function workMeta(item) {
+  const bits = [item.subject, item.topic && item.topic !== item.title ? item.topic : "", item.author ? `назначил ${item.author}` : ""];
+  const due = formatDue(item.due_at);
+  if (due) bits.push(`срок ${due}`);
+  return bits.filter(Boolean).join(" · ");
+}
+
+function studyRow(topic, index = 0) {
+  return `<button class="study-row" type="button" data-act="pick" data-topic="${esc(topic.title)}" ${disabled()}>
+    <span class="topic-number topic-number--${tone(topic.status)}">${String(index + 1).padStart(2, "0")}</span>
+    <span><strong>${esc(topic.title)}</strong><small>${esc(statusLabel(topic.status))}${topic.correct_percent != null ? ` · ${esc(topic.correct_percent)}%` : ""}</small></span>
+    <span class="topic-preview__arrow">${icon("arrow")}</span>
+  </button>`;
+}
+
+function askBlock() {
   const photo = store.photoURL
     ? `<div class="attach"><img class="thumb" alt="" src="${esc(store.photoURL)}"><span>Фото прикреплено</span><button class="text-btn" type="button" data-act="clear-photo">Убрать</button></div>`
     : "";
@@ -129,22 +146,72 @@ export function renderHome() {
       </div>
       <p class="quiet">Тренировка остаётся у тебя. Учителю уходит только статус темы.</p>`
     : "";
-  const next = progress.next_topic
-    ? `<button class="line" type="button" data-act="open-next"><span><b>${esc(progress.next_step || progress.next_topic)}</b><small>Следующий шаг</small></span>${icon("chevron")}</button>`
-    : `<p class="quiet">Следующий шаг появится после первой проверки.</p>`;
-  return `<div class="stack">
-    ${mast(name, klass)}
-    <section>
-      <h1>Что будем разбирать сегодня?</h1>
+  return `<section class="ask-card">
+    <div class="ask-card__row">
+      <div>
+        <span class="eyebrow">Вопрос по теме</span>
+        <strong>Не получается шаг</strong>
+      </div>
       <div class="ask-actions">
         <button class="btn btn-primary" type="button" data-act="toggle-ask">Задать вопрос</button>
         <label class="btn btn-ghost file">Фото страницы<input id="photo" type="file" accept="image/*" aria-label="Отправить фотографию"></label>
       </div>
-      ${composer}
-    </section>
-    ${open ? `<button class="line" type="button" data-act="resume"><span><b>${esc(open.topic)}</b><small>Продолжить занятие</small></span></button>` : ""}
-    <div class="rows">${next}${(progress.topics || []).map(topicLine).join("")}</div>
-    <p class="quiet">${stats.known ? `${stats.known} ${plural(stats.known, "тема с ответами", "темы с ответами", "тем с ответами")}.` : "Проверенных ответов пока нет. Начни с вопроса выше."}</p>
+    </div>
+    ${composer}
+  </section>`;
+}
+
+export function renderHome() {
+  const progress = store.progress;
+  if (store.loading && !progress) return skeleton();
+  if (!progress) return errorBlock(store.progressError?.message, "retry");
+  const stats = summarize(progress.topics);
+  const name = firstName(progress.display_name || store.displayName || "");
+  const open = inProgress(store.openLesson) ? store.openLesson : null;
+  const waiting = (store.works?.items || []).filter((item) => workBucket(item) !== "done").slice(0, 2);
+  const attention = (progress.topics || [])
+    .filter((topic) => topic.status === "repeat" || topic.status === "needs_practice")
+    .sort((a, b) => (a.status === "repeat" ? -1 : 1) - (b.status === "repeat" ? -1 : 1))
+    .slice(0, 3);
+  const fresh = !stats.known && !waiting.length && !open;
+  const lead = fresh
+    ? "Занятий ещё не было. Можно начать с вопроса по теме из урока."
+    : (progress.next_step || "Дальше разберём то, что уже просится в практику.");
+  const heroTitle = fresh ? "С чего начать" : (progress.next_topic || "Следующий шаг");
+  return `<div class="fig">
+    ${mast(progress.display_name || store.displayName, progress.class_title)}
+    <div class="fig-page">
+      <div class="welcome">
+        <span class="eyebrow">Мой день</span>
+        <h1 id="page-title">${name ? `Привет, ${esc(name)}` : "Привет"}</h1>
+        <p>${esc(lead)}</p>
+      </div>
+      <article class="learn-card">
+        <span class="eyebrow">${fresh ? "Пока пусто" : "Следующий шаг"}</span>
+        <h2>${esc(heroTitle)}</h2>
+        <p>${fresh ? "После первой проверки здесь появятся темы, которые уже получаются, и те, что стоит повторить." : esc(progress.next_step || "Открой тему и пройди короткое объяснение с практикой.")}</p>
+        ${progress.next_topic
+    ? `<button class="primary-button primary-button--light" type="button" data-act="open-next">Разобрать шаг<span>${icon("arrow")}</span></button>`
+    : `<button class="primary-button primary-button--light" type="button" data-act="toggle-ask">Задать вопрос<span>${icon("arrow")}</span></button>`}
+      </article>
+      ${open ? `<button class="study-row study-row--solo" type="button" data-act="resume"><span class="topic-number topic-number--violet">▶</span><span><strong>${esc(open.topic)}</strong><small>Занятие уже открыто</small></span><span class="topic-preview__arrow">${icon("arrow")}</span></button>` : ""}
+      <section class="study-group">
+        <div class="section-heading">
+          <div><span class="eyebrow">Сейчас</span><h2>Что сделать</h2></div>
+          <button class="text-button" type="button" data-act="nav" data-screen="tasks">Все задания ${icon("arrow")}</button>
+        </div>
+        ${waiting.length ? `<div class="topic-preview">${waiting.map((item) => `<button class="study-row" type="button" data-act="open-work" data-id="${item.id}"><span class="topic-number topic-number--${workBucket(item) === "active" ? "yellow" : "coral"}">${workBucket(item) === "active" ? "…" : "!"}</span><span><strong>${esc(item.title)}</strong><small>${esc(workMeta(item) || "Назначенная работа")}</small></span><span class="topic-preview__arrow">${icon("arrow")}</span></button>`).join("")}</div>` : `<p class="quiet">Назначенных работ нет. Когда учитель опубликует проверку, она появится здесь.</p>`}
+      </section>
+      <section class="study-group">
+        <div class="section-heading">
+          <div><span class="eyebrow">Темы</span><h2>${attention.length ? "Стоит вернуться" : "Программа"}</h2></div>
+          <button class="text-button" type="button" data-act="nav" data-screen="map">Карта знаний ${icon("arrow")}</button>
+        </div>
+        ${attention.length ? `<div class="topic-preview">${attention.map((topic, index) => studyRow(topic, index)).join("")}</div>` : `<p class="quiet">${stats.known ? "Слабых тем сейчас нет. Новую можно открыть на карте." : "Статусов ещё нет: тема получит его после проверенного ответа."}</p>`}
+        ${stats.known ? `<p class="quiet">Уже получается ${stats.mastered}. Нужна практика ${stats.practice}. Повторить ${stats.repeat}.</p>` : ""}
+      </section>
+      ${askBlock()}
+    </div>
   </div>`;
 }
 
@@ -235,14 +302,15 @@ export function renderLesson() {
         <button class="btn btn-primary" type="submit" ${disabled()}>Проверить</button>
       </form>`
     : "";
-  return `<div class="stack">
-    <div class="top compact">
-      <button class="text-btn back" type="button" data-act="exit-lesson">${icon("chevron")}<span>К прогрессу</span></button>
-    </div>
+  const klass = store.progress?.class_title || "";
+  const subject = store.progress?.subject_title || "";
+  return `<div class="fig">
+    <div class="fig-page lesson-page">
+      <button class="text-button back" type="button" data-act="exit-lesson">${icon("chevron")} К прогрессу</button>
     ${modeChip(mode)}
     ${stages(lesson)}
     <h1 id="page-title" tabindex="-1">${esc(lesson?.topic || "Занятие")}</h1>
-    <p class="hint">${esc(store.progress?.class_title ? `Математика · ${store.progress.class_title}` : "Математика · 8 класс")}</p>
+    <p class="hint">${esc([subject, klass].filter(Boolean).join(" · ") || "Твоё занятие")}</p>
     ${store.busy ? `<p class="statusline" role="status">${esc(store.busyLabel || "Секунду…")}</p>` : ""}
     ${lessonBanner(store.lessonError)}
     ${switcher}
@@ -264,6 +332,7 @@ export function renderLesson() {
     ${idleHelp}
     ${lesson?.topic && !lesson.feedback && !(lesson.actions || []).some((item) => item.action === "more_example") ? `<button class="btn btn-ghost" type="button" data-act="lesson-action" data-action="more_example" ${disabled()}>Объясни иначе</button>` : ""}
     <button class="btn btn-ghost" type="button" data-act="exit-lesson">К моему прогрессу</button>
+    </div>
   </div>`;
 }
 
@@ -277,31 +346,33 @@ export function renderMap() {
     ["needs_practice", "Нужна практика"],
     ["repeat", "Повторить"],
   ];
-  const blocks = groups.map(([status, title]) => {
-    const items = (progress.topics || []).filter((topic) => topic.status === status);
-    if (!items.length) return "";
-    return `<section><h2 class="section-title">${title}</h2><div class="sheet-block">${items.map(topicLine).join("")}</div></section>`;
-  }).join("");
   const fresh = (progress.topics || []).filter((topic) => !topic.status);
   const history = (store.history?.sessions || []).slice(0, 3);
-  return `<div class="stack">
+  const block = (status, title) => {
+    const items = (progress.topics || []).filter((topic) => topic.status === status);
+    if (!items.length) return "";
+    return `<section class="study-group"><h2 class="study-label">${title}</h2><div class="topic-preview">${items.map((topic, index) => studyRow(topic, index)).join("")}</div></section>`;
+  };
+  return `<div class="fig">
     ${mast(progress.display_name, progress.class_title)}
-    <div>
-      <h1 id="page-title" tabindex="-1">Карта знаний</h1>
-      <p class="quiet">Усвоено ${stats.mastered}. Нужна практика ${stats.practice}. Повторить ${stats.repeat}. Статус считается по ответам.</p>
+    <div class="fig-page">
+      <div class="page-heading">
+        <span class="eyebrow">Личный прогресс</span>
+        <h1 id="page-title">Карта знаний</h1>
+        <p>${stats.known ? `Усвоено ${stats.mastered}. Нужна практика ${stats.practice}. Повторить ${stats.repeat}. Статус считается по твоим ответам.` : "Пока нет проверенных ответов. Задай вопрос на обзоре, и тема получит статус."}</p>
+      </div>
+      ${progress.next_topic ? `<article class="learn-card learn-card--compact"><span class="eyebrow">Дальше</span><h2>${esc(progress.next_step || progress.next_topic)}</h2><button class="primary-button primary-button--light" type="button" data-act="open-next">Разобрать<span>${icon("arrow")}</span></button></article>` : ""}
+      ${groups.map(([status, title]) => block(status, title)).join("")}
+      ${fresh.length ? `<section class="study-group"><h2 class="study-label">Ещё без попыток</h2><div class="topic-preview">${fresh.map((topic, index) => studyRow(topic, index)).join("")}</div></section>` : ""}
+      <section class="study-group">
+        <div class="section-heading">
+          <div><span class="eyebrow">Попытки</span><h2>Недавние</h2></div>
+          <button class="text-button" type="button" data-act="nav" data-screen="history">Вся история ${icon("arrow")}</button>
+        </div>
+        ${store.historyError ? `<p class="field-error">${esc(store.historyError.message)}</p>` : ""}
+        ${history.length ? `<div class="topic-list">${history.map(historyRow).join("")}</div>` : `<p class="quiet">Проверенных занятий пока нет.</p>`}
+      </section>
     </div>
-    ${stats.known ? "" : `<p class="quiet">Пока нет проверенных ответов. Задай вопрос на главной, и тема получит статус.</p>`}
-    ${blocks || ""}
-    ${fresh.length ? `<section class="sheet-block">${fresh.map(topicLine).join("")}</section>` : ""}
-    <section>
-      <div class="row-between"><h2>История попыток</h2><button class="text-btn" type="button" data-act="nav" data-screen="history">Вся история</button></div>
-      ${store.historyError ? `<p class="field-error">${esc(store.historyError.message)}</p>` : ""}
-      ${history.length ? history.map(historyRow).join("") : `<p class="quiet">Проверенных занятий пока нет.</p>`}
-    </section>
-    ${progress.next_topic ? `<section class="card card-next">
-      <h2>${esc(progress.next_step || progress.next_topic)}</h2>
-      <button class="btn btn-dark" type="button" data-act="open-next">Разобрать</button>
-    </section>` : ""}
   </div>`;
 }
 
@@ -309,9 +380,9 @@ function historyRow(item) {
   const when = formatWhen(item.created_at);
   const mode = item.mode === "submission" ? "сдача" : "тренировка";
   const result = item.answered ? `${item.correct_count} из ${item.answered} верно` : "без проверки";
-  return `<article class="card card-flat">
-    <div class="row-between"><strong>${esc(item.topic || "Тема не выбрана")}</strong><span class="hint">${esc(when)}</span></div>
-    <p class="hint">${esc(mode)} · ${esc(result)}</p>
+  return `<article class="history-row">
+    <strong>${esc(item.topic || "Тема не выбрана")}</strong>
+    <span>${esc(when)} · ${esc(mode)} · ${esc(result)}</span>
   </article>`;
 }
 
@@ -325,11 +396,16 @@ export function renderHistory() {
   if (store.loading && !store.history && !store.historyError) return "";
   if (store.historyError && !store.history) return errorBlock(store.historyError.message, "retry");
   const sessions = store.history?.sessions || [];
-  return `<div class="stack">
-    ${topbar(store.progress?.display_name || store.displayName)}
-    <h1 id="page-title" tabindex="-1">История</h1>
-    <p class="hint">Занятия и проверки. Текст личного вопроса здесь не показываю.</p>
-    ${sessions.length ? sessions.map(historyRow).join("") : emptyBlock("Пока пусто", "Когда проверишь первое задание, занятие появится в этом списке.")}
+  return `<div class="fig">
+    ${mast(store.progress?.display_name || store.displayName, store.progress?.class_title)}
+    <div class="fig-page">
+      <div class="page-heading">
+        <span class="eyebrow">Только мои попытки</span>
+        <h1 id="page-title">История</h1>
+        <p>Занятия и проверки. Текст личного вопроса здесь не показываю.</p>
+      </div>
+      ${sessions.length ? `<div class="topic-list">${sessions.map(historyRow).join("")}</div>` : emptyBlock("Пока пусто", "Когда проверишь первое задание, занятие появится в этом списке.")}
+    </div>
   </div>`;
 }
 
@@ -337,17 +413,49 @@ export function renderProfile() {
   const progress = store.progress;
   if (!progress && store.progressError) return errorBlock(store.progressError.message, "retry");
   const name = progress?.display_name || store.displayName || "";
-  const done = Number(progress?.completed_tasks) || 0;
-  return `<div class="stack">
+  const topics = progress?.topics || [];
+  const stats = summarize(topics);
+  const works = (store.works?.items || []).length;
+  const score = stats.avg == null ? 0 : stats.avg;
+  const headline = stats.known ? (progress?.next_step || "Есть темы для повторения") : "Начни с первой темы";
+  const subject = progress?.subject_title || "";
+  return `<div class="fig">
     ${mast(name, progress?.class_title)}
-    <h1>${esc(name || "Имя не пришло")}</h1>
-    <div class="rows">
-      <div class="line"><span><b>Класс</b><small>${esc(progress?.class_title || "не указан")}</small></span></div>
-      <div class="line"><span><b>Проверено</b><small>${done} ${plural(done, "задание", "задания", "заданий")}, серия ${Number(progress?.streak_days) || 0} дн.</small></span></div>
+    <div class="fig-page">
+      <div class="profile-card profile-card--student">
+        <div class="profile-card__avatar profile-card__avatar--student">${esc(initials(name))}</div>
+        <div>
+          <span class="eyebrow">Ученик</span>
+          <h1 id="page-title">${esc(firstName(name) || name || "Имя не пришло")}</h1>
+          <p>${esc(progress?.class_title || "класс не указан")}${subject ? ` · ${esc(subject)}` : ""}</p>
+        </div>
+        <button class="profile-card__edit" type="button" data-act="profile-note">Изменить профиль</button>
+      </div>
+      <div class="student-stats">
+        <article><span>Работы</span><strong>${works}</strong><small>${works ? "назначены" : "ещё не было"}</small></article>
+        <article><span>Темы</span><strong>${topics.length}</strong><small>в этом году</small></article>
+      </div>
+      <div class="student-focus">
+        <div class="student-focus__heading">
+          <div>
+            <span class="eyebrow">Мой прогресс</span>
+            <h2>${esc(headline)}</h2>
+          </div>
+          <div class="student-focus__score">${score}%</div>
+        </div>
+        <div class="student-progress"><span style="width:${score || 3}%"></span></div>
+        <p>${stats.known ? `Усвоено ${stats.mastered}. Нужна практика ${stats.practice}. Повторить ${stats.repeat}.` : "После первой работы здесь появятся темы, которые уже получаются, и подсказки для повторения."}</p>
+        <button class="student-focus__action" type="button" data-act="nav" data-screen="map">Открыть карту знаний ${icon("arrow")}</button>
+      </div>
+      <div class="student-tip">
+        <div class="student-tip__icon">${icon("spark")}</div>
+        <div>
+          <strong>Личный помощник</strong>
+          <p>Можно задать вопрос по теме — учитель не увидит личный диалог.</p>
+        </div>
+      </div>
+      <button class="text-button" type="button" data-act="nav" data-screen="history">История занятий</button>
     </div>
-    <p class="quiet">Учитель видит статус темы, а не текст вопроса.</p>
-    <button class="btn btn-ghost" type="button" data-act="nav" data-screen="history">История занятий</button>
-    <button class="btn btn-ghost" type="button" data-act="notices">Уведомления</button>
   </div>`;
 }
 
@@ -356,47 +464,82 @@ export function renderTasks() {
   if (store.worksError && !store.works) return errorBlock(store.worksError.message, "retry");
   const items = store.works?.items || [];
   const groups = [
-    ["Новые", items.filter((item) => item.status !== "done")],
-    ["Сделанные", items.filter((item) => item.status === "done")],
+    ["fresh", "Новые", "coral"],
+    ["active", "В работе", "yellow"],
+    ["done", "Сданные", "green"],
   ];
-  return `<div class="stack">
+  const row = (item, marker) => `<button class="study-row" type="button" data-act="open-work" data-id="${item.id}">
+      <span class="topic-number topic-number--${marker}">${item.status === "done" ? "✓" : "!"}</span>
+      <span><strong>${esc(item.title)}</strong><small>${esc(workMeta(item) || "Работа без описания")}</small></span>
+      <span class="topic-preview__arrow">${icon("arrow")}</span>
+    </button>`;
+  const filled = groups
+    .map(([id, title, marker]) => {
+      const list = items.filter((item) => workBucket(item) === id);
+      if (!list.length) return "";
+      return `<section class="study-group"><h2 class="study-label">${title}</h2><div class="topic-preview">${list.map((item) => row(item, marker)).join("")}</div></section>`;
+    })
+    .join("");
+  return `<div class="fig">
     ${mast(store.progress?.display_name || store.displayName, store.progress?.class_title)}
-    <h1>Задания</h1>
-    ${items.length ? groups.filter(([, list]) => list.length).map(([title, list]) => `<div><p class="group-label">${title}</p><div class="rows">${list.map((item) => `<button class="line" type="button" data-act="open-work" data-id="${item.id}"><span><b>${esc(item.title)}</b><small>${esc(item.subject)} · ${esc(item.author)}</small></span></button>`).join("")}</div></div>`).join("") : `<div class="invite"><img src="/assets/logo.jpg" alt=""><div><h2>Заданий пока нет</h2><p class="quiet">${store.preview ? "В демонстрации список с сервера не подставляется." : "Когда учитель опубликует работу, она появится здесь и в чате."}</p></div></div>`}
+    <div class="fig-page">
+      <div class="page-heading">
+        <span class="eyebrow">Назначил учитель</span>
+        <h1 id="page-title">Задания</h1>
+        <p>Здесь только работы, которые отправили тебе. Личный вопрос в этот список не попадает.</p>
+      </div>
+      ${store.worksError ? `<p class="field-error">${esc(store.worksError.message)}</p>` : ""}
+      ${items.length ? filled : `<article class="empty-task-card">
+        <div class="empty-task-card__art" aria-hidden="true"><div class="task-sheet task-sheet--back"></div><div class="task-sheet task-sheet--front"><i></i><i></i><i></i></div><span class="art-dot art-dot--one"></span><span class="art-dot art-dot--two"></span></div>
+        <span class="eyebrow">Пока тихо</span><h2>Заданий пока нет</h2><p>${store.preview ? "В демонстрации список с сервера не подставляется." : "Когда учитель опубликует работу, она появится здесь и в чате."}</p>
+      </article>`}
+    </div>
   </div>`;
 }
 
 function renderWork(work) {
-  return `<div class="stack">
-    <button class="text-btn" type="button" data-act="close-work">К списку</button>
-    <h1 id="page-title" tabindex="-1">${esc(work.title)}</h1>
-    <p class="quiet">${esc(work.subject)} · назначил ${esc(work.author)}${work.due_at ? ` · срок ${esc(work.due_at)}` : ""}</p>
-    <p>${esc(work.goal)}</p>
-    ${(work.items || []).map((item) => `<section>
-      <h2>Задание ${item.position}</h2>
-      <p>${esc(item.prompt)}</p>
-      ${item.answered ? `<p class="quiet">${item.correct ? "Верно" : "Пока не сошлось"}</p>` : `<label class="field-label" for="work-${item.id}">Ответ</label><input id="work-${item.id}" class="field" data-work-item="${item.id}" autocomplete="off">`}
-    </section>`).join("")}
-    ${store.fieldError ? `<p class="field-error">${esc(store.fieldError)}</p>` : ""}
-    <button class="btn btn-primary" type="button" data-act="submit-work" ${disabled()}>Проверить ответы</button>
+  const due = formatDue(work.due_at);
+  return `<div class="fig">
+    ${mast(store.progress?.display_name || store.displayName, store.progress?.class_title)}
+    <div class="fig-page">
+      <button class="text-button" type="button" data-act="close-work">${icon("chevron")} К списку</button>
+      <div class="page-heading">
+        <span class="eyebrow">${esc(work.subject || "Работа")}</span>
+        <h1 id="page-title">${esc(work.title)}</h1>
+        <p>${esc(work.topic && work.topic !== work.title ? work.topic : work.goal || "")}${work.author ? ` Назначил ${esc(work.author)}.` : ""}${due ? ` Срок ${esc(due)}.` : ""}</p>
+      </div>
+      <div class="work-sheet">
+        ${(work.items || []).map((item) => `<section>
+          <h2>Задание ${item.position}</h2>
+          <p>${esc(item.prompt)}</p>
+          ${item.answered ? `<p class="quiet">${item.correct ? "Верно" : "Пока не сошлось"}</p>` : `<label class="field-label" for="work-${item.id}">Ответ</label><input id="work-${item.id}" class="field" data-work-item="${item.id}" autocomplete="off">`}
+        </section>`).join("")}
+      </div>
+      ${store.fieldError ? `<p class="field-error">${esc(store.fieldError)}</p>` : ""}
+      <button class="primary-button" type="button" data-act="submit-work" ${disabled()}>Проверить ответы</button>
+    </div>
   </div>`;
 }
 
 export function renderStimul() {
-  const samples = ["Как сложить дроби с разным знаменателем?", "Объясни дискриминант на коротком примере", "С чего начать геометрию?"];
-  return `<div class="stimul">
+  return `<div class="fig">
     ${mast(store.progress?.display_name || store.displayName, store.progress?.class_title)}
-    <div class="who"><b>Помощник по математике</b><span>модель ещё не подключена</span></div>
-    <div class="stimul-thread">
-      ${store.stimulDraft ? `<div class="bubble me">${esc(store.stimulDraft)}</div>` : `<p class="quiet">Здесь будет разбор твоих вопросов. Ответ модели сейчас не генерируется и учителю не уходит.</p>`}
-      ${store.stimulNote ? `<div class="bubble">${esc(store.stimulNote)}</div>` : ""}
+    <div class="fig-page assistant-page">
+      <div class="assistant-intro">
+        <div class="assistant-intro__icon">${icon("spark")}</div>
+        <div>
+          <span class="eyebrow">Личный помощник</span>
+          <h1 id="page-title">Скоро здесь</h1>
+          <p>Стимул готовится к запуску. Ответ модели не генерируется, сообщение никуда не уходит, учитель личный диалог не видит.</p>
+        </div>
+      </div>
+      <div class="assistant-notice" role="status">${icon("spark")}<span>Пока можно задать вопрос на обзоре: это тренировка, не чат помощника.</span></div>
+      <form class="composer" aria-disabled="true">
+        <button class="composer__attach" type="button" disabled aria-label="Добавить фото">${icon("camera")}</button>
+        <input disabled placeholder="Помощник ещё не отвечает" aria-label="Вопрос помощнику" value="">
+        <button class="composer__send" type="button" disabled aria-label="Отправить">${icon("arrow")}</button>
+      </form>
     </div>
-    <div class="prompt-list">${samples.map((text) => `<button type="button" data-act="stimul-sample" data-text="${esc(text)}">${esc(text)}</button>`).join("")}</div>
-    <form id="stimul-form" class="composer">
-      <label class="btn btn-ghost file">Фото<input type="file" accept="image/*" disabled aria-label="Вложение появится вместе с моделью"></label>
-      <input id="stimul-input" class="field" placeholder="Вопрос помощнику" value="${esc(store.stimulDraft)}" aria-label="Вопрос помощнику">
-      <button class="btn btn-primary" type="submit">Отправить</button>
-    </form>
   </div>`;
 }
 

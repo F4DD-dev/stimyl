@@ -42,9 +42,10 @@ from app.domain.accounts import (
     take_hint,
     touch,
 )
-from app.domain.directory import application_of, approve, pending_reply, placed
-from app.domain.onboarding import accept_claim, claims_for, register_phone
+from app.domain.directory import application_of, placed
+from app.domain.onboarding import accept_claim, register_phone, reject_claim, reviewer_name
 from app.domain.phone import normalize_phone, phone_from_vcard, verify_contact_hash
+from app.domain.school_admin import bot_applications, bot_my_class, bot_students
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +126,9 @@ async def open_gate(
         return GateOutcome(user, [GateReply(BLOCKED)], True)
 
     await touch(session, user)
+    if user.phone_hash is None:
+        phone = await _phone_gate(session, user, incoming, settings)
+        return GateOutcome(user, phone.replies, True)
     if incoming.payload == CONSENT_YES:
         return GateOutcome(user, [GateReply(ALREADY)], True)
 
@@ -132,19 +136,25 @@ async def open_gate(
     folded = _fold(text)
     action = _named_action(incoming.payload)
     if action == "apps" or folded == "заявки":
-        if user.can_manage_school:
-            return await _claim_list(session, user)
-        text_out, buttons = await pending_reply(session, user)
+        text_out, buttons = await bot_applications(session, user)
+        return GateOutcome(user, [GateReply(text_out, buttons)], True)
+    if action == "students" or folded == "ученики":
+        return GateOutcome(user, [GateReply(await bot_students(session, user))], True)
+    if action == "my_class" or folded == "мой класс":
+        text_out, buttons = await bot_my_class(session, user)
         return GateOutcome(user, [GateReply(text_out, buttons)], True)
     if action.startswith("approve:") and action.split(":", 1)[1].isdigit():
         target_id = int(action.split(":", 1)[1])
-        if user.can_manage_school:
-            ok, detail = await accept_claim(session, user, target_id)
-            text_out = f"Принял {detail}." if ok else detail
-            follow = await _claim_list(session, user)
-            return GateOutcome(user, [GateReply(text_out)] + follow.replies, True)
-        text_out, buttons = await approve(session, user, target_id)
-        return GateOutcome(user, [GateReply(text_out, buttons)], True)
+        ok, detail = await accept_claim(session, user, target_id)
+        text_out = f"Принял {detail}. Ученик получит сообщение в MAX." if ok else detail
+        follow_text, buttons = await bot_applications(session, user)
+        return GateOutcome(user, [GateReply(text_out), GateReply(follow_text, buttons)], True)
+    if action.startswith("reject:") and action.split(":", 1)[1].isdigit():
+        target_id = int(action.split(":", 1)[1])
+        ok, detail = await reject_claim(session, user, target_id)
+        text_out = f"Отклонил {detail}. Ученик получит сообщение в MAX." if ok else detail
+        follow_text, buttons = await bot_applications(session, user)
+        return GateOutcome(user, [GateReply(text_out), GateReply(follow_text, buttons)], True)
     if action in {WEB_LOGIN, "open_cabinet"} or folded in {"войти в кабинет", "открыть кабинет"}:
         return await _send_code(session, user, settings)
     if action.startswith("open_work:"):
@@ -224,10 +234,10 @@ async def _without_account(
             reply = _join_reply(joined, unknown=True)
             if reply:
                 replies.append(GateReply(reply))
-        if await placed(session, user):
-            replies.append(GateReply("Можно заниматься."))
-        else:
+        if user.phone_hash is None or not await placed(session, user):
             replies.append(_ask_phone())
+        else:
+            replies.append(GateReply("Можно заниматься."))
         return GateOutcome(user, replies, True)
     if incoming.payload == CONSENT_NO_PAYLOAD:
         return GateOutcome(None, [GateReply(CONSENT_NO)], True)
@@ -260,16 +270,6 @@ def _looks_like_phone(text: str) -> bool:
     return len(digits) >= 10 and len(text.strip()) <= 24
 
 
-async def _claim_list(session: AsyncSession, user: User) -> GateOutcome:
-    rows = await claims_for(session, user)
-    if not rows:
-        return GateOutcome(user, [GateReply("Заявок нет.")], True)
-    buttons = tuple(
-        (f"Принять {row['display_name']}"[:80], f"approve:{row['user_id']}") for row in rows[:8]
-    )
-    return GateOutcome(user, [GateReply("Новые заявки в класс.", buttons)], True)
-
-
 async def _phone_gate(
     session: AsyncSession, user: User, incoming: Incoming, settings: Settings
 ) -> GateOutcome:
@@ -277,11 +277,15 @@ async def _phone_gate(
         if user.phone_hash:
             row = await application_of(session, user)
             if row is not None and row.status == "pending":
-                return GateOutcome(
-                    user,
-                    [GateReply("Заявка отправлена учителю и ждёт подтверждения.")],
-                    True,
-                )
+                name = await reviewer_name(session)
+                if name:
+                    waiting = f"Заявка отправлена. Её смотрит {name}."
+                else:
+                    waiting = (
+                        "Заявка записана. Ответственный учитель ещё не назначен, "
+                        "принять её пока некому."
+                    )
+                return GateOutcome(user, [GateReply(waiting)], True)
             if row is not None and row.status == "rejected":
                 return GateOutcome(
                     user,

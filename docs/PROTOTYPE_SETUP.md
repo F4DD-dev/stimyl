@@ -206,7 +206,7 @@ STIMUL_RESET_DATABASE=stimul_proto
 python -m scripts.reset_prototype --yes
 ```
 
-`STIMUL_RESET_DATABASE` должен буквально совпасть с именем базы в `DATABASE_URL`. Имена `postgres`, `template0`, `template1` и любое имя с `prod` скрипт отвергает. После сброса снова включите `FIRST_TEACHER_BOOTSTRAP=true` только на этом контуре и заново пройдите подтверждение номера: флаг `prototype_bootstrap` будет удалён вместе с остальными строками `runtime_flags`, поэтому первый новый вход снова может стать учителем-администратором.
+`STIMUL_RESET_DATABASE` должен буквально совпасть с именем базы в `DATABASE_URL`. Имена `postgres`, `template0`, `template1` и любое имя с `prod` скрипт отвергает. Скрипт удаляет людей, привязки, заявки, занятия и работы. Школа, класс, предмет, темы и `alembic_version` остаются. `prototype_bootstrap` становится `open`. После сброса снова включите `FIRST_TEACHER_BOOTSTRAP=true` только на этом контуре и заново пройдите подтверждение номера: первый подтверждённый контакт может стать учителем-администратором.
 
 ## Что ещё не подключено
 

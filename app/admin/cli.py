@@ -18,6 +18,12 @@ from app.domain.accounts import (
     delete_user_data,
     set_blocked,
 )
+from app.domain.school_admin import (
+    class_status,
+    grant_school_manager,
+    pending_claims_text,
+    transfer_school_manager,
+)
 
 
 def main() -> None:
@@ -45,6 +51,15 @@ def main() -> None:
     school_class = sub.add_parser("add-class")
     school_class.add_argument("school_id", type=int)
     school_class.add_argument("title")
+    grant = sub.add_parser("grant-school-manager")
+    grant.add_argument("max_id")
+    grant.add_argument("--yes", action="store_true")
+    transfer = sub.add_parser("transfer-school-manager")
+    transfer.add_argument("source_max")
+    transfer.add_argument("target_max")
+    transfer.add_argument("--yes", action="store_true")
+    sub.add_parser("class")
+    sub.add_parser("claims")
     asyncio.run(_run(parser.parse_args()))
 
 
@@ -58,24 +73,31 @@ async def _run(args: argparse.Namespace) -> None:
     factory = make_session_factory(engine)
     try:
         async with factory() as session:
-            await _command(session, args, settings)
-            await session.commit()
+            changed = await _command(session, args, settings)
+            if changed:
+                await session.commit()
+            else:
+                await session.rollback()
     finally:
         await engine.dispose()
 
 
-async def _command(session, args, settings) -> None:
+async def _command(session, args, settings) -> bool:
     if args.cmd == "users":
         rows = await session.execute(
             select(User, AuthIdentity.external_id)
             .join(AuthIdentity, AuthIdentity.user_id == User.id)
-            .where(AuthIdentity.provider == "max")
+            .where(AuthIdentity.provider == "max", AuthIdentity.revoked_at.is_(None))
             .order_by(User.id)
         )
+        print("id\trole\tstatus\tmanage\tmax\tname")
         for user, external_id in rows.all():
             closed = " closed" if user.deleted_at is not None else ""
-            print(f"{user.id}\t{user.role}\t{user.status}{closed}\t{external_id}\t{user.display_name}")
-        return
+            manage = "да" if user.can_manage_school else "нет"
+            print(
+                f"{user.id}\t{user.role}\t{user.status}{closed}\t{manage}\t{external_id}\t{user.display_name}"
+            )
+        return False
     if args.cmd == "schools":
         schools = list(await session.scalars(select(School).order_by(School.id)))
         classes = list(await session.scalars(select(SchoolClass).order_by(SchoolClass.id)))
@@ -84,48 +106,70 @@ async def _command(session, args, settings) -> None:
             for item in classes:
                 if item.school_id == school.id:
                     print(f"  class {item.id}\t{item.title}\tkey {item.join_key}\tcode {item.join_code}")
-        return
+        return False
     if args.cmd == "audit":
         rows = list(
             await session.scalars(select(AuditLog).order_by(AuditLog.id.desc()).limit(50))
         )
         for row in rows:
             print(f"{row.created_at}\t{row.action}\tactor {row.actor_user_id}\ttarget {row.target_user_id}")
-        return
+        return False
+    if args.cmd == "claims":
+        print(await pending_claims_text(session))
+        return False
+    if args.cmd == "class":
+        print(await class_status(session))
+        return False
+    if args.cmd == "grant-school-manager":
+        result = await grant_school_manager(session, args.max_id, apply=args.yes)
+        print(result.text)
+        if not result.ok:
+            raise SystemExit(1)
+        return result.changed
+    if args.cmd == "transfer-school-manager":
+        result = await transfer_school_manager(
+            session, args.source_max, args.target_max, apply=args.yes
+        )
+        print(result.text)
+        if not result.ok:
+            raise SystemExit(1)
+        return result.changed
     if args.cmd == "approve":
         print("ok" if await approve_teacher(session, args.user_id, None) else "не найден")
-        return
+        return True
     if args.cmd == "block":
         print("ok" if await set_blocked(session, args.user_id, True, None) else "не найден")
-        return
+        return True
     if args.cmd == "unblock":
         print("ok" if await set_blocked(session, args.user_id, False, None) else "не найден")
-        return
+        return True
     if args.cmd == "close":
         print("ok" if await close_user(session, args.user_id, None) else "не найден")
-        return
+        return True
     if args.cmd == "delete":
         if not args.yes:
             raise SystemExit("Добавь --yes. Удаление стирает ответы и вход.")
         print("ok" if await delete_user_data(session, args.user_id, None) else "не найден")
-        return
+        return True
     if args.cmd == "invite":
         print(await create_invite(session, None, settings))
-        return
+        return True
     if args.cmd == "transfer":
         code = await create_transfer(session, args.user_id, None, settings)
         print(code or "не найден")
-        return
+        return True
     if args.cmd == "add-school":
         school = await add_school(session, args.title)
         print(school.id)
-        return
+        return True
     if args.cmd == "add-class":
         created = await add_class(session, args.school_id, args.title)
         if created is None:
             print("школа не найдена")
-            return
+            return False
         name = settings.bot_username or "<бот>"
         print(f"key {created.join_key}")
         print(f"code {created.join_code}")
         print(f"https://max.ru/{name}?start={created.join_key}")
+        return True
+    return False

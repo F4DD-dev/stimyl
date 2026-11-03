@@ -1,5 +1,5 @@
 import { approveJoin, getHistory, getLesson, getNotices, getProgress, getSession, getStudentWorks, openSession, openTicket, readNotice, setCsrf } from "./api.js";
-import { previewRole, studentPreview, teacherPreview } from "./preview.js";
+import { previewRole, studentPreview, teacherPreview } from "./preview.js?v=8";
 import {
   checkSubmission,
   clearPhoto,
@@ -17,7 +17,7 @@ import {
   submitAnswer,
   submitQuestion,
   takePhoto,
-} from "./student.js?v=6";
+} from "./student.js?v=9";
 import { go, refresh, store, subscribe } from "./store.js";
 import {
   focusTopic,
@@ -37,9 +37,9 @@ import {
   toggleStudent,
   wizardBack,
   wizardNext,
-} from "./teacher.js?v=6";
-import { acceptOne, appoint, changePerson, loadManage, rejectOne } from "./manage.js";
-import { brand, esc, icon, skeleton } from "./ui.js";
+} from "./teacher.js?v=8";
+import { acceptOne, appoint, changePerson, loadManage, rejectOne } from "./manage.js?v=8";
+import { brand, confirmDialog, esc, icon, mark, skeleton } from "./ui.js?v=2";
 
 const TITLES = {
   home: "Главная",
@@ -53,7 +53,7 @@ const TITLES = {
   compose: "Проверка",
   results: "Результаты",
   stimul: "Стимул",
-  manage: "Управление",
+  manage: "Управление классом",
 };
 
 let bootId = 0;
@@ -174,6 +174,7 @@ function enterPreview(role) {
     store.openLesson = data.openLesson;
   }
   ensureHash();
+  if (store.screen === "manage") loadManage();
   refresh();
 }
 
@@ -262,19 +263,17 @@ function tabs() {
         ["profile", "Профиль", "user"],
       ]
     : [
-        ["home", "Главная", "home"],
+        ["home", "Обзор", "grid"],
         ["map", "Темы", "map"],
         ["stimul", "Стимул", "core"],
         ["tasks", "Задания", "list"],
         ["profile", "Профиль", "user"],
       ];
   const current = store.screen === "lesson" ? "home" : store.screen === "compose" || store.screen === "results" ? "tasks" : store.screen === "manage" || store.screen === "history" ? "profile" : store.screen;
-  return `<nav class="tabbar" aria-label="Разделы">${items.map(([id, label, glyph]) => {
+  return `<nav class="tabbar" aria-label="Основная навигация">${items.map(([id, label, glyph]) => {
     const active = current === id;
-    if (glyph === "core") {
-      return `<button type="button" class="tab tab-core${active ? " is-active" : ""}" data-act="nav" data-screen="${id}" ${active ? 'aria-current="page"' : ""}><img class="tab-logo" src="/assets/logo.jpg" alt=""><span>${label}</span></button>`;
-    }
-    return `<button type="button" class="tab${active ? " is-active" : ""}" data-act="nav" data-screen="${id}" ${active ? 'aria-current="page"' : ""}>${icon(glyph)}<span>${label}</span></button>`;
+    const glyphHtml = glyph === "core" ? mark() : icon(glyph);
+    return `<button type="button" class="tab${active ? " is-active" : ""}" data-act="nav" data-screen="${id}" ${active ? 'aria-current="page"' : ""}><span class="nav-glyph">${glyphHtml}</span><span>${label}</span></button>`;
   }).join("")}</nav>`;
 }
 
@@ -289,7 +288,7 @@ function sidenav() {
         ["profile", "Профиль", "user"],
       ]
     : [
-        ["home", "Главная", "home"],
+        ["home", "Обзор", "grid"],
         ["map", "Темы", "map"],
         ["stimul", "Стимул", "core"],
         ["tasks", "Задания", "list"],
@@ -301,8 +300,8 @@ function sidenav() {
     <p class="side-note">${teacher ? "Кабинет учителя" : "Кабинет ученика"}</p>
     ${items.map(([id, label, glyph]) => {
       const active = current === id;
-      const mark = glyph === "core" ? `<img class="tab-logo" src="/assets/logo.jpg" alt="">` : icon(glyph);
-      return `<button type="button" class="side-link${active ? " is-active" : ""}" data-act="nav" data-screen="${id}" ${active ? 'aria-current="page"' : ""}>${mark}<span>${label}</span></button>`;
+      const badge = glyph === "core" ? mark() : icon(glyph);
+      return `<button type="button" class="side-link${active ? " is-active" : ""}" data-act="nav" data-screen="${id}" ${active ? 'aria-current="page"' : ""}>${badge}<span>${label}</span></button>`;
     }).join("")}
   </aside>`;
 }
@@ -610,6 +609,13 @@ async function onAction(act, button) {
   else if (act === "check-submission") await checkSubmission();
   else if (act === "retry-lesson") retryLesson();
   else if (act === "exit-lesson") await exitLesson();
+  else if (act === "profile-note") {
+    await confirmDialog({
+      title: "Имя из профиля",
+      text: "Имя приходит из MAX. В кабинете его отдельно не сохраняю.",
+      confirm: "Понятно",
+    });
+  }
   else if (act === "class-info") await showClassInfo();
   else if (act === "compose") startCompose(button.dataset.topic || "");
   else if (act === "focus-topic") focusTopic(button.dataset.topic);
@@ -685,6 +691,7 @@ function bind() {
   window.addEventListener("hashchange", () => {
     if (store.booting || store.gate) return;
     store.screen = screenFromHash();
+    if (store.screen === "manage" && store.role === "teacher") loadManage();
     store.fieldError = "";
     const next = `#/${store.screen}`;
     if (location.hash !== next) {

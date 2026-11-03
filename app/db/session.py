@@ -35,7 +35,10 @@ def prepare_database_url(url: str) -> tuple[str, dict[str, object]]:
     elif remote and mode == "":
         mode = "verify-full"
     connect_args: dict[str, object] = {"timeout": 10}
-    if mode in {"require", "prefer"} and not ca_path:
+    if not remote and mode in {"", "disable"}:
+        # asyncpg иначе сам предлагает SSL, а локальный сервер без сертификата обрывает вход.
+        connect_args["ssl"] = False
+    elif mode in {"require", "prefer"} and not ca_path:
         # Шифрование без проверки имени. Так подключается база Timeweb по ssl=require.
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         context.check_hostname = False

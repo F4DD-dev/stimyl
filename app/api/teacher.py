@@ -2,7 +2,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import db_session, user_from_cookie
@@ -114,6 +114,26 @@ async def teacher_class(
     payload["can_manage_school"] = bool(teacher.can_manage_school)
     payload["claims_reviewer"] = await reviewer_name(session)
     payload["pending_claims"] = await claims_for(session, teacher) if teacher.can_manage_school else []
+    active_students = 0
+    if current is not None:
+        active_students = int(
+            await session.scalar(
+                select(func.count())
+                .select_from(Enrollment)
+                .where(Enrollment.class_id == current, Enrollment.status == "active")
+            )
+            or 0
+        )
+    teacher_count = int(
+        await session.scalar(
+            select(func.count())
+            .select_from(User)
+            .where(User.role == "teacher", User.status == "active", User.deleted_at.is_(None))
+        )
+        or 0
+    )
+    payload["active_students"] = active_students
+    payload["teacher_count"] = teacher_count
     subjects = []
     for item in payload["classes"]:
         if current is not None and item["id"] == current:

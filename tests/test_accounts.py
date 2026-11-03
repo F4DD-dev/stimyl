@@ -657,6 +657,12 @@ async def test_transfer_keeps_history_on_the_old_profile(seeded):
         old_id = old.id
     await post_update(api, _started(8181, "Новый"))
     await post_update(api, _consent(8181, "Новый"))
+    from tests.test_onboarding import _contact
+
+    await post_update(
+        api,
+        _contact(8181, "Новый", "transfer-phone", "79005551818", api.settings.max_token or ""),
+    )
     await post_update(api, message(8181, "Новый", code, "transfer-1"))
     async with factory() as session:
         moved = await session.scalar(

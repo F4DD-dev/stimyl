@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.db.models import (
+    AuditLog,
     AuthIdentity,
     ClassSubjectTeacher,
     ClassTeacher,
@@ -130,11 +131,15 @@ async def register_phone(
         )
 
     await _make_student(session, user, school_class, application)
-    return PhoneOutcome(
-        True,
-        "student",
-        f"Заявка в класс {school_class.title} отправлена учителю и ждёт подтверждения.",
-    )
+    notified = await notify_new_claim(session, user, school_class, settings)
+    if notified:
+        reply = f"Заявка в класс {school_class.title} отправлена учителю и ждёт подтверждения."
+    else:
+        reply = (
+            f"Заявка в класс {school_class.title} записана. "
+            "Ответственный учитель ещё не назначен, принять её пока некому."
+        )
+    return PhoneOutcome(True, "student", reply)
 
 
 def _known_text(user: User, class_title: str, subject_title: str) -> str:
@@ -281,9 +286,13 @@ def _claim_dict(application: JoinApplication, person: User, school_class: School
 
 
 async def accept_claim(session: AsyncSession, actor: User, student_id: int) -> tuple[bool, str]:
-    if not actor.can_manage_school or actor.id == student_id:
+    if actor.role != "teacher" or not actor.can_manage_school or actor.id == student_id:
         return False, "Недостаточно прав"
-    application = await session.get(JoinApplication, student_id)
+    application = await session.scalar(
+        select(JoinApplication)
+        .where(JoinApplication.user_id == student_id)
+        .with_for_update()
+    )
     student = await session.get(User, student_id)
     if (
         application is None
@@ -325,9 +334,13 @@ async def accept_claim(session: AsyncSession, actor: User, student_id: int) -> t
 
 
 async def reject_claim(session: AsyncSession, actor: User, student_id: int) -> tuple[bool, str]:
-    if not actor.can_manage_school or actor.id == student_id:
+    if actor.role != "teacher" or not actor.can_manage_school or actor.id == student_id:
         return False, "Недостаточно прав"
-    application = await session.get(JoinApplication, student_id)
+    application = await session.scalar(
+        select(JoinApplication)
+        .where(JoinApplication.user_id == student_id)
+        .with_for_update()
+    )
     student = await session.get(User, student_id)
     if application is None or student is None or application.status != "pending":
         return False, "Заявки нет"
@@ -407,6 +420,96 @@ async def enqueue_notice(
             created_at=now,
         )
     )
+
+
+async def active_managers(session: AsyncSession) -> list[User]:
+    return list(
+        await session.scalars(
+            select(User)
+            .where(
+                User.can_manage_school.is_(True),
+                User.role == "teacher",
+                User.status == "active",
+                User.deleted_at.is_(None),
+            )
+            .order_by(User.id)
+        )
+    )
+
+
+async def notify_new_claim(
+    session: AsyncSession,
+    student: User,
+    school_class: SchoolClass,
+    settings: Settings,
+) -> bool:
+    """Сообщить ответственному. Если его нет, это пишется в аудит, а не теряется."""
+    managers = await active_managers(session)
+    if not managers:
+        now = datetime.now(UTC)
+        session.add(
+            AuditLog(
+                actor_user_id=None,
+                action="claims_without_manager",
+                target_user_id=student.id,
+                ip=None,
+                detail=f"class {school_class.title}"[:300],
+                created_at=now,
+            )
+        )
+        await _tell_operators(session, student, school_class, settings)
+        return False
+    for manager in managers:
+        await enqueue_notice(
+            session,
+            manager.id,
+            kind="join_request",
+            title=f"Новая заявка в класс {school_class.title}",
+            body=(
+                f"Новая заявка в класс {school_class.title}.\n"
+                f"{student.display_name}.\n"
+                "Ждёт решения."
+            ),
+            button_text="",
+            button_payload="",
+            ref_id=student.id,
+        )
+    return True
+
+
+async def _tell_operators(
+    session: AsyncSession,
+    student: User,
+    school_class: SchoolClass,
+    settings: Settings,
+) -> None:
+    raw = {item.strip() for item in settings.admin_max_ids.split(",") if item.strip()}
+    if not raw:
+        return
+    rows = await session.execute(
+        select(User)
+        .join(AuthIdentity, AuthIdentity.user_id == User.id)
+        .where(
+            AuthIdentity.provider == "max",
+            AuthIdentity.external_id.in_(raw),
+            AuthIdentity.revoked_at.is_(None),
+            User.deleted_at.is_(None),
+        )
+    )
+    for operator in rows.scalars():
+        await enqueue_notice(
+            session,
+            operator.id,
+            kind="claims_gap",
+            title="Заявку некому принять",
+            body=(
+                f"В классе {school_class.title} новая заявка от {student.display_name}. "
+                "Учителя-администратора нет. Назначь его командой grant-school-manager."
+            ),
+            button_text="",
+            button_payload="",
+            ref_id=student.id,
+        )
 
 
 async def reviewer_name(session: AsyncSession) -> str | None:

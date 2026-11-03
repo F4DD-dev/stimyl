@@ -1,17 +1,22 @@
 const PATHS = {
   home: '<path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z"/>',
-  map: '<path d="M8 5 4 6.5v13L8 18l8 2 4-1.5v-13L16 7 8 5z"/><path d="M8 5v13M16 7v13"/>',
+  map: '<path d="M3 5l6-2 6 2 6-2v16l-6 2-6-2-6 2V5z"/><path d="M9 3v16M15 5v16"/>',
   clock: '<circle cx="12" cy="12" r="8"/><path d="M12 8v5l3 2"/>',
-  user: '<circle cx="12" cy="9" r="3"/><path d="M6.5 19c1.1-2.4 2.8-3.5 5.5-3.5s4.4 1.1 5.5 3.5"/>',
-  send: '<path d="m5 12 15-7-6 16-2.2-6.2L5 12z"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/>',
+  send: '<path d="M5 12h14M14 7l5 5-5 5"/>',
+  arrow: '<path d="M5 12h14M14 7l5 5-5 5"/>',
   image:
-    '<rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.3"/><path d="m5 16 4-3 3 2 3-2.5L19 16"/>',
+    '<path d="M4 7h4l2-3h4l2 3h4v12H4V7z"/><circle cx="12" cy="13" r="3.5"/>',
+  camera:
+    '<path d="M4 7h4l2-3h4l2 3h4v12H4V7z"/><circle cx="12" cy="13" r="3.5"/>',
   chevron: '<path d="m9 6 6 6-6 6"/>',
-  close: '<path d="M7 7l10 10M17 7 7 17"/>',
-  grid: '<rect x="4" y="4" width="7" height="7" rx="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.6"/>',
-  list: '<path d="M9 7h11M9 12h11M9 17h11"/><path d="M5 7h.01M5 12h.01M5 17h.01"/>',
-  check: '<path d="m5 12 5 5 9-10"/>',
-  bell: '<path d="M6 16h12l-1.2-2.2V10a4.8 4.8 0 0 0-9.6 0v3.8L6 16z"/><path d="M10 16a2 2 0 0 0 4 0"/>',
+  close: '<path d="M5 5l14 14M19 5 5 19"/>',
+  grid: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',
+  list: '<path d="M9 6h12M9 12h12M9 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01" stroke-width="3"/>',
+  check: '<path d="M5 12l4 4L19 6"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  spark: '<path d="M12 2l1.4 4.6L18 8l-4.6 1.4L12 14l-1.4-4.6L6 8l4.6-1.4L12 2z"/><path d="M19 15l.7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7L19 15z"/>',
+  bell: '<path d="M18 9a6 6 0 0 0-12 0c0 7-3 6-3 8h18c0-2-3-1-3-8z"/><path d="M10 21h4"/>',
 };
 
 export function icon(name) {
@@ -47,8 +52,31 @@ export function initials(name) {
   return parts.map((part) => part[0]).join("").toUpperCase();
 }
 
+export function firstName(name) {
+  return String(name || "").trim().split(/\s+/).filter(Boolean)[0] || "";
+}
+
+export function mark(large = false) {
+  return `<span class="logo${large ? " logo--large" : ""}" aria-hidden="true"><span class="logo__dot logo__dot--green"></span><span class="logo__dot logo__dot--coral"></span><span class="logo__dot logo__dot--yellow"></span></span>`;
+}
+
 export function brand() {
-  return `<span class="brand"><img src="/assets/logo.jpg" alt="" width="28" height="28"><span class="logo-lock"><span class="logo">Стимул</span><span class="brand-live" aria-hidden="true"></span></span></span>`;
+  return `<span class="brand">${mark()}<span class="logo-lock"><span class="brand__name">Стимул</span><span class="brand__line" aria-hidden="true"></span></span></span>`;
+}
+
+export function classbar({ title, subject, letter, unread, pickClass = false }) {
+  const subjectLine = subject ? `<span>${esc(subject)}</span>` : "";
+  const klass = pickClass
+    ? `<button class="classbar__class" type="button" data-act="class-sheet"><strong>${esc(title || "Класс")}</strong>${subjectLine}</button>`
+    : `<div class="classbar__class"><strong>${esc(title || "Класс")}</strong>${subjectLine}</div>`;
+  return `<header class="classbar">
+    ${brand()}
+    ${klass}
+    <div class="classbar__actions">
+      <button class="icon-button" type="button" data-act="notices" aria-label="Уведомления">${icon("bell")}${unread ? `<span class="notification-dot"></span>` : ""}</button>
+      <button class="avatar-button" type="button" data-act="nav" data-screen="profile" aria-label="Профиль">${esc(letter || "•")}</button>
+    </div>
+  </header>`;
 }
 
 export function pill(status) {

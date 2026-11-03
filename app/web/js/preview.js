@@ -116,7 +116,18 @@ export function teacherPreview() {
       classes: [{ id: 1, title: "8Б", subjects: [{ id: 1, title: "Математика" }] }],
       can_manage_school: true,
       claims_reviewer: "Марина Сергеевна",
-      pending_claims: [],
+      active_students: 4,
+      teacher_count: 1,
+      join_code: "8BDEMO",
+      pending_claims: [
+        {
+          user_id: 8,
+          display_name: "Егор",
+          class_title: "8Б",
+          created_at: "2026-11-03T08:40:00",
+          status: "pending",
+        },
+      ],
     },
     assignments: {
       items: [],

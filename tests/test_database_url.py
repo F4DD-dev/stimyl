@@ -33,5 +33,5 @@ def test_remote_postgres_uses_asyncpg_and_verifies_tls() -> None:
 
 def test_local_postgres_stays_without_ssl() -> None:
     url, args = prepare_database_url("postgresql+asyncpg://stimul:stimul@db:5432/stimul")
-    assert "ssl" not in args
+    assert args["ssl"] is False
     assert url.startswith("postgresql+asyncpg://")

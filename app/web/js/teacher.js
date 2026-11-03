@@ -2,14 +2,16 @@ import { getAssignments, getClass, getNotices, getWorkResult, postDraft, publish
 import { renderManage } from "./manage.js";
 import { go, refresh, store } from "./store.js";
 import {
-  brand,
+  classbar,
   confirmDialog,
+  mark,
   emptyBlock,
   errorBlock,
   esc,
+  firstName,
   icon,
+  initials,
   pill,
-  plural,
 } from "./ui.js";
 
 const DIFFICULTIES = [
@@ -93,33 +95,46 @@ function subjectTitle() {
   return titles.join(", ");
 }
 
-function roleName() {
-  return store.report?.can_manage_school || store.canManage ? "Учитель-администратор" : "Учитель";
-}
-
 function topbar() {
   const unread = Number(store.notices?.unread) || 0;
-  const subject = subjectTitle();
-  return `<header class="mast">
-    ${brand()}
-    <button class="class-switch" type="button" data-act="class-sheet">
-      <b>${esc(classTitle())}</b>
-      <span>${esc(subject || "предмет не указан")}</span>
-    </button>
-    <button class="icon-btn" type="button" data-act="notices" aria-label="Уведомления">${icon("bell")}${unread ? `<i class="dot"></i>` : ""}</button>
-    <button class="icon-btn" type="button" data-act="nav" data-screen="profile" aria-label="Профиль">${icon("user")}</button>
-  </header>`;
+  const name = store.displayName || store.report?.display_name || "";
+  return classbar({
+    title: classTitle(),
+    subject: subjectTitle(),
+    letter: initials(name),
+    unread,
+    pickClass: true,
+  });
 }
 
-function distribution(info) {
-  const parts = [
-    ["mastered", info.mastered],
-    ["needs_practice", info.practice],
-    ["repeat", info.repeat],
-  ].filter(([, count]) => count > 0);
-  if (!parts.length) return "";
-  return `<div class="dist" aria-hidden="true">${parts.map(([status, count]) => `<i data-status="${status}" style="flex:${count}"></i>`).join("")}</div>
-    <p class="legend"><span><i data-status="mastered"></i>усвоено ${info.mastered}</span><span><i data-status="needs_practice"></i>практика ${info.practice}</span><span><i data-status="repeat"></i>повторить ${info.repeat}</span></p>`;
+const TONES = ["coral", "green", "yellow", "violet"];
+
+function topicTone(row, index) {
+  if (row.repeat) return "coral";
+  if (row.practice) return "yellow";
+  if (row.mastered && !row.none) return "green";
+  if (row.mastered || row.practice || row.repeat) return "violet";
+  return TONES[index % TONES.length];
+}
+
+function topicDetail(row, index, checks) {
+  if (!checks) return index === 0 ? "Начните с короткой проверки" : "Материал ещё не проверен";
+  if (row.repeat) return `Повторить: ${row.repeat}`;
+  if (row.practice) return `Нужна практика: ${row.practice}`;
+  if (row.mastered && !row.none) return "Усвоено";
+  return "Материал ещё не проверен";
+}
+
+function publishedCount() {
+  return (store.assignments?.items || []).filter((item) => item.status === "published").length;
+}
+
+function faceRow(students) {
+  if (!students.length) return "";
+  const shown = students.slice(0, 3);
+  const extra = students.length - shown.length;
+  const faces = shown.map((student) => `<span>${esc(initials(student.display_name))}</span>`).join("");
+  return `<div class="faces" aria-hidden="true">${faces}${extra > 0 ? `<span>+${extra}</span>` : ""}</div>`;
 }
 
 function rollup(report) {
@@ -153,36 +168,76 @@ function meter(row) {
 export function renderOverview() {
   if (!store.report) return errorBlock(store.reportError?.message, "retry");
   const info = stats(store.report);
-  const claims = store.report.pending_claims || [];
-  const reviewer = store.report.claims_reviewer;
-  const name = store.displayName || store.report.display_name || "";
-  const subject = subjectTitle();
-  return `<div class="stack">
+  const name = firstName(store.displayName || store.report.display_name || "");
+  const checks = publishedCount();
+  const fresh = !checks && !info.known;
+  const rows = rollup(store.report);
+  const lead = fresh
+    ? "Класс только начинает работу. Создайте первую проверку, чтобы увидеть общую картину."
+    : (info.weak.length
+      ? "По проверкам уже видно, каким темам нужна практика."
+      : "Проверки уже были. Новая работа дополнит карту класса.");
+  const heroTitle = fresh
+    ? "Узнайте, что классу стоит повторить"
+    : (info.ranked[0] ? `Стоит вернуться к теме «${info.ranked[0][0]}»` : "Можно дать ещё одну короткую проверку");
+  const heroCopy = fresh
+    ? "Короткая проверка покажет сильные темы и точки роста каждого ученика."
+    : "Короткая работа покажет, кто уже держит тему и кому нужна поддержка.";
+  const topics = rows.slice(0, 3).map((row, index) => `<button class="topic-preview__item" type="button" data-act="focus-topic" data-topic="${esc(row.title)}">
+      <span class="topic-number topic-number--${topicTone(row, index)}">${String(index + 1).padStart(2, "0")}</span>
+      <span><strong>${esc(row.title)}</strong><small>${esc(topicDetail(row, index, checks || info.known))}</small></span>
+      <span class="topic-preview__arrow">${icon("arrow")}</span>
+    </button>`).join("");
+  return `<div class="fig">
     ${topbar()}
-    <div class="who">
-      <b>${esc(name || "Имя не пришло из профиля")}</b>
-      <span>${esc(roleName())}</span>
+    <div class="fig-page page--overview">
+      <div class="welcome">
+        <div>
+          <span class="eyebrow">Обзор класса</span>
+          <h1 id="page-title">${name ? `Добрый день, ${esc(name)}` : "Добрый день"}</h1>
+          <p>${lead}</p>
+        </div>
+      </div>
+      <div class="overview-grid">
+        <article class="hero-card">
+          <div class="hero-card__top">
+            <span class="status-pill"><span></span>${fresh ? "Можно начинать" : "Можно продолжить"}</span>
+            ${mark(true)}
+          </div>
+          <div class="hero-card__copy">
+            <span class="eyebrow eyebrow--light">${fresh ? "Первая работа" : "Следующая работа"}</span>
+            <h2>${esc(heroTitle)}</h2>
+            <p>${heroCopy}</p>
+          </div>
+          <button class="primary-button primary-button--light" type="button" data-act="compose">Создать работу<span>${icon("arrow")}</span></button>
+        </article>
+        <div class="stats-column">
+          <article class="stat-card">
+            <div>
+              <span class="stat-card__label">Ученики</span>
+              <strong>${info.students}</strong>
+              <small>${info.students ? "в классе" : "пока никого нет"}</small>
+            </div>
+            ${faceRow(store.report.students || [])}
+          </article>
+          <article class="stat-card stat-card--accent">
+            <span class="stat-card__label">Проверки</span>
+            <strong>${checks}</strong>
+            <small>${checks ? "уже проводились" : "пока не проводились"}</small>
+          </article>
+        </div>
+      </div>
+      <div class="section-heading">
+        <div>
+          <span class="eyebrow">Фокус недели</span>
+          <h2>Темы класса</h2>
+        </div>
+        <button class="text-button" type="button" data-act="nav" data-screen="class">Вся карта ${icon("arrow")}</button>
+      </div>
+      ${topics ? `<div class="topic-preview">${topics}</div>` : `<p class="quiet">В программе класса пока нет тем.</p>`}
+      ${store.report.frequent_mistakes ? `<p class="quiet">${esc(store.report.frequent_mistakes)}</p>` : ""}
     </div>
-    <div class="stat-row">
-      <div><b>${info.students}</b><span>${info.students ? `${plural(info.students, "ученик", "ученика", "учеников")} в классе` : "учеников пока нет"}</span></div>
-      <div><b>${info.known ? info.weak.length : 0}</b><span>${info.known ? "нужна практика" : "проверок ещё нет"}</span></div>
-      ${info.known ? distribution(info) : ""}
-    </div>
-    ${info.known ? `<div class="rows">${info.ranked.slice(0, 4).map(([title, bag]) => `<button class="line" type="button" data-act="focus-topic" data-topic="${esc(title)}"><span><b>${esc(title)}</b><small>повторить ${bag.repeat}, практика ${bag.practice}</small></span></button>`).join("")}</div>` : `<div class="invite"><img src="/assets/logo.jpg" alt=""><div><h1 id="page-title">Проверок ещё не было</h1><p class="quiet">${esc(classTitle())}${subject ? `, ${esc(subject)}` : ""}. После первой работы здесь станет видно, какая тема просела.</p></div><button class="btn btn-primary" type="button" data-act="compose">Создать первую работу</button></div>`}
-    ${store.report.frequent_mistakes ? `<p>${esc(store.report.frequent_mistakes)}</p>` : ""}
-    ${reviewer ? `<p class="quiet">Заявки проверяет ${esc(reviewer)}.</p>` : ""}
-    ${store.report.can_manage_school ? `<button class="line" type="button" data-act="nav" data-screen="manage"><span><b>Заявки</b><small>${claims.length ? `${claims.length} ждут решения` : "новых нет"}</small></span></button>` : ""}
-    ${info.known ? `<button class="btn btn-primary" type="button" data-act="compose">Создать работу</button>` : ""}
   </div>`;
-}
-
-function visibleTopics(student) {
-  return (student.topics || []).filter((topic) => {
-    if (store.filters.topic !== "all" && topic.title !== store.filters.topic) return false;
-    if (store.filters.status === "all") return true;
-    if (store.filters.status === "none") return !topic.status;
-    return topic.status === store.filters.status;
-  });
 }
 
 export function renderClass() {
@@ -190,35 +245,48 @@ export function renderClass() {
   const report = store.report;
   const rows = rollup(report);
   const filters = [
-    ["all", "Все"],
+    ["all", "Все темы"],
     ["mastered", "Усвоено"],
     ["needs_practice", "Практика"],
     ["repeat", "Повторить"],
-    ["none", "Пусто"],
   ];
-  const people = (report.students || [])
-    .map((student) => ({ student, topics: visibleTopics(student) }))
-    .filter((item) => item.topics.length);
   const selected = store.filters.topic !== "all" ? rows.find((row) => row.title === store.filters.topic) : null;
   const weakNames = selected
     ? (report.students || []).filter((student) => (student.topics || []).some((topic) => topic.title === selected.title && (topic.status === "repeat" || topic.status === "needs_practice"))).map((student) => student.display_name)
     : [];
-  return `<div class="stack">
+  const visible = rows.filter((row) => {
+    if (store.filters.status === "mastered") return row.mastered > 0;
+    if (store.filters.status === "needs_practice") return row.practice > 0;
+    if (store.filters.status === "repeat") return row.repeat > 0;
+    return true;
+  });
+  const shareLabel = stats(report).known ? "Есть проверенные ответы" : "Пока нет данных";
+  return `<div class="fig">
     ${topbar()}
-    <div class="who"><b>Карта класса</b><span>${esc(classTitle())}${subjectTitle() ? `, ${esc(subjectTitle())}` : ""}</span></div>
-    ${report.frequent_mistakes ? `<p>${esc(report.frequent_mistakes)}</p>` : `<p class="quiet">Личные вопросы учеников на эту карту не попадают.</p>`}
-    <div class="filters" role="tablist" aria-label="Статус">
-      ${filters.map(([id, label]) => `<button class="chip ${store.filters.status === id ? "is-on" : ""}" type="button" data-act="filter-status" data-status="${id}">${label}</button>`).join("")}
+    <div class="fig-page">
+    <div class="page-heading">
+      <span class="eyebrow">Прогресс ${esc(classTitle())}</span>
+      <h1 id="page-title">Карта класса</h1>
+      <p>${report.frequent_mistakes ? esc(report.frequent_mistakes) : "Здесь появится общая картина знаний после первой проверки."}</p>
     </div>
-    <div class="rows">
-      ${rows.map((row) => `<div>
-        <button class="topic-row ${store.filters.topic === row.title ? "is-on" : ""}" type="button" data-act="focus-topic" data-topic="${esc(row.title)}">
+    <div class="filter-row" role="tablist" aria-label="Фильтр тем">
+      ${filters.map(([id, label]) => `<button class="filter-chip ${store.filters.status === id ? "filter-chip--active" : ""}" type="button" data-act="filter-status" data-status="${id}">${label}</button>`).join("")}
+    </div>
+    <div class="map-summary">
+      <div><span>Общий прогресс</span><strong>${shareLabel}</strong></div>
+      <div class="map-summary__visual" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+    </div>
+    <div class="topic-list">
+      ${visible.map((row, index) => `<article class="topic-row">
+        <div class="topic-row__marker topic-row__marker--${topicTone(row, index)}">${String(index + 1).padStart(2, "0")}</div>
+        <div class="topic-row__content">
           <strong>${esc(row.title)}</strong>
-          ${meter(row)}
-          <span class="meta">усвоено ${row.mastered}, практика ${row.practice}, повтор ${row.repeat}</span>
-        </button>
+          <span>${esc(topicDetail(row, index, publishedCount()))}</span>
+          <div class="progress-track"><i style="width:${row.mastered + row.practice + row.repeat + row.none ? Math.max(4, Math.round((row.mastered / Math.max(1, row.mastered + row.practice + row.repeat + row.none)) * 100)) : 4}%"></i></div>
+        </div>
+        <button type="button" aria-label="Открыть тему ${esc(row.title)}" data-act="focus-topic" data-topic="${esc(row.title)}">${icon("arrow")}</button>
         ${store.filters.topic === row.title ? `<div class="reveal-body"><p>${weakNames.length ? `Нужна работа: ${esc(weakNames.join(", "))}.` : "По этой теме нет учеников со статусом «повторить» или «нужна практика»."}</p><button class="btn btn-primary" type="button" data-act="compose" data-topic="${esc(row.title)}">Собрать задание по теме</button></div>` : ""}
-      </div>`).join("")}
+      </article>`).join("") || `<p class="quiet">Таких тем пока нет.</p>`}
     </div>
     ${(report.priorities || []).length ? `<div><h2>Кому помочь</h2><ul class="plain">${report.priorities.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></div>` : ""}
     <div class="table-wrap map-table">
@@ -233,6 +301,7 @@ export function renderClass() {
           }).join("")}
         </tbody>
       </table>
+    </div>
     </div>
   </div>`;
 }
@@ -252,14 +321,35 @@ export function renderTasks() {
   const active = items.filter((item) => item.status === "published" && !(item.recipients && item.done >= item.recipients));
   const done = items.filter((item) => item.status === "published" && item.recipients && item.done >= item.recipients);
   const block = (title, list) => list.length ? `<div><p class="group-label">${title}</p><div class="rows">${list.map(workLine).join("")}</div></div>` : "";
-  return `<div class="stack">
+  const empty = `<article class="empty-task-card">
+      <div class="empty-task-card__art" aria-hidden="true">
+        <div class="task-sheet task-sheet--back"></div>
+        <div class="task-sheet task-sheet--front"><i></i><i></i><i></i></div>
+        <span class="art-dot art-dot--one"></span>
+        <span class="art-dot art-dot--two"></span>
+      </div>
+      <span class="eyebrow">Всё готово к старту</span>
+      <h2>Работ ещё не было</h2>
+      <p>Первая проверка поможет понять, кто уже держит тему, а кому нужна поддержка.</p>
+      <button class="primary-button" type="button" data-act="compose">Создать первую работу ${icon("arrow")}</button>
+    </article>
+    <div class="tip-card">
+      <div class="tip-card__icon">${icon("spark")}</div>
+      <div><strong>Начните с 5–7 вопросов</strong><p>Так ученики не устанут, а вы быстро получите первую картину класса.</p></div>
+    </div>`;
+  return `<div class="fig">
     ${topbar()}
-    <div class="row-between">
-      <h1>Задания</h1>
-      ${items.length ? `<button class="btn btn-primary" type="button" data-act="compose">Создать работу</button>` : ""}
+    <div class="fig-page">
+      <div class="page-heading page-heading--row">
+        <div>
+          <span class="eyebrow">Работы класса</span>
+          <h1 id="page-title">Задания</h1>
+        </div>
+        <button class="round-add" type="button" data-act="compose" aria-label="Создать задание">${icon("plus")}</button>
+      </div>
+      ${failed ? errorBlock(store.assignmentsError.message, "retry") : ""}
+      ${items.length ? `${block("Активные", active)}${block("Черновики", drafts)}${block("Завершённые", done)}` : empty}
     </div>
-    ${failed ? errorBlock(store.assignmentsError.message, "retry") : ""}
-    ${items.length ? `${block("Активные", active)}${block("Черновики", drafts)}${block("Завершённые", done)}` : `<div class="invite"><img src="/assets/logo.jpg" alt=""><div><h2>Работ ещё нет</h2><p class="quiet">Первая проверка покажет, кто в ${esc(classTitle())} уже держит тему.</p></div><button class="btn btn-primary" type="button" data-act="compose">Создать первую работу</button></div>`}
   </div>`;
 }
 
@@ -277,20 +367,28 @@ function renderResult(work) {
 }
 
 export function renderStimul() {
-  const samples = ["Собери короткую проверку по дробям", "Какие темы класса сейчас слабее", "Придумай устный вопрос на дискриминант"];
-  return `<div class="stimul">
+  const samples = ["Собери короткую проверку по дробям", "Какие темы класса сейчас слабее?", "Придумай устный вопрос на дискриминант"];
+  return `<div class="fig">
     ${topbar()}
-    <div class="who"><b>Помощник учителя</b><span>модель ещё не подключена</span></div>
-    <div class="stimul-thread">
-      ${store.stimulDraft ? `<div class="bubble me">${esc(store.stimulDraft)}</div>` : `<p class="quiet">Здесь будет диалог про задания и типичные ошибки класса. Ответ модели сейчас не генерируется.</p>`}
-      ${store.stimulNote ? `<div class="bubble">${esc(store.stimulNote)}</div>` : ""}
+    <div class="fig-page assistant-page">
+      <div class="assistant-intro">
+        <div class="assistant-intro__icon">${icon("spark")}</div>
+        <div>
+          <span class="eyebrow">Помощник учителя</span>
+          <h1 id="page-title">С чего начнём?</h1>
+          <p>Помогу подготовить задание или разобраться, чему уделить внимание.</p>
+        </div>
+      </div>
+      <div class="prompt-grid">
+        ${samples.map((text, index) => `<button type="button" data-act="stimul-sample" data-text="${esc(text)}"><span>${String(index + 1).padStart(2, "0")}</span><strong>${esc(text)}</strong>${icon("arrow")}</button>`).join("")}
+      </div>
+      ${store.stimulNote ? `<div class="assistant-notice" role="status">${icon("check")}<span>${esc(store.stimulNote)}</span></div>` : ""}
+      <form id="stimul-form" class="composer">
+        <button class="composer__attach" type="button" disabled aria-label="Добавить фото">${icon("camera")}</button>
+        <input id="stimul-input" value="${esc(store.stimulDraft)}" placeholder="Спросите помощника" aria-label="Запрос помощнику">
+        <button class="composer__send" type="submit" aria-label="Отправить">${icon("arrow")}</button>
+      </form>
     </div>
-    <div class="prompt-list">${samples.map((text) => `<button type="button" data-act="stimul-sample" data-text="${esc(text)}">${esc(text)}</button>`).join("")}</div>
-    <form id="stimul-form" class="composer">
-      <label class="btn btn-ghost file">Фото<input type="file" accept="image/*" disabled aria-label="Вложение появится вместе с моделью"></label>
-      <input id="stimul-input" class="field" placeholder="Запрос помощнику" value="${esc(store.stimulDraft)}" aria-label="Запрос помощнику">
-      <button class="btn btn-primary" type="submit">Отправить</button>
-    </form>
   </div>`;
 }
 
@@ -363,6 +461,7 @@ function wizardBody() {
 export function renderCompose() {
   if (!store.report) return errorBlock(store.reportError?.message, "retry");
   if (!(store.report.topics || []).length) return emptyBlock("Нет тем", "В программе класса пока нет тем для проверки.");
+  if (!store.wizard) startCompose();
   return wizardBody();
 }
 
@@ -397,22 +496,41 @@ export function renderResults() {
 }
 
 export function renderProfile() {
-  const name = store.displayName || "";
+  const name = store.displayName || store.report?.display_name || "";
   const admin = Boolean(store.report?.can_manage_school || store.canManage);
   const reviewer = store.report?.claims_reviewer;
   const subject = subjectTitle();
-  return `<div class="stack">
+  const claimsAct = admin ? `data-act="nav" data-screen="manage"` : `data-act="class-info"`;
+  return `<div class="fig">
     ${topbar()}
-    <h1>${esc(name || "Имя не пришло из профиля")}</h1>
-    <p>${admin ? "Учитель-администратор" : "Учитель"}</p>
-    <div class="rows">
-      <div class="line"><span><b>Класс</b><small>${esc(classTitle())}</small></span></div>
-      <div class="line"><span><b>Предмет</b><small>${esc(subject || "в назначении не указан")}</small></span></div>
-      <div class="line"><span><b>Заявки проверяет</b><small>${esc(reviewer || "ответственный не назначен")}</small></span></div>
+    <div class="fig-page">
+      <div class="profile-card">
+        <div class="profile-card__avatar">${esc(initials(name))}</div>
+        <div>
+          <span class="eyebrow">Учитель</span>
+          <h1 id="page-title">${esc(firstName(name) || name || "Имя не пришло из профиля")}</h1>
+          <p>Куратор класса ${esc(classTitle())}</p>
+        </div>
+        <button class="profile-card__edit" type="button" data-act="profile-note">Изменить</button>
+      </div>
+      <div class="settings-card">
+        <div class="settings-card__heading">
+          <span class="eyebrow">Настройки</span>
+          <h2>Класс и предмет</h2>
+        </div>
+        <button class="setting-row" type="button" data-act="class-sheet"><span>Класс</span><strong>${esc(classTitle())}</strong>${icon("arrow")}</button>
+        <button class="setting-row" type="button" data-act="class-sheet"><span>Предмет</span><strong>${esc(subject || "не указан")}</strong>${icon("arrow")}</button>
+        <button class="setting-row" type="button" ${claimsAct}><span>Заявки проверяет</span><strong>${esc(reviewer || "Ответственный не назначен")}</strong>${icon("arrow")}</button>
+      </div>
+      <div class="privacy-card">
+        <div class="privacy-card__icon">${icon("bell")}</div>
+        <div>
+          <strong>Уведомления</strong>
+          <p>Личные вопросы учеников в кабинет не приходят.</p>
+        </div>
+        <button type="button" data-act="notices">Настроить</button>
+      </div>
     </div>
-    <p class="quiet">Личные вопросы учеников в кабинет не приходят.</p>
-    <button class="btn btn-ghost" type="button" data-act="notices">Уведомления</button>
-    ${admin ? `<button class="btn btn-primary" type="button" data-act="nav" data-screen="manage">Заявки и пользователи</button>` : ""}
   </div>`;
 }
 
@@ -456,7 +574,7 @@ export function startCompose(topic) {
     sendError: null,
     fieldError: "",
   };
-  go("compose");
+  if (store.screen !== "compose") go("compose");
 }
 
 function readWizardFields() {

@@ -34,9 +34,7 @@ async def send_pending_notices(session: AsyncSession, sender: object, *, limit: 
             row.last_error = "no_max"
             row.attempts += 1
             continue
-        buttons: list[OutboundButton] = []
-        if row.button_text and row.button_payload:
-            buttons.append(OutboundButton(row.button_text, row.button_payload))
+        buttons = _notice_buttons(row)
         try:
             await sender.send_text(
                 user_id=identity.external_id,
@@ -66,3 +64,15 @@ async def send_pending_notices(session: AsyncSession, sender: object, *, limit: 
         row.last_error = None
         sent += 1
     return sent
+
+
+def _notice_buttons(row: OutboundNotice) -> list[OutboundButton]:
+    if row.kind == "join_request" and row.ref_id:
+        return [
+            OutboundButton("Принять", f"approve:{row.ref_id}"),
+            OutboundButton("Отклонить", f"reject:{row.ref_id}"),
+            OutboundButton("Заявки", "apps"),
+        ]
+    if row.button_text and row.button_payload:
+        return [OutboundButton(row.button_text, row.button_payload)]
+    return []

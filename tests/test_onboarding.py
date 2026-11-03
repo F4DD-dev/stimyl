@@ -6,6 +6,8 @@ from sqlalchemy import func, select
 
 from app.db.models import (
     ClassSubjectTeacher,
+    ClassTeacher,
+    Enrollment,
     OutboundNotice,
     RuntimeFlag,
     User,
@@ -13,7 +15,7 @@ from app.db.models import (
     WorkRecipient,
 )
 from app.domain.accounts import accept_consent
-from app.domain.onboarding import BOOTSTRAP_KEY, register_phone
+from app.domain.onboarding import BOOTSTRAP_KEY, ensure_prototype, register_phone
 from app.domain.phone import hash_phone, verify_contact_hash
 from tests.support import auth_as, message, post_update
 from tests.test_accounts import _consent, _started
@@ -31,6 +33,95 @@ def _contact(user_id: int, name: str, mid: str, digits: str, token: str, *, dige
         {"type": "contact", "payload": {"vcf_info": vcf, "hash": signed}}
     ]
     return payload
+
+
+async def test_old_role_and_consent_still_require_a_verified_contact(api):
+    api.settings.first_teacher_bootstrap = True
+    factory = api.app.state.session_factory
+    async with factory() as session:
+        user = await accept_consent(session, "840010", "Марк", api.settings)
+        user.role = "teacher"
+        user.can_manage_school = True
+        school_class, _subject = await ensure_prototype(session)
+        session.add(ClassTeacher(class_id=school_class.id, user_id=user.id))
+        await session.commit()
+
+    await post_update(api, message(840010, "Марк", "привет", "old-role"))
+    buttons = api.memory.sent[-1]["buttons"]
+    assert any(button.get("type") == "request_contact" for button in buttons)
+    assert "учитель-администратор" not in api.memory.sent[-1]["text"].casefold()
+    async with factory() as session:
+        stored = await session.scalar(select(User).where(User.display_name == "Марк"))
+        flag = await session.get(RuntimeFlag, BOOTSTRAP_KEY)
+        assert stored is not None
+        assert stored.phone_hash is None
+        assert stored.role == "teacher"
+        assert flag is None or flag.value == "open"
+
+    token = api.settings.max_token or ""
+    await post_update(api, _contact(840010, "Марк", "mark-old-role", "79004440010", token))
+    async with factory() as session:
+        stored = await session.scalar(select(User).where(User.display_name == "Марк"))
+        flag = await session.get(RuntimeFlag, BOOTSTRAP_KEY)
+        assert stored is not None
+        assert stored.phone_hash is not None
+        assert flag is None or flag.value == "open"
+
+
+async def test_active_enrollment_without_a_phone_still_asks_for_contact(api):
+    factory = api.app.state.session_factory
+    async with factory() as session:
+        user = await accept_consent(session, "840011", "Оля", api.settings)
+        school_class, _subject = await ensure_prototype(session)
+        session.add(Enrollment(class_id=school_class.id, user_id=user.id, status="active"))
+        await session.commit()
+
+    await post_update(api, message(840011, "Оля", "Объясни дроби", "placed-no-phone"))
+    buttons = api.memory.sent[-1]["buttons"]
+    assert any(button.get("type") == "request_contact" for button in buttons)
+    async with factory() as session:
+        stored = await session.scalar(select(User).where(User.display_name == "Оля"))
+        assert stored is not None
+        assert stored.phone_hash is None
+        assert stored.role == "student"
+        assert stored.can_manage_school is False
+
+
+async def test_bootstrap_starts_only_after_a_verified_contact(api):
+    api.settings.first_teacher_bootstrap = True
+    token = api.settings.max_token or ""
+    await post_update(api, _started(840012, "Ира"))
+    await post_update(api, _consent(840012, "Ира"))
+    buttons = api.memory.sent[-1]["buttons"]
+    assert any(button.get("type") == "request_contact" for button in buttons)
+    factory = api.app.state.session_factory
+    async with factory() as session:
+        stored = await session.scalar(select(User).where(User.display_name == "Ира"))
+        flag = await session.get(RuntimeFlag, BOOTSTRAP_KEY)
+        assert stored is not None
+        assert stored.role == "student"
+        assert stored.can_manage_school is False
+        assert stored.phone_hash is None
+        assert flag is None or flag.value == "open"
+
+    await post_update(api, _contact(840012, "Ира", "ira-bad", "79004440012", "wrong-token"))
+    async with factory() as session:
+        stored = await session.scalar(select(User).where(User.display_name == "Ира"))
+        assert stored is not None
+        assert stored.phone_hash is None
+        assert stored.can_manage_school is False
+
+    await post_update(api, _contact(840012, "Ира", "ira-good", "79004440012", token))
+    assert any("учитель-администратор" in item["text"].casefold() for item in api.memory.sent)
+    async with factory() as session:
+        stored = await session.scalar(select(User).where(User.display_name == "Ира"))
+        flag = await session.get(RuntimeFlag, BOOTSTRAP_KEY)
+        assert stored is not None
+        assert stored.role == "teacher"
+        assert stored.can_manage_school is True
+        assert stored.phone_hash is not None
+        assert flag is not None
+        assert flag.value == "consumed"
 
 
 def test_contact_hash_rejects_a_forwarded_card_and_a_wrong_token():

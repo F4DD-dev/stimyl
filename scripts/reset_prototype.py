@@ -1,4 +1,4 @@
-"""Сброс данных прототипа. По умолчанию только показывает план и ничего не удаляет.
+"""Сброс пользовательских данных прототипа. По умолчанию только показывает план.
 
 Удаление возможно только вместе:
 - аргумент --yes
@@ -6,7 +6,10 @@
 - STIMUL_RESET_DATABASE совпадает с именем базы в DATABASE_URL
 - ENV не prod
 
-Схему и таблицу alembic_version скрипт не трогает. На общую или боевую базу его не запускать.
+Схему, alembic_version, школы, классы, предметы и темы скрипт не удаляет.
+Назначения в staff_seats снимаются, сами места остаются.
+Флаг prototype_bootstrap после удаления становится open.
+На общую или боевую базу его не запускать.
 """
 
 import asyncio
@@ -19,7 +22,8 @@ from sqlalchemy import text
 from app.core.config import get_settings
 from app.db.session import make_engine
 
-TABLES = (
+# Строки людей и их следы. Школы, классы, предметы и темы сюда не входят.
+USER_TABLES = (
     "work_answers",
     "work_recipients",
     "work_items",
@@ -42,18 +46,24 @@ TABLES = (
     "login_guards",
     "audit_log",
     "inbound_events",
-    "runtime_flags",
     "enrollments",
     "class_subject_teachers",
     "class_teachers",
-    "staff_seats",
     "join_applications",
     "users",
+)
+
+# Остаются. staff_seats чистится от user_id, но строки мест не удаляются.
+KEPT_TABLES = (
+    "runtime_flags",
+    "staff_seats",
     "topics",
     "subjects",
     "classes",
     "schools",
 )
+
+TABLES = USER_TABLES + KEPT_TABLES
 
 
 def database_name(url: str) -> str:
@@ -106,10 +116,41 @@ async def run(delete: bool) -> int:
         if not delete:
             print("Режим просмотра. Чтобы удалить строки, нужны --yes, STIMUL_ALLOW_RESET=1 и STIMUL_RESET_DATABASE.")
             return 0
-        listed = ", ".join(table for table, count in tallies if count >= 0)
+        present = {table for table, count in tallies if count >= 0}
+        targets = [table for table in USER_TABLES if table in present]
+        if not targets:
+            print("Пользовательских таблиц нет. Ничего не удалено.")
+            return 1
         async with engine.begin() as connection:
-            await connection.execute(text(f"TRUNCATE TABLE {listed} RESTART IDENTITY CASCADE"))
-        print("Строки удалены. alembic_version и структура таблиц на месте.")
+            if "staff_seats" in present:
+                await connection.execute(text("UPDATE staff_seats SET user_id = NULL"))
+            for table in targets:
+                await connection.execute(text(f"DELETE FROM {table}"))
+                sequence = await connection.scalar(
+                    text(
+                        "SELECT pg_get_serial_sequence(format('%I.%I', n.nspname, c.relname), a.attname) "
+                        "FROM pg_class c "
+                        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                        "JOIN pg_attribute a ON a.attrelid = c.oid "
+                        "AND a.attname = 'id' AND NOT a.attisdropped "
+                        "WHERE n.nspname = 'public' AND c.relname = :table"
+                    ),
+                    {"table": table},
+                )
+                if sequence:
+                    await connection.execute(
+                        text("SELECT setval(pg_get_serial_sequence(:table, 'id'), 1, false)"),
+                        {"table": f"public.{table}"},
+                    )
+            if "runtime_flags" in present:
+                await connection.execute(
+                    text(
+                        "INSERT INTO runtime_flags (key, value) VALUES ('prototype_bootstrap', 'open') "
+                        "ON CONFLICT (key) DO UPDATE SET value = 'open'"
+                    )
+                )
+        print("Пользовательские строки удалены. Класс, предмет, темы и alembic_version на месте.")
+        print("prototype_bootstrap = open")
         return 0
     finally:
         await engine.dispose()
