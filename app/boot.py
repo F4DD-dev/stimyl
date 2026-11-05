@@ -122,6 +122,35 @@ async def probe_max_tls(
     return notes
 
 
+LLM_EDGE_HOSTS = (
+    "openrouter.ai",
+    "integrate.api.nvidia.com",
+    "llm.api.cloud.yandex.net",
+    "api.siliconflow.cn",
+    "api.deepseek.com",
+    "text.pollinations.ai",
+    "gigachat.devices.sberbank.ru",
+)
+
+
+async def probe_llm_edges(hosts: tuple[str, ...] = LLM_EDGE_HOSTS, timeout: float = 8) -> list[str]:
+    """GET на корень кандидатов браузерным отпечатком. 403+Access denied — Cloudflare
+    режет IP до API, как openrouter с Timeweb. Любой другой статус — до API дошли."""
+    try:
+        from curl_cffi.requests import AsyncSession
+    except ImportError:
+        return ["no curl_cffi"]
+    notes: list[str] = []
+    async with AsyncSession(impersonate="chrome", timeout=timeout) as session:
+        for host in hosts:
+            try:
+                response = await session.get(f"https://{host}/", verify=False)
+                notes.append(f"{host}: {response.status_code}")
+            except Exception as exc:
+                notes.append(f"{host}: {type(exc).__name__}")
+    return notes
+
+
 def main() -> None:
     preflight()
 

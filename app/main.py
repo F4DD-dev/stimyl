@@ -27,6 +27,7 @@ from app.boot import (
     listen_host,
     listen_port,
     missing_required,
+    probe_llm_edges,
     probe_max_tls,
 )
 from app.bot.routes import router as webhook_router
@@ -58,6 +59,11 @@ async def _bring_up(app: FastAPI, settings: Settings) -> None:
             else:
                 logger.warning("max tls %s", note)
     app.state.max_tls = notes
+    try:
+        for note in await probe_llm_edges():
+            logger.info("llm edge %s", note)
+    except Exception:
+        logger.error("llm edge probe failed")
     engine = make_engine(settings.database_url)
     applied = "-"
     try:
@@ -113,7 +119,9 @@ async def _learn_bot_name(app: FastAPI, settings: Settings) -> None:
     app.state.bot_username = settings.bot_username
     if contact_id:
         settings.bot_contact_id = contact_id
-    logger.info("bot username=%s contact_id=%s", settings.bot_username or "-", settings.bot_contact_id or 0)
+    logger.info(
+        "bot username=%s contact_id=%s", settings.bot_username or "-", settings.bot_contact_id or 0
+    )
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
