@@ -51,7 +51,7 @@ function messageFor(status, detail) {
 
 async function once(path, options) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
+  const timer = setTimeout(() => controller.abort(), options.timeout || 15000);
   try {
     const headers = { ...(options.headers || {}) };
     const method = (options.method || "GET").toUpperCase();
@@ -145,11 +145,14 @@ export const getProgress = () => request("/api/student/progress");
 export const getHistory = () => request("/api/student/history");
 export const getLesson = () => request("/api/student/lesson");
 
+const LLM_WAIT = 80000;
+
 export const practice = (body) =>
   request("/api/student/practice", {
     method: "POST",
     headers: JSON_HEADERS,
     body: JSON.stringify(body),
+    timeout: LLM_WAIT,
   });
 
 export function sendPhoto(file, text) {
@@ -157,7 +160,7 @@ export function sendPhoto(file, text) {
   body.append("photo", file);
   body.append("text", text || "");
   body.append("mode", "training");
-  return request("/api/student/practice/photo", { method: "POST", body });
+  return request("/api/student/practice/photo", { method: "POST", body, timeout: LLM_WAIT });
 }
 
 export const getClass = (classId) =>
@@ -211,4 +214,32 @@ export const postAssignment = (body) =>
     method: "POST",
     headers: JSON_HEADERS,
     body: JSON.stringify(body),
+  });
+
+export const askAssistant = (text, classId) =>
+  request("/api/teacher/assistant", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ text, class_id: classId || null }),
+    timeout: LLM_WAIT,
+  });
+
+export const getMaterials = (classId) =>
+  request(
+    classId
+      ? `/api/teacher/materials?class_id=${encodeURIComponent(classId)}`
+      : "/api/teacher/materials",
+  );
+
+export function uploadMaterial(file, title, classId) {
+  const body = new FormData();
+  body.append("file", file);
+  body.append("title", title || "");
+  if (classId) body.append("class_id", String(classId));
+  return request("/api/teacher/materials", { method: "POST", body, timeout: LLM_WAIT });
+}
+
+export const deleteMaterial = (id, classId) =>
+  request(`/api/teacher/materials/${id}${classId ? `?class_id=${classId}` : ""}`, {
+    method: "DELETE",
   });

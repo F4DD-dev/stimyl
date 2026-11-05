@@ -40,7 +40,15 @@ class Settings(BaseSettings):
     training_aggregate_to_teacher: bool = True
     llm_base_url: str | None = None
     llm_api_key: str | None = None
-    llm_model: str = "qwen2.5"
+    llm_model: str = "google/gemma-4-31b-it:free"
+    llm_vision_model: str | None = None
+    llm_fallback_models: str = "google/gemma-4-26b-a4b-it:free,nvidia/nemotron-3.5-super-vl:free"
+    llm_reasoning: bool = False
+    llm_explain_topics: bool = False
+    llm_explain_mistakes: bool = False
+    llm_verify: bool = True
+    llm_timeout: float = 90
+    material_max_mb: int = 15
     cookie_secure: bool = False
     dev: bool = False
     env: str = "dev"
@@ -59,6 +67,7 @@ class Settings(BaseSettings):
         "max_webhook_url",
         "llm_base_url",
         "llm_api_key",
+        "llm_vision_model",
         "teacher_max_user_id",
         "bot_username",
         "public_base_url",

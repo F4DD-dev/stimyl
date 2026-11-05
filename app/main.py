@@ -14,9 +14,9 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.deps import DATABASE_DOWN
 from app.api.health import router as health_router
+from app.api.manage import router as manage_router
 from app.api.pages import router as pages_router
 from app.api.session import router as session_router
-from app.api.manage import router as manage_router
 from app.api.student import router as student_router
 from app.api.teacher import router as teacher_router
 from app.api.web_login import router as web_login_router

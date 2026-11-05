@@ -492,6 +492,32 @@ class Notice(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class Material(Base):
+    """Учебник, конспект или презентация класса. Задания «по материалу» — только из его фрагментов."""
+
+    __tablename__ = "materials"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id"), index=True)
+    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    title: Mapped[str] = mapped_column(String(200))
+    kind: Mapped[str] = mapped_column(String(16))
+    chars: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MaterialChunk(Base):
+    __tablename__ = "material_chunks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    material_id: Mapped[int] = mapped_column(
+        ForeignKey("materials.id", ondelete="CASCADE"), index=True
+    )
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id"), index=True)
+    position: Mapped[int] = mapped_column(Integer)
+    text: Mapped[str] = mapped_column(Text)
+
+
 class OutboundNotice(Base):
     """Сообщение в MAX. В тексте нет билета: кнопка только просит свежий."""
 

@@ -3,10 +3,9 @@ from datetime import UTC, date, datetime, timedelta
 from app.domain.answers import answers_match
 from app.domain.curriculum import detect_topic
 from app.domain.drafts import build_check_draft, build_stimul_draft
-from app.domain.report import activity_line
 from app.domain.messages_ru import LINES
 from app.domain.progress import TopicProgress, choose_next, streak
-from app.domain.report import StateFact, TopicColumn, build_report
+from app.domain.report import StateFact, TopicColumn, activity_line, build_report
 from app.domain.status import Mark, TopicStatus, decide_status, mark_of
 from app.domain.training import (
     Action,

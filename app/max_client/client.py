@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 API_BASE = "https://platform-api2.max.ru"
 TEXT_LIMIT = 4000
 MIN_GAP_SECONDS = 1 / 30
+PHOTO_LIMIT = 10 * 1024 * 1024
 
 
 class DeliveryBlocked(Exception):
@@ -27,6 +28,7 @@ class MaxClient:
         context = ssl.create_default_context()
         if ca_path:
             context.load_verify_locations(cafile=ca_path)
+        self._verify = context
         self._client = httpx.AsyncClient(
             base_url=API_BASE,
             headers={"Authorization": token},
@@ -83,6 +85,36 @@ class MaxClient:
             logger.error("callback answer failed: %s", type(exc).__name__)
             return False
         return True
+
+    async def typing(self, chat_id: int) -> None:
+        """«Печатает…», пока модель думает. Ошибка тут разбор не останавливает."""
+        try:
+            await self._slot()
+            await self._client.post(f"/chats/{chat_id}/actions", json={"action": "typing_on"})
+        except Exception as exc:
+            logger.warning("typing failed: %s", type(exc).__name__)
+
+    async def download(self, url: str, limit: int = PHOTO_LIMIT) -> bytes | None:
+        """Снимок из вложения. Токен бота на чужой хост не уходит."""
+        if not url.startswith("https://"):
+            return None
+        try:
+            async with httpx.AsyncClient(
+                verify=self._verify, timeout=30, follow_redirects=True
+            ) as client, client.stream("GET", url) as response:
+                if not response.is_success:
+                    logger.error("photo download status=%s", response.status_code)
+                    return None
+                chunks = bytearray()
+                async for chunk in response.aiter_bytes():
+                    chunks += chunk
+                    if len(chunks) > limit:
+                        logger.warning("photo download too large")
+                        return None
+                return bytes(chunks)
+        except Exception as exc:
+            logger.error("photo download failed: %s", type(exc).__name__)
+            return None
 
     async def subscribe(self, url: str, secret: str | None) -> None:
         body: dict[str, object] = {

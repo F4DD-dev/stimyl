@@ -24,7 +24,7 @@
   --practice: #f7b928;
   --known: #76ca42;
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
-  --font: Inter, "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font: "Golos Text", "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color-scheme: light;
 }
 
@@ -1090,6 +1090,15 @@ button.brand { border: 0; padding: 0; text-align: left; }
   background: var(--surface);
   box-shadow: 0 14px 35px #29263a12;
 }
+.composer--text { grid-template-columns: minmax(0, 1fr) auto; }
+.assistant-answer { margin-top: 18px; }
+.assistant-answer h2 { font-size: 15px; margin-bottom: 6px; }
+.assistant-answer p { white-space: pre-line; font-size: 14px; line-height: 1.5; }
+.materials { margin-top: 30px; padding-top: 20px; border-top: 1px solid var(--line); }
+.materials__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.materials__head small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; font-weight: 400; line-height: 1.35; }
+.materials .stack { padding: 0; }
+.materials .line { padding: 10px 0; }
 .composer input {
   min-width: 0;
   padding: 10px 5px;

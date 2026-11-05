@@ -1,28 +1,28 @@
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import db_session, user_from_cookie
+from app.bot.assist import clean_photo
+from app.bot.compose import ASSISTANT_OFF, NO_BANK, class_summary, compose_draft
 from app.bot.service import class_report
 from app.db.models import ClassTeacher, Enrollment, SchoolClass, User
 from app.domain.accounts import approve_enrollment, rotate_class_key, set_class_join
-from app.domain.drafts import build_check_draft, build_stimul_draft
+from app.domain.assist import match_students
+from app.domain.images import image_kind
+from app.domain.library import delete_material, list_materials, save_material
+from app.domain.materials import extract_text, file_kind, normalize
 from app.domain.onboarding import claims_for, reviewer_name
-from app.domain.schoolwork import classes_of, list_teacher_works
+from app.domain.schoolwork import classes_of, list_teacher_works, owned_class
 
 router = APIRouter()
 
-MATERIAL_MISSING = (
-    "Нет сохранённых фрагментов урока. "
-    "Не собираю задания по параграфу и не выдумываю источник."
-)
 DELIVERY_MISSING = (
     "Отправка работ в MAX ещё не подключена. Черновик не сохранён и ученикам не ушёл."
 )
-NO_BANK = "По этой теме задания сам не соберу. Напишите вопросы и верные ответы."
 
 
 class DraftBody(BaseModel):
@@ -33,6 +33,7 @@ class DraftBody(BaseModel):
     audience: Literal["class", "selected"]
     students: list[str] = Field(default_factory=list, max_length=40)
     use_material: bool = False
+    class_id: int | None = None
 
 
 async def _report(request: Request, session: AsyncSession, class_id: int | None = None):
@@ -61,32 +62,25 @@ def _students(report, body: DraftBody) -> list[str]:
     return wanted
 
 
-def _prepare(report, body: DraftBody, quiz_enabled: bool) -> dict:
-    if not quiz_enabled:
+async def _prepare(request: Request, session: AsyncSession, report, body: DraftBody) -> dict:
+    if not request.app.state.settings.feature_quiz:
         raise HTTPException(status_code=404, detail="Сборка проверок выключена")
-    if body.use_material:
-        raise HTTPException(status_code=409, detail=MATERIAL_MISSING)
-    students = _students(report, body)
-    draft = build_check_draft(
-        body.topic,
-        body.goal,
-        body.count,
-        body.difficulty,
-        body.audience,
-        students,
+    teacher = await user_from_cookie(request, session, "teacher")
+    composed = await compose_draft(
+        session,
+        request.app.state.explainer,
+        class_id=await owned_class(session, teacher, body.class_id),
+        topic=body.topic,
+        goal=body.goal,
+        count=body.count,
+        difficulty=body.difficulty,
+        audience=body.audience,
+        students=_students(report, body),
+        use_material=body.use_material,
     )
-    if draft is None:
-        draft = build_stimul_draft(
-            body.topic,
-            body.goal,
-            body.count,
-            body.difficulty,
-            body.audience,
-            students,
-        )
-    if draft is None:
-        raise HTTPException(status_code=409, detail=NO_BANK)
-    return draft
+    if composed.error or composed.draft is None:
+        raise HTTPException(status_code=composed.status, detail=composed.error or NO_BANK)
+    return composed.draft
 
 
 @router.get("/api/teacher/class")
@@ -173,8 +167,8 @@ async def drafts(
     request: Request,
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    report = await _report(request, session)
-    return _prepare(report, body, request.app.state.settings.feature_quiz)
+    report = await _report(request, session, body.class_id)
+    return await _prepare(request, session, report, body)
 
 
 @router.post("/api/teacher/assignments", status_code=501)
@@ -183,9 +177,145 @@ async def create_assignment(
     request: Request,
     session: AsyncSession = Depends(db_session),
 ) -> None:
-    report = await _report(request, session)
-    _prepare(report, body, request.app.state.settings.feature_quiz)
+    await _report(request, session, body.class_id)
     raise HTTPException(status_code=501, detail=DELIVERY_MISSING)
+
+
+class AskBody(BaseModel):
+    text: str = Field(min_length=2, max_length=1500)
+    class_id: int | None = None
+
+
+@router.post("/api/teacher/assistant")
+async def assistant(
+    body: AskBody,
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Просьба учителя словами. Работу не отправляет: возвращает черновик на проверку."""
+    report = await _report(request, session, body.class_id)
+    tutor = request.app.state.explainer
+    if not tutor.enabled:
+        raise HTTPException(status_code=503, detail=ASSISTANT_OFF)
+    titles = [topic.title for topic in report.topics]
+    ask = await tutor.read_teacher(body.text, titles)
+    if ask is None:
+        raise HTTPException(status_code=503, detail=ASSISTANT_OFF)
+    if ask.intent == "summary":
+        return {"kind": "summary", "text": class_summary(report)}
+    if ask.intent != "work" or not ask.topic:
+        return {
+            "kind": "help",
+            "text": "Напишите тему и что проверить, например: «Дроби, сложение с разными знаменателями, 4 задания».",
+        }
+    roster = [(student.user_id, student.display_name) for student in report.students]
+    ids, names, unknown = match_students(list(ask.students), roster)
+    audience = "selected" if ids else "class"
+    teacher = await user_from_cookie(request, session, "teacher")
+    composed = await compose_draft(
+        session,
+        tutor,
+        class_id=await owned_class(session, teacher, body.class_id),
+        topic=ask.topic,
+        goal=ask.goal or ask.topic,
+        count=ask.count,
+        difficulty=ask.difficulty,
+        audience=audience,
+        students=names if ids else [name for _id, name in roster],
+        use_material=ask.use_material,
+    )
+    if composed.error or composed.draft is None:
+        raise HTTPException(status_code=composed.status, detail=composed.error or NO_BANK)
+    return {
+        "kind": "draft",
+        "draft": composed.draft,
+        "wizard": {
+            "topic": ask.topic,
+            "goal": ask.goal or ask.topic,
+            "count": composed.draft["count"],
+            "difficulty": ask.difficulty,
+            "audience": audience,
+            "student_ids": ids,
+            "students": names,
+            "use_material": ask.use_material,
+        },
+        "unknown_students": unknown,
+    }
+
+
+@router.get("/api/teacher/materials")
+async def materials(
+    request: Request,
+    class_id: int | None = None,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    teacher = await user_from_cookie(request, session, "teacher")
+    current = await owned_class(session, teacher, class_id)
+    if current is None:
+        raise HTTPException(status_code=403, detail="Нет доступа к классу")
+    return {"items": await list_materials(session, current)}
+
+
+@router.post("/api/teacher/materials")
+async def upload_material(
+    request: Request,
+    file: UploadFile = File(),
+    title: str = Form(""),
+    class_id: int | None = Form(None),
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    teacher = await user_from_cookie(request, session, "teacher")
+    current = await owned_class(session, teacher, class_id)
+    if current is None:
+        await file.close()
+        raise HTTPException(status_code=403, detail="Нет доступа к классу")
+    settings = request.app.state.settings
+    limit = settings.material_max_mb * 1024 * 1024
+    blob = await file.read(limit + 1)
+    await file.close()
+    if len(blob) > limit:
+        raise HTTPException(status_code=413, detail=f"Файл больше {settings.material_max_mb} МБ")
+    name = file.filename or "material"
+    if image_kind(blob) is not None:
+        tutor = request.app.state.explainer
+        if not tutor.enabled:
+            raise HTTPException(status_code=503, detail="Фото страниц сейчас не распознать. Загрузите PDF или DOCX.")
+        image = clean_photo(blob)
+        text = normalize(await tutor.read_photo(*image) or "") if image else ""
+        if len(text) < 40:
+            raise HTTPException(status_code=422, detail="Текст на фото не прочитался. Сфотографируйте страницу ровнее.")
+        kind = "photo"
+    else:
+        extracted = extract_text(name, blob)
+        if extracted.error:
+            raise HTTPException(status_code=422, detail=extracted.error)
+        text, kind = extracted.text, file_kind(name, blob) or "text"
+    material = await save_material(
+        session,
+        class_id=current,
+        author_id=teacher.id,
+        title=title.strip() or name.rsplit(".", 1)[0],
+        kind=kind,
+        text=text,
+    )
+    await session.commit()
+    items = await list_materials(session, current)
+    return {"item": next(item for item in items if item["id"] == material.id), "items": items}
+
+
+@router.delete("/api/teacher/materials/{material_id}")
+async def remove_material(
+    material_id: int,
+    request: Request,
+    class_id: int | None = None,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    teacher = await user_from_cookie(request, session, "teacher")
+    current = await owned_class(session, teacher, class_id)
+    if current is None or not await delete_material(session, current, material_id):
+        raise HTTPException(status_code=404, detail="Материала нет")
+    await session.commit()
+    return {"ok": True}
 
 
 class KeyBody(BaseModel):

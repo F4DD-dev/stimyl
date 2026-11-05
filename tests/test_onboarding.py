@@ -8,9 +8,9 @@ from app.db.models import (
     ClassSubjectTeacher,
     ClassTeacher,
     Enrollment,
-    Subject,
     OutboundNotice,
     RuntimeFlag,
+    Subject,
     User,
     Work,
     WorkRecipient,
@@ -266,6 +266,7 @@ async def test_claim_accept_publishes_work_without_a_stale_ticket(seeded):
     forbidden = await api.client.get("/api/student/progress")
     assert forbidden.status_code == 403
 
+    factory = api.app.state.session_factory
     async with factory() as session:
         teacher = await session.scalar(select(User).where(User.display_name == "Марк"))
         subject = await session.scalar(select(Subject).where(Subject.title == "Математика"))

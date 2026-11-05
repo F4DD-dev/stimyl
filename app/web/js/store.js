@@ -46,6 +46,10 @@ export const store = {
   manageError: null,
   stimulDraft: "",
   stimulNote: "",
+  stimulBusy: false,
+  stimulAnswer: null,
+  materials: null,
+  materialsError: "",
   focusStudent: "",
 };
 

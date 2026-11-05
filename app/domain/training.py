@@ -20,7 +20,7 @@ from app.domain.messages_ru import (
     say,
     similar_example,
 )
-from app.domain.tasks import generate_task
+from app.domain.tasks import GeneratedTask, generate_task
 
 
 @dataclass
@@ -219,6 +219,72 @@ def _open_topic(state: TrainState, title: str) -> Turn:
     return Turn(state, [_explain_reply(material, 0)])
 
 
+def _reset_topic(state: TrainState, title: str) -> None:
+    state.mode = "training"
+    state.topic_title = title
+    state.example_index = 0
+    state.task_index = 0
+    state.correct_streak = 0
+    state.wrong_streak = 0
+    state.hint_step = 0
+    state.task_misses = 0
+    state.pending_text = None
+    _clear_task(state)
+
+
+def _open_task(state: TrainState, task: GeneratedTask) -> Reply:
+    state.step = "check"
+    state.task_index += 1
+    state.hint_step = 0
+    state.task_misses = 0
+    state.pending_answer = task.answer
+    state.pending_hint = task.hint or None
+    state.pending_step = task.first_step or None
+    state.pending_prompt = task.prompt
+    state.pending_text = None
+    return Reply(f"{TASK_MARK} {task.prompt}", buttons=_task_buttons())
+
+
+def guided_lesson(
+    state: TrainState,
+    title: str,
+    explanation: str,
+    example: str,
+    task: GeneratedTask | None,
+) -> Turn:
+    """Разбор вопроса ученика: объяснение и пример от модели, задание с эталоном, который принял код."""
+    current = TrainState(**asdict(state))
+    _reset_topic(current, title)
+    lead = explanation or (topic_by_title(title).explanation if topic_by_title(title) else "")
+    body = f"{EXAMPLE_MARK} {example}" if example else ""
+    if task is None:
+        current.step = "explain"
+        buttons = (ButtonSpec(BTN_PRACTICE, "to_practice"),)
+        if topic_by_title(title) is not None:
+            buttons = (ButtonSpec(BTN_MORE_EXAMPLE, "more_example"), *buttons)
+        current.version += 1
+        return Turn(current, [Reply(lead, body, buttons=buttons, topic_title=title)])
+    first = Reply(lead, body, topic_title=title)
+    second = _open_task(current, task)
+    current.version += 1
+    return Turn(current, [first, second])
+
+
+def guided_task(state: TrainState, task: GeneratedTask) -> Turn:
+    current = TrainState(**asdict(state))
+    reply = _open_task(current, task)
+    current.version += 1
+    return Turn(current, [reply])
+
+
+def guided_notice(state: TrainState, key: str, *, topics: bool = False) -> Turn:
+    current = TrainState(**asdict(state))
+    buttons = tuple(ButtonSpec(item.title, "pick", item.title) for item in TOPICS) if topics else ()
+    reply = Reply(say(current, key), buttons=buttons)
+    current.version += 1
+    return Turn(current, [reply])
+
+
 def _explain_reply(material: TopicMaterial, example_index: int) -> Reply:
     example = material.examples[example_index % len(material.examples)]
     return Reply(
@@ -368,7 +434,6 @@ def present_turn(turn: Turn, status_line: str | None = None) -> dict:
     """Lesson payload for the student. Never includes the reference answer."""
     reply = turn.replies[-1] if turn.replies else None
     lead = reply.lead if reply else ""
-    body = reply.body if reply else ""
     explanation = None
     example = None
     task = None
@@ -381,12 +446,8 @@ def present_turn(turn: Turn, status_line: str | None = None) -> dict:
     elif turn.attempt is not None and not lead.startswith(TASK_MARK):
         feedback = lead or None
         task = turn.attempt.prompt or None
-    elif reply is not None and reply.replaceable_lead:
-        explanation = lead or None
-        if body.startswith(EXAMPLE_MARK):
-            example = body.split(EXAMPLE_MARK, 1)[1].strip() or None
-        elif body:
-            example = body
+    elif reply is not None and (reply.replaceable_lead or reply.topic_title):
+        explanation, example = _explain_parts(reply)
     elif turn.state.step == "check":
         if lead.startswith(TASK_MARK):
             task = lead.split(TASK_MARK, 1)[1].strip() or None
@@ -394,6 +455,9 @@ def present_turn(turn: Turn, status_line: str | None = None) -> dict:
             task = lead or None
     else:
         notice = lead or None
+    earlier = next((item for item in turn.replies[:-1] if item.topic_title), None)
+    if earlier is not None and explanation is None:
+        explanation, example = _explain_parts(earlier)
     actions = [
         {"action": spec.action, "label": spec.text, "topic": spec.topic_title}
         for spec in (reply.buttons if reply else ())
@@ -417,6 +481,15 @@ def present_turn(turn: Turn, status_line: str | None = None) -> dict:
         "photo_received": False,
         "photo_note": None,
     }
+
+
+def _explain_parts(reply: Reply) -> tuple[str | None, str | None]:
+    body = reply.body
+    if body.startswith(EXAMPLE_MARK):
+        example = body.split(EXAMPLE_MARK, 1)[1].strip() or None
+    else:
+        example = body or None
+    return reply.lead or None, example
 
 
 def present_state(state: TrainState) -> dict:

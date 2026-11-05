@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import db_session, user_from_cookie
 from app.bot.service import current_lesson, student_history, student_progress, student_turn
+from app.domain.images import image_kind
 from app.domain.messages_ru import SUBMISSION_UNAVAILABLE
 
 router = APIRouter()
@@ -21,18 +22,6 @@ class PracticeBody(BaseModel):
     action: str | None = Field(default=None, max_length=32)
     topic: str | None = Field(default=None, max_length=200)
     version: int | None = Field(default=None, ge=0, le=1_000_000)
-
-
-def _image_kind(blob: bytes) -> str | None:
-    if blob.startswith(b"\xff\xd8\xff"):
-        return "jpeg"
-    if blob.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "png"
-    if len(blob) >= 12 and blob.startswith(b"RIFF") and blob[8:12] == b"WEBP":
-        return "webp"
-    if blob.startswith((b"GIF87a", b"GIF89a")):
-        return "gif"
-    return None
 
 
 def _reject(result: dict) -> JSONResponse:
@@ -133,12 +122,11 @@ async def practice_photo(
     await photo.close()
     if len(blob) > MAX_PHOTO_BYTES:
         raise HTTPException(status_code=413, detail="Фото больше 8 МБ")
-    if _image_kind(blob) is None:
+    if image_kind(blob) is None:
         raise HTTPException(
             status_code=415,
             detail="Нужен файл изображения: JPEG, PNG, WebP или GIF",
         )
-    del blob
     try:
         result = await student_turn(
             session,
@@ -146,7 +134,7 @@ async def practice_photo(
             request.app.state.settings,
             request.app.state.explainer,
             text=text,
-            photo=True,
+            photo=blob,
         )
         if not result.get("ok"):
             await session.rollback()

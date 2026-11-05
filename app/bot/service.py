@@ -3,7 +3,10 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot import assist
+from app.bot.assist import wants_guide, wants_practice
 from app.bot.gate import GateReply, open_gate
+from app.bot.teacher_chat import is_teacher_action, teacher_turn
 from app.bot.updates import Incoming, parse_update
 from app.core.config import Settings
 from app.db.models import (
@@ -21,9 +24,10 @@ from app.db.models import (
     WorkRecipient,
 )
 from app.domain.account_copy import PHOTO_OFF
+from app.domain.assist import mentions
+from app.domain.curriculum import topic_by_title
 from app.domain.messages_ru import LINES, SUBMISSION_UNAVAILABLE
 from app.domain.progress import STATUS_LABEL, TopicProgress, choose_next, streak
-from app.domain.curriculum import topic_by_title
 from app.domain.report import StateFact, TopicColumn, activity_line, build_report
 from app.domain.status import Thresholds, TopicStatus, decide_status, mark_of, show_percent
 from app.domain.training import (
@@ -70,6 +74,23 @@ async def process_update(
             await sender.answer_callback(incoming.callback_id, notification="Готово")
         return
     user = outcome.user
+    if user.role in {"teacher", "admin"} and explainer.enabled and (
+        incoming.kind == "text" or is_teacher_action(incoming.payload)
+    ):
+        if incoming.kind == "text":
+            await _typing(sender, incoming)
+        replies = await teacher_turn(
+            session,
+            explainer,
+            user,
+            settings,
+            text=incoming.text if incoming.kind == "text" else None,
+            payload=incoming.payload,
+        )
+        shown = await _show_gate(sender, incoming, replies)
+        if incoming.callback_id and not shown:
+            await sender.answer_callback(incoming.callback_id, notification="Готово")
+        return
     if incoming.kind == "photo" and not settings.feature_photo:
         await _deliver_plain(sender, incoming, [GateReply(PHOTO_OFF)])
         return
@@ -81,12 +102,26 @@ async def process_update(
         row = _new_session(user)
         session.add(row)
         await session.flush()
-    if settings.feature_photo and (incoming.photo_token or incoming.photo_url):
+    has_photo = settings.feature_photo and bool(incoming.photo_token or incoming.photo_url)
+    if has_photo:
         row.photo_token = incoming.photo_token
         row.photo_url = incoming.photo_url
         row.photo_expires_at = datetime.now(UTC) + timedelta(days=settings.photo_ttl_days)
 
-    turn = reduce_turn(state, _event(incoming, id_to_title))
+    event = _event(incoming, id_to_title)
+    turn = await _guided(
+        session,
+        explainer,
+        state,
+        event,
+        user_id=user.id,
+        session_id=row.id,
+        photo=await _photo_bytes(sender, incoming) if has_photo and explainer.enabled else None,
+        has_photo=has_photo,
+        on_wait=lambda: _typing(sender, incoming),
+    )
+    if turn is None:
+        turn = reduce_turn(state, event)
     await _apply_explainer(turn, explainer)
     _save_state(row, turn.state, title_to_id)
     visibility = "private" if turn.state.mode == "training" else "submission"
@@ -133,6 +168,61 @@ async def process_update(
     await _deliver(sender, incoming, turn.replies, title_to_id, turn.state.version)
     if incoming.callback_id and not acked:
         await sender.answer_callback(incoming.callback_id, notification="Готово")
+
+
+async def _guided(
+    session: AsyncSession,
+    explainer: Explainer,
+    state: TrainState,
+    event,
+    *,
+    user_id: int,
+    session_id: int | None,
+    photo: bytes | None,
+    has_photo: bool,
+    on_wait=None,
+) -> Turn | None:
+    """Ход через модель или None, если отвечает обычный сценарий."""
+    if not explainer.enabled:
+        return None
+    if isinstance(event, Action):
+        stale = event.version is not None and event.version != state.version
+        if stale or not wants_practice(state, event.name):
+            return None
+        if on_wait:
+            await on_wait()
+        return await assist.practice(session, explainer, state, user_id=user_id)
+    text = event.text if isinstance(event, StudentText) else ""
+    if not isinstance(event, (StudentText, PhotoOnly)):
+        return None
+    if not wants_guide(state, text=text, photo=has_photo):
+        return None
+    if has_photo and photo is None and not text:
+        return None
+    if on_wait:
+        await on_wait()
+    return await assist.guide(
+        session,
+        explainer,
+        state,
+        user_id=user_id,
+        session_id=session_id,
+        text=text,
+        photo=photo,
+    )
+
+
+async def _typing(sender: object, incoming: Incoming) -> None:
+    typing = getattr(sender, "typing", None)
+    if typing is not None and incoming.chat_id is not None:
+        await typing(incoming.chat_id)
+
+
+async def _photo_bytes(sender: object, incoming: Incoming) -> bytes | None:
+    download = getattr(sender, "download", None)
+    if download is None or not incoming.photo_url:
+        return None
+    return await download(incoming.photo_url)
 
 
 async def _seen(session: AsyncSession, key: str) -> bool:
@@ -324,8 +414,13 @@ async def _apply_explainer(turn: Turn, explainer: Explainer) -> None:
                 reply.lead = generated.strip()[:800]
     if turn.attempt is None or turn.attempt.correct:
         return
-    generated = await explainer.explain_mistake(turn.attempt.topic_title, turn.attempt.hint)
-    if generated and turn.attempt.expected not in generated and len(turn.replies) == 1:
+    generated = await explainer.explain_mistake(
+        turn.attempt.topic_title,
+        turn.attempt.hint,
+        prompt=turn.attempt.prompt,
+        answer=turn.attempt.answer,
+    )
+    if generated and not mentions(generated, turn.attempt.expected) and len(turn.replies) == 1:
         turn.replies[-1].lead = f"{LINES['wrong'][0]} {generated.strip()[:500]}"
         turn.attempt.feedback = turn.replies[-1].lead
 
@@ -708,7 +803,7 @@ async def student_turn(
     action: str | None = None,
     topic: str | None = None,
     version: int | None = None,
-    photo: bool = False,
+    photo: bytes | None = None,
 ) -> dict:
     """Training turn for the mini-app. Submission is refused without storing the text."""
     topics = await _topics(session)
@@ -764,7 +859,18 @@ async def student_turn(
         event = PhotoOnly()
     else:
         return {"ok": False, "code": "empty", "detail": LINES["empty_practice"][0]}
-    turn = reduce_turn(state, event)
+    turn = await _guided(
+        session,
+        explainer,
+        state,
+        event,
+        user_id=user.id,
+        session_id=row.id,
+        photo=photo,
+        has_photo=photo is not None,
+    )
+    if turn is None:
+        turn = reduce_turn(state, event)
     await _apply_explainer(turn, explainer)
     _save_state(row, turn.state, title_to_id)
     if cleaned and not action:
@@ -807,6 +913,6 @@ async def student_turn(
             *view["actions"],
             {"action": "review", "label": "Разобрать следующий шаг", "topic": review_title},
         ]
-    view["photo_received"] = photo
-    view["photo_note"] = LINES["photo_note"][0] if photo else None
+    view["photo_received"] = photo is not None
+    view["photo_note"] = LINES["photo_note"][0] if photo is not None and not view["explanation"] else None
     return view

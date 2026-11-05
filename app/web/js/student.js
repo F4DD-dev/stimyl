@@ -523,6 +523,9 @@ function renderWork(work) {
 }
 
 export function renderStimul() {
+  const photo = store.photoURL
+    ? `<div class="attach"><img class="thumb" alt="" src="${esc(store.photoURL)}"><span>Фото прикреплено</span><button class="text-btn" type="button" data-act="clear-photo">Убрать</button></div>`
+    : "";
   return `<div class="fig">
     ${mast(store.progress?.display_name || store.displayName, store.progress?.class_title)}
     <div class="fig-page assistant-page">
@@ -530,16 +533,20 @@ export function renderStimul() {
         <div class="assistant-intro__icon">${icon("spark")}</div>
         <div>
           <span class="eyebrow">Личный помощник</span>
-          <h1 id="page-title">Пока без чата</h1>
-          <p>Сообщение отсюда никуда не уходит, учитель его не видит. Вопрос по теме задавайте на обзоре, работу сдавайте в заданиях.</p>
+          <h1 id="page-title">Что разобрать?</h1>
+          <p>Напиши вопрос или сними страницу — объясню способ и дам похожее задание. Готовый ответ для списывания не выдаю.</p>
         </div>
       </div>
-      <div class="assistant-notice" role="status">${icon("spark")}<span>Вопрос по теме задаётся на обзоре. Это тренировка, учитель текст не видит.</span></div>
-      <form class="composer" aria-disabled="true">
-        <button class="composer__attach" type="button" disabled aria-label="Добавить фото">${icon("camera")}</button>
-        <input disabled placeholder="Помощник ещё не отвечает" aria-label="Вопрос помощнику" value="">
-        <button class="composer__send" type="button" disabled aria-label="Отправить">${icon("arrow")}</button>
-      </form>
+      <section class="ask-card">
+        <textarea id="question" class="area" placeholder="Например: не понимаю, как решать x² − 5x + 6 = 0" aria-label="Вопрос" ${disabled()}>${esc(store.question)}</textarea>
+        ${photo}
+        ${store.fieldError ? `<p class="field-error">${esc(store.fieldError)}</p>` : ""}
+        <div class="ask-actions">
+          <label class="btn btn-ghost file">Фото страницы<input id="photo" type="file" accept="image/*" aria-label="Отправить фотографию"></label>
+          <button class="btn btn-primary" type="button" data-act="send-question" ${disabled()}>Разобрать</button>
+        </div>
+      </section>
+      <p class="quiet">Это тренировка: переписка остаётся у тебя, учитель видит только статус темы.</p>
     </div>
   </div>`;
 }

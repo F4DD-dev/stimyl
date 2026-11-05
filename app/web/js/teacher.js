@@ -1,4 +1,4 @@
-import { getAssignments, getClass, getNotices, getWorkResult, postDraft, publishWork, saveWork } from "./api.js?v=3";
+import { askAssistant, deleteMaterial, getAssignments, getClass, getMaterials, getNotices, getWorkResult, postDraft, publishWork, saveWork, uploadMaterial } from "./api.js?v=3";
 import { renderManage } from "./manage.js";
 import { go, refresh, store } from "./store.js";
 import {
@@ -407,7 +407,9 @@ function renderResult(work) {
 }
 
 export function renderStimul() {
-  const samples = ["Собери короткую проверку по дробям", "Какие темы класса сейчас слабее?", "Придумай устный вопрос на дискриминант"];
+  const samples = ["Собери короткую проверку по дробям", "Какие темы класса сейчас слабее?", "Тест по загруженному материалу, 3 задания"];
+  const answer = store.stimulAnswer;
+  const items = store.materials?.items || [];
   return `<div class="fig">
     ${topbar()}
     <div class="fig-page assistant-page">
@@ -415,20 +417,155 @@ export function renderStimul() {
         <div class="assistant-intro__icon">${icon("spark")}</div>
         <div>
           <h1 id="page-title">Чем помочь?</h1>
-          <p>Могу собрать проверку по теме или показать, кому сейчас трудно.</p>
+          <p>Соберу проверку по теме или по материалу урока и покажу слабые места класса.</p>
         </div>
       </div>
       <div class="prompt-grid">
         ${samples.map((text, index) => `<button type="button" data-act="stimul-sample" data-text="${esc(text)}"><span>${String(index + 1).padStart(2, "0")}</span><strong>${esc(text)}</strong>${icon("arrow")}</button>`).join("")}
       </div>
+      ${store.stimulBusy ? `<p class="statusline" role="status">Собираю ответ…</p>` : ""}
+      ${answer ? `<article class="card card-flat assistant-answer"><h2>${esc(answer.title)}</h2><p>${esc(answer.text)}</p></article>` : ""}
       ${store.stimulNote ? `<div class="assistant-notice" role="status">${icon("check")}<span>${esc(store.stimulNote)}</span></div>` : ""}
-      <form id="stimul-form" class="composer">
-        <button class="composer__attach" type="button" disabled aria-label="Добавить фото">${icon("camera")}</button>
-        <input id="stimul-input" value="${esc(store.stimulDraft)}" placeholder="Спросите помощника" aria-label="Запрос помощнику">
-        <button class="composer__send" type="submit" aria-label="Отправить">${icon("arrow")}</button>
+      <form id="stimul-form" class="composer composer--text">
+        <input id="stimul-input" value="${esc(store.stimulDraft)}" placeholder="Например: проверка по дробям для Ани" aria-label="Запрос помощнику" ${store.stimulBusy ? "disabled" : ""}>
+        <button class="composer__send" type="submit" aria-label="Отправить" ${store.stimulBusy ? "disabled" : ""}>${icon("arrow")}</button>
       </form>
+      <section class="materials">
+        <div class="materials__head">
+          <div><strong>Материалы урока</strong><small>Учебник, параграф или фото страницы. По ним собираются задания.</small></div>
+          <label class="btn btn-ghost file">Загрузить<input id="material-file" type="file" accept=".pdf,.docx,.pptx,.txt,image/*" aria-label="Загрузить материал"></label>
+        </div>
+        ${store.materialsError ? `<p class="field-error">${esc(store.materialsError)}</p>` : ""}
+        ${store.materials === null ? `<p class="quiet">Загружаю список…</p>` : items.length ? `<div class="stack tight">${items.map((item) => `<div class="line"><span><b>${esc(item.title)}</b><small>${item.fragments} фрагм. · ${kindLabel(item.kind)}</small></span><button class="text-btn" type="button" data-act="material-delete" data-id="${item.id}">Убрать</button></div>`).join("")}</div>` : `<p class="quiet">Пока пусто. Добавьте PDF, DOCX, PPTX, TXT или фото страницы — задания «по материалу» собираются только по загруженному.</p>`}
+      </section>
     </div>
   </div>`;
+}
+
+function kindLabel(kind) {
+  return { pdf: "PDF", docx: "DOCX", pptx: "PPTX", photo: "фото", text: "текст" }[kind] || kind;
+}
+
+export async function sendStimul(text) {
+  const question = (text ?? store.stimulDraft ?? "").trim();
+  if (store.stimulBusy) return;
+  if (question.length < 2) {
+    store.stimulNote = "Напишите, что нужно: тему, сколько заданий и кому.";
+    refresh();
+    return;
+  }
+  if (store.preview) {
+    store.stimulNote = "В демонстрации помощник к серверу не ходит.";
+    refresh();
+    return;
+  }
+  store.stimulBusy = true;
+  store.stimulNote = "";
+  refresh();
+  try {
+    const reply = await askAssistant(question, store.classId);
+    if (!reply || !reply.kind) {
+      store.stimulNote = "Ответ пустой. Попробуйте сформулировать иначе.";
+      return;
+    }
+    if (reply.kind === "draft" && reply.draft) {
+      openAssistantWizard(reply);
+      return;
+    }
+    store.stimulAnswer = {
+      title: reply.kind === "summary" ? "Как у класса" : "Подсказка",
+      text: reply.text || "",
+    };
+    store.stimulDraft = "";
+  } catch (error) {
+    store.stimulNote = error.message;
+  } finally {
+    store.stimulBusy = false;
+    refresh();
+  }
+}
+
+function openAssistantWizard(reply) {
+  const plan = reply.wizard || {};
+  const students = reply.draft.audience === "selected"
+    ? (plan.students || [])
+    : [];
+  store.wizard = {
+    step: 4,
+    mode: "stimul",
+    topic: plan.topic || reply.draft.topic || "",
+    goal: plan.goal || reply.draft.goal || "",
+    blurb: "",
+    count: plan.count || reply.draft.count || 3,
+    difficulty: plan.difficulty || "normal",
+    audience: reply.draft.audience === "selected" ? "selected" : "class",
+    students,
+    studentIds: plan.student_ids || [],
+    own: [],
+    useMaterial: Boolean(plan.use_material),
+    draft: reply.draft,
+    draftError: null,
+    sendError: null,
+    fieldError: "",
+  };
+  const unknown = (reply.unknown_students || []).join(", ");
+  if (unknown) {
+    store.wizard.sendError = null;
+    reply.draft.note = `${reply.draft.note ? `${reply.draft.note} ` : ""}Не нашёл в классе: ${unknown}.`;
+  }
+  store.stimulAnswer = null;
+  store.stimulDraft = "";
+  go("compose");
+}
+
+export async function loadMaterials() {
+  if (store.preview || store.role !== "teacher") {
+    store.materials = { items: [] };
+    refresh();
+    return;
+  }
+  store.materialsError = "";
+  try {
+    store.materials = await getMaterials(store.classId || undefined);
+  } catch (error) {
+    store.materials = { items: [] };
+    store.materialsError = error.message;
+  }
+  refresh();
+}
+
+export async function addMaterial(file) {
+  if (!file || store.stimulBusy) return;
+  store.stimulBusy = true;
+  store.materialsError = "";
+  refresh();
+  try {
+    const saved = await uploadMaterial(file, "", store.classId || undefined);
+    store.materials = { items: saved?.items || store.materials?.items || [] };
+    store.stimulNote = `«${saved?.item?.title || file.name}» разобран на фрагменты. Теперь можно собирать задания по материалу.`;
+  } catch (error) {
+    store.materialsError = error.message;
+  } finally {
+    store.stimulBusy = false;
+    refresh();
+  }
+}
+
+export async function removeMaterial(id) {
+  if (store.stimulBusy) return;
+  store.stimulBusy = true;
+  store.materialsError = "";
+  refresh();
+  try {
+    await deleteMaterial(Number(id), store.classId || undefined);
+    const items = (store.materials?.items || []).filter((item) => item.id !== Number(id));
+    store.materials = { items };
+  } catch (error) {
+    store.materialsError = error.message;
+  } finally {
+    store.stimulBusy = false;
+    refresh();
+  }
 }
 
 function wizardBody() {
@@ -471,6 +608,7 @@ function wizardBody() {
       <p class="field-label">Сложность</p>
       <div class="chips">${DIFFICULTIES.map(([id, label]) => `<button class="chip ${wizard.difficulty === id ? "is-on" : ""}" type="button" data-act="difficulty" data-value="${id}">${label}</button>`).join("")}</div>
       <p class="hint">Стимул возьмёт вопросы из программы 8 класса и посчитает ответы. На просмотре их можно поправить.</p>
+      ${(store.materials?.items || []).length ? `<label class="check"><input id="use-material" type="checkbox" ${wizard.useMaterial ? "checked" : ""}> Собрать по загруженным материалам</label>` : ""}
       <button class="text-btn" type="button" data-act="compose-own">Лучше напишите вопросы сами</button>`;
   } else if (wizard.step === 3) {
     body = `<div class="segment">
@@ -760,7 +898,8 @@ function draftPayload() {
     audience: wizard.audience,
     students: wizard.audience === "selected" ? wizard.students : [],
     student_ids: wizard.audience === "selected" ? wizard.studentIds || [] : [],
-    use_material: false,
+    use_material: Boolean(wizard.useMaterial),
+    class_id: store.classId || null,
   };
 }
 
@@ -824,6 +963,7 @@ function workBody() {
     items,
     blurb: (store.wizard.blurb || "").trim(),
     work_id: store.wizard.workId || null,
+    class_id: store.classId || null,
   };
 }
 

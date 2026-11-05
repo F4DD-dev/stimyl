@@ -139,6 +139,15 @@ async def open_gate(
     if user.phone_hash is None:
         phone = await _phone_gate(session, user, incoming, settings)
         return GateOutcome(user, phone.replies, True)
+    account_token = looks_like_token(incoming.text or "") if incoming.kind == "text" else None
+    if account_token and account_token.startswith("P-"):
+        reply = await claim_transfer(session, user, account_token, settings)
+        if reply:
+            return GateOutcome(user, [GateReply(reply)], True)
+    if account_token and account_token.startswith("T-"):
+        reply = await claim_invite(session, user, account_token, settings)
+        if reply:
+            return GateOutcome(user, [GateReply(reply)], True)
     if not await placed(session, user):
         return await _placement(session, user, incoming, settings)
     if incoming.payload == CONSENT_YES:
@@ -189,22 +198,12 @@ async def open_gate(
         if reply:
             return GateOutcome(user, [GateReply(reply)], True)
 
-    token = looks_like_token(text) if incoming.kind == "text" else None
-    if token and token.startswith("P-"):
-        reply = await claim_transfer(session, user, token, settings)
-        if reply:
-            return GateOutcome(user, [GateReply(reply)], True)
-    if token and token.startswith("T-"):
-        reply = await claim_invite(session, user, token, settings)
-        if reply:
-            return GateOutcome(user, [GateReply(reply)], True)
-
     replies: list[GateReply] = []
-    if token and not token.startswith(("T-", "P-")):
+    if account_token and user.role == "student" and not account_token.startswith(("T-", "P-")):
         joined = await join_by_code(
-            session, user, token, needs_approval=settings.class_join_requires_approval
+            session, user, account_token, needs_approval=settings.class_join_requires_approval
         )
-        reply = _join_reply(joined, unknown=not token.startswith(("T-", "P-")))
+        reply = _join_reply(joined, unknown=True)
         if reply is not None:
             return GateOutcome(user, [GateReply(reply)], True)
 
@@ -321,6 +320,8 @@ async def _placement(
                 label="Открыть кабинет",
                 lead="Кнопка откроет кабинет. Заявка ещё ждёт решения, заданий пока нет.",
             )
+        if user.role in {"teacher", "admin"}:
+            return await _send_code(session, user, settings)
     row = await application_of(session, user)
     if row is not None and row.status == "pending":
         return GateOutcome(

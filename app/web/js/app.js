@@ -20,15 +20,19 @@ import {
 } from "./student.js?v=12";
 import { go, refresh, store, subscribe } from "./store.js";
 import {
+  addMaterial,
   focusStudent,
   focusTopic,
   loadDraft,
+  loadMaterials,
   reloadQuiet,
   reloadTeacher,
+  removeMaterial,
   renderTeacher,
   openResult,
   saveDraft,
   sendAssignment,
+  sendStimul,
   setAudience,
   setCount,
   setDifficulty,
@@ -561,6 +565,7 @@ async function onAction(act, button) {
     const screen = button.dataset.screen;
     go(screen);
     if (screen === "manage") await loadManage();
+    if (screen === "stimul" && store.role === "teacher" && store.materials === null) loadMaterials();
     if (store.role === "teacher" && ["tasks", "class", "overview"].includes(screen)) await reloadQuiet();
     return;
   }
@@ -583,6 +588,7 @@ async function onAction(act, button) {
   }
   if (act === "pick-class") {
     store.classId = Number(button.dataset.id);
+    store.materials = null;
     document.querySelector("#dialog")?.close();
     await reloadTeacher();
     return;
@@ -604,8 +610,11 @@ async function onAction(act, button) {
   }
   if (act === "stimul-sample") {
     store.stimulDraft = button.dataset.text || "";
-    store.stimulNote = "Из этого поля сообщение не уходит. Проверку собирайте кнопкой «Попросить Стимула» в заданиях.";
-    refresh();
+    await sendStimul(store.stimulDraft);
+    return;
+  }
+  if (act === "material-delete") {
+    await removeMaterial(button.dataset.id);
     return;
   }
   if (act === "save-draft") {
@@ -741,10 +750,7 @@ function bind() {
     if (event.target.id === "stimul-form") {
       const value = document.querySelector("#stimul-input")?.value.trim() || "";
       store.stimulDraft = value;
-      store.stimulNote = value
-        ? "Из этого поля сообщение не уходит. Проверку собирайте в заданиях."
-        : "Напишите, что нужно. Отсюда сообщение никуда не отправляется.";
-      refresh();
+      sendStimul(value);
     }
   });
   document.addEventListener("keydown", (event) => {
@@ -775,6 +781,13 @@ function bind() {
     if (target.id === "photo") {
       takePhoto(target.files && target.files[0]);
       target.value = "";
+    }
+    if (target.id === "material-file") {
+      addMaterial(target.files && target.files[0]);
+      target.value = "";
+    }
+    if (target.id === "use-material") {
+      toggleMaterial(target.checked);
     }
     if (target.id === "topic-filter") {
       store.filters = { ...store.filters, topic: target.value };

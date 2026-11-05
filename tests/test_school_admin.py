@@ -5,7 +5,13 @@ from sqlalchemy import func, select
 from app.db.models import AuditLog, Enrollment, JoinApplication, OutboundNotice, RuntimeFlag, User
 from app.domain.accounts import accept_consent
 from app.domain.directory import file_student_application
-from app.domain.onboarding import BOOTSTRAP_KEY, accept_claim, ensure_prototype, register_phone, reject_claim
+from app.domain.onboarding import (
+    BOOTSTRAP_KEY,
+    accept_claim,
+    ensure_prototype,
+    register_phone,
+    reject_claim,
+)
 from app.domain.school_admin import grant_school_manager, transfer_school_manager
 from tests.support import message, post_update
 from tests.test_onboarding import _consent, _contact, _started

@@ -20,8 +20,8 @@ async def test_pages_and_assets_load(api):
     assert "max-web-app.js\" async" not in student.text
     assert 'data-entry="auto"' in root.text
     assert css.status_code == 200
-    assert "#e85d4c" in css.text
-    assert "#2f9e44" in css.text
+    assert "#ff624d" in css.text
+    assert "#76ca42" in css.text
     assert "Golos Text" in css.text
     assert script.status_code == 200
     assert "/api/student/practice" in script.text
