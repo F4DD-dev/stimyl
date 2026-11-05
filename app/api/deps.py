@@ -33,6 +33,8 @@ async def user_from_cookie(
     request: Request,
     session: AsyncSession,
     role: str | None = None,
+    *,
+    allow_pending: bool = False,
 ) -> User:
     """Роль берётся из базы. Аргумент role — какую роль ждёт этот эндпоинт."""
     raw = request.cookies.get(COOKIE_NAME) or _bearer(request)
@@ -48,7 +50,7 @@ async def user_from_cookie(
         header = request.headers.get("x-csrf-token") or ""
         if not header or not _same(header, row.csrf_token):
             raise HTTPException(status_code=403, detail="Нет доступа")
-    if user.status != "active":
+    if user.status != "active" and not (allow_pending and user.status == "pending"):
         raise HTTPException(status_code=403, detail="Нет доступа")
     if role is not None and user.role != role:
         raise HTTPException(status_code=403, detail="Нет доступа")

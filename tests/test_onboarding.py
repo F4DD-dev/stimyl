@@ -8,6 +8,7 @@ from app.db.models import (
     ClassSubjectTeacher,
     ClassTeacher,
     Enrollment,
+    Subject,
     OutboundNotice,
     RuntimeFlag,
     User,
@@ -17,8 +18,17 @@ from app.db.models import (
 from app.domain.accounts import accept_consent
 from app.domain.onboarding import BOOTSTRAP_KEY, ensure_prototype, register_phone
 from app.domain.phone import hash_phone, verify_contact_hash
-from tests.support import auth_as, message, post_update
+from tests.support import auth_as, callback, message, post_update
 from tests.test_accounts import _consent, _started
+
+
+async def _click(api, user_id: int, name: str, marker: str, *, by_text: bool = False) -> None:
+    buttons = api.memory.sent[-1]["buttons"]
+    if by_text:
+        payload = next(button["payload"] for button in buttons if button["text"] == marker)
+    else:
+        payload = next(button["payload"] for button in buttons if str(button["payload"]).startswith(marker))
+    await post_update(api, callback(user_id, name, f"pick-{user_id}-{marker}", payload))
 
 
 def _vcf(name: str, digits: str) -> str:
@@ -165,7 +175,7 @@ async def test_only_one_concurrent_registration_becomes_teacher(api):
             return result.kind
 
     kinds = await asyncio.gather(once(first_id, "79001110001"), once(second_id, "79001110002"))
-    assert sorted(kinds) == ["student", "teacher"]
+    assert sorted(kinds) == ["choose", "teacher"]
     async with factory() as session:
         flag = await session.get(RuntimeFlag, BOOTSTRAP_KEY)
         teachers = list(await session.scalars(select(User).where(User.can_manage_school.is_(True))))
@@ -186,7 +196,7 @@ async def test_only_one_concurrent_registration_becomes_teacher(api):
         user = await session.get(User, third_id)
         result = await register_phone(session, user, "79001110003", api.settings)
         await session.commit()
-    assert result.kind == "student"
+    assert result.kind == "choose"
     async with factory() as session:
         flag = await session.get(RuntimeFlag, BOOTSTRAP_KEY)
         bosses = await session.scalar(
@@ -210,7 +220,7 @@ async def test_production_never_bootstraps_a_teacher(api):
         await session.commit()
         flag = await session.get(RuntimeFlag, BOOTSTRAP_KEY)
         stored = await session.get(User, user_id)
-    assert result.kind == "student"
+    assert result.kind == "choose"
     assert stored.role == "student"
     assert stored.can_manage_school is False
     assert stored.phone_hash == hash_phone(api.settings.session_secret, "79002220001")
@@ -233,7 +243,13 @@ async def test_claim_accept_publishes_work_without_a_stale_ticket(seeded):
     await post_update(api, _started(830002, "Оля"))
     await post_update(api, _consent(830002, "Оля"))
     await post_update(api, _contact(830002, "Оля", "olya-phone", "79003330002", token))
+    assert "кто ты" in api.memory.sent[-1]["text"].casefold()
+    await _click(api, 830002, "Оля", "role:student")
+    await _click(api, 830002, "Оля", "city:0")
+    await _click(api, 830002, "Оля", "school:blg-16")
+    await _click(api, 830002, "Оля", "8Б", by_text=True)
     assert "заявк" in api.memory.sent[-1]["text"].casefold()
+    assert any(button.get("web_app") for button in api.memory.sent[-1]["buttons"])
 
     await auth_as(api, "830001")
     people = await api.client.get("/api/manage/people")
@@ -250,6 +266,19 @@ async def test_claim_accept_publishes_work_without_a_stale_ticket(seeded):
     forbidden = await api.client.get("/api/student/progress")
     assert forbidden.status_code == 403
 
+    async with factory() as session:
+        teacher = await session.scalar(select(User).where(User.display_name == "Марк"))
+        subject = await session.scalar(select(Subject).where(Subject.title == "Математика"))
+        session.add(ClassTeacher(class_id=claim["class_id"], user_id=teacher.id))
+        session.add(
+            ClassSubjectTeacher(
+                class_id=claim["class_id"],
+                user_id=teacher.id,
+                subject_id=subject.id,
+            )
+        )
+        await session.commit()
+
     draft = await api.client.post(
         "/api/teacher/works",
         json={
@@ -259,6 +288,7 @@ async def test_claim_accept_publishes_work_without_a_stale_ticket(seeded):
             "difficulty": "normal",
             "audience": "selected",
             "students": ["Оля"],
+            "class_id": claim["class_id"],
         },
     )
     assert draft.status_code == 200, draft.text

@@ -1,5 +1,6 @@
 """Школы Амурской области и заявка в класс. Список — данные, не ветка кода."""
 
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,6 +21,7 @@ from app.db.models import (
 DATA = Path(__file__).resolve().parents[1] / "db" / "data" / "amur_schools.json"
 PILOT_KEY = "blg-16"
 PILOT_CLASS = "5А"
+CLASS_TITLES = ("5А", "5Б", "6А", "6Б", "7А", "7Б", "8А", "8Б")
 SEATS = (
     ("t1", "Классный руководитель"),
     ("t2", "Математика"),
@@ -45,8 +47,42 @@ def schools_in(city: str) -> list[dict]:
     return []
 
 
+def _join_code(school_id: int, title: str) -> str:
+    digest = hashlib.sha256(f"{school_id}:{title}".encode()).hexdigest()[:10].upper()
+    return digest
+
+
+async def ensure_classes(session: AsyncSession, school: School) -> list[SchoolClass]:
+    """Классы 5–8, А и Б. Повтор не создаёт вторую строку с тем же названием."""
+    rows: list[SchoolClass] = []
+    for index, title in enumerate(CLASS_TITLES, start=1):
+        found = await session.scalar(
+            select(SchoolClass).where(
+                SchoolClass.school_id == school.id,
+                SchoolClass.title == title,
+            )
+        )
+        if found is None:
+            code = _join_code(school.id, title)
+            taken = await session.scalar(select(SchoolClass.id).where(SchoolClass.join_code == code))
+            if taken is not None:
+                code = f"{code[:8]}{school.id % 100:02d}"[:16]
+            found = SchoolClass(
+                school_id=school.id,
+                title=title,
+                join_key=f"cls-{school.id}-{index}",
+                join_code=code,
+                join_open=True,
+                timezone="Asia/Vladivostok",
+            )
+            session.add(found)
+            await session.flush()
+        rows.append(found)
+    return rows
+
+
 async def ensure_directory(session: AsyncSession) -> None:
-    """Положить снимок списка и пилотный класс. Повтор ничего не дублирует."""
+    """Положить снимок списка и классы каждой школы. Повтор ничего не дублирует."""
     data = catalog()
     region = data["region"]
     now = datetime.now(UTC)
@@ -65,27 +101,12 @@ async def ensure_directory(session: AsyncSession) -> None:
                 )
                 session.add(school)
                 await session.flush()
+            classes = await ensure_classes(session, school)
             if item["key"] != PILOT_KEY:
                 continue
             pilot_school_id = school.id
-            school_class = await session.scalar(
-                select(SchoolClass).where(
-                    SchoolClass.school_id == school.id,
-                    SchoolClass.title == PILOT_CLASS,
-                )
-            )
-            if school_class is None:
-                school_class = SchoolClass(
-                    school_id=school.id,
-                    title=PILOT_CLASS,
-                    join_key="blg-16-5a",
-                    join_code="5A16",
-                    join_open=True,
-                    timezone="Asia/Yakutsk",
-                )
-                session.add(school_class)
-                await session.flush()
-            pilot_class_id = school_class.id
+            pilot = next((row for row in classes if row.title == PILOT_CLASS), None)
+            pilot_class_id = pilot.id if pilot is not None else None
     if pilot_school_id is None or pilot_class_id is None:
         return
     for code, title in SEATS:
@@ -146,7 +167,7 @@ def school_reply(city: str) -> tuple[str, tuple[tuple[str, str], ...]]:
     buttons = tuple((item["title"][:120], f"school:{item['key']}") for item in schools_in(city))
     if not buttons:
         return ("В этом городе школ в списке нет. Выбери другой город.", ())
-    return (f"{city}. Выбери школу. Открыт набор пока только в Школе 16.", buttons)
+    return (f"{city}. Выбери школу.", buttons)
 
 
 async def _draft(session: AsyncSession, user: User, role: str) -> JoinApplication:
@@ -199,28 +220,71 @@ async def choose_school(
     if school is None:
         return ("Эту школу сейчас не найти. Выбери другую.", ())
     row.school_id = school.id
-    if not match.get("pilot"):
-        row.class_id = None
-        row.seat_code = None
-        row.status = "draft"
-        await session.flush()
-        return (
-            "В этой школе набор ещё не открыт. Для проверки выбери МАОУ Школа 16 гор. Благовещенск.",
-            (("Школа 16", "school:blg-16"),),
-        )
-    school_class = await session.scalar(
-        select(SchoolClass).where(SchoolClass.school_id == school.id, SchoolClass.title == PILOT_CLASS)
-    )
-    if school_class is None:
-        return ("Класс 5А ещё не создан.", ())
+    row.class_id = None
+    row.seat_code = None
+    row.status = "draft"
+    await session.flush()
+    classes = await ensure_classes(session, school)
+    buttons = tuple((item.title, f"class:{item.id}") for item in classes)
+    return (f"{school.title}. Выбери класс.", buttons)
+
+
+async def choose_class(
+    session: AsyncSession,
+    user: User,
+    class_id: int,
+    settings: object,
+) -> tuple[str, tuple[tuple[str, str], ...]]:
+    """Заявка в выбранный класс. Пока её не приняли, человек не в списке класса."""
+    row = await application_of(session, user)
+    if row is None or row.school_id is None:
+        return role_reply()
+    school_class = await session.get(SchoolClass, class_id)
+    if school_class is None or school_class.school_id != row.school_id:
+        school = await session.get(School, row.school_id)
+        if school is None:
+            return role_reply()
+        classes = await ensure_classes(session, school)
+        buttons = tuple((item.title, f"class:{item.id}") for item in classes)
+        return ("Этот класс не из выбранной школы. Выбери класс ещё раз.", buttons)
+    same = row.status == "pending" and row.class_id == school_class.id
     row.class_id = school_class.id
-    if row.wanted_role == "student":
-        return await _submit(session, user, row, seat=None, allow_admin_bootstrap=allow_admin_bootstrap)
-    seats = list(
-        await session.scalars(select(StaffSeat).where(StaffSeat.class_id == school_class.id).order_by(StaffSeat.id))
+    row.seat_code = None
+    row.status = "pending"
+    user.status = "pending"
+    if user.role != "teacher":
+        user.role = "student"
+    await session.flush()
+    school = await session.get(School, school_class.school_id)
+    school_title = school.title if school is not None else "школа"
+    taught = await session.scalar(
+        select(ClassTeacher.user_id).where(ClassTeacher.class_id == school_class.id)
     )
-    buttons = tuple((seat.title, f"seat:{seat.code}") for seat in seats)
-    return ("Класс 5А. Выбери себя.", buttons)
+    if not same:
+        from app.domain.onboarding import notify_new_claim
+
+        await notify_new_claim(session, user, school_class, settings)
+    if taught is None:
+        text = (
+            f"Заявка в {school_title}, класс {school_class.title}, записана. "
+            "Учителя в классе нет, поэтому заданий нет и не будет, пока его не назначат. "
+            "Кабинет можно открыть и подождать."
+        )
+    else:
+        text = (
+            f"Заявка в {school_title}, класс {school_class.title}, отправлена. "
+            "Открой кабинет и подожди, пока её примут."
+        )
+    return text, ()
+
+
+async def file_student_application(session: AsyncSession, user: User, school_class: SchoolClass, settings: object) -> str:
+    """Заявка в уже известный класс. Чат идёт через choose_class, тестам нужен тот же шаг."""
+    row = await _draft(session, user, "student")
+    row.school_id = school_class.school_id
+    await session.flush()
+    text, _buttons = await choose_class(session, user, school_class.id, settings)
+    return text
 
 
 async def choose_seat(

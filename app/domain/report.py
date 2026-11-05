@@ -24,6 +24,7 @@ class StudentRow:
     display_name: str
     cells: tuple[Cell, ...]
     activity: str = ""
+    user_id: int = 0
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,7 @@ class ClassReport:
             "students": [
                 {
                     "display_name": student.display_name,
+                    "user_id": student.user_id,
                     "activity": student.activity,
                     "topics": [
                         {
@@ -96,13 +98,14 @@ def build_report(
     today: date,
     stall_days: int = 7,
     activity: dict[str, str] | None = None,
+    student_ids: list[int] | None = None,
 ) -> ClassReport:
     ordered_topics = tuple(sorted(topics, key=lambda topic: topic.position))
     horizon = today - timedelta(days=stall_days)
     rows: list[StudentRow] = []
     stalled: list[str] = []
     repeat_names: dict[str, list[str]] = {topic.title: [] for topic in ordered_topics}
-    for name in students:
+    for index, name in enumerate(students):
         cells: list[Cell] = []
         for topic in ordered_topics:
             fact = states.get((name, topic.title))
@@ -121,7 +124,8 @@ def build_report(
                 stalled.append(
                     f"{name} — {topic.title}, последняя попытка {fact.last_attempt_on:%d.%m}"
                 )
-        rows.append(StudentRow(name, tuple(cells), (activity or {}).get(name, "")))
+        user_id = student_ids[index] if student_ids and index < len(student_ids) else 0
+        rows.append(StudentRow(name, tuple(cells), (activity or {}).get(name, ""), user_id))
 
     priorities = tuple(
         f"{title}: {STATUS_LABEL[TopicStatus.repeat]}, {', '.join(names)}"

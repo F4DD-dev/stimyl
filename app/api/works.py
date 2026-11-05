@@ -13,6 +13,7 @@ from app.domain.schoolwork import (
     list_student_works,
     publish_work,
     save_work,
+    student_assignment_note,
     submit_work,
     work_results,
 )
@@ -32,6 +33,7 @@ class WorkBody(BaseModel):
     difficulty: str = Field(pattern="^(easy|normal|hard)$")
     audience: str = Field(pattern="^(class|selected)$")
     students: list[str] = Field(default_factory=list, max_length=40)
+    student_ids: list[int] = Field(default_factory=list, max_length=40)
     prompts: list[str] | None = Field(default=None, max_length=6)
     items: list[OwnItem] | None = Field(default=None, max_length=6)
     blurb: str = Field(default="", max_length=800)
@@ -83,6 +85,7 @@ async def create_work(
         difficulty=body.difficulty,
         audience=body.audience,
         students=body.students,
+        student_ids=body.student_ids,
         prompts=body.prompts,
         due_at=_due(body.due_at),
         work_id=body.work_id,
@@ -126,7 +129,10 @@ async def student_works(
     session: AsyncSession = Depends(db_session),
 ) -> dict:
     student = await user_from_cookie(request, session, "student")
-    return {"items": await list_student_works(session, student)}
+    return {
+        "items": await list_student_works(session, student),
+        "reason": await student_assignment_note(session, student),
+    }
 
 
 @router.post("/api/student/works/{work_id}/answers")

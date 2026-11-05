@@ -154,6 +154,15 @@ function rollup(report) {
   });
 }
 
+function claimsBlock() {
+  const items = store.report?.pending_claims || [];
+  if (!items.length) return "";
+  return `<section class="sheet-block">
+    <h2>Заявки</h2>
+    <div class="rows">${items.map((item) => `<div class="line"><span><b>${esc(item.display_name)}</b><small>${esc(item.class_title)} · ${item.wanted_role === "teacher" ? "учитель" : "ученик"}</small></span><span class="attach"><button class="btn btn-primary" type="button" data-act="accept-claim" data-id="${item.user_id}">Принять</button><button class="btn btn-ghost" type="button" data-act="reject-claim" data-id="${item.user_id}">Отклонить</button></span></div>`).join("")}</div>
+  </section>`;
+}
+
 function meter(row) {
   const parts = [
     ["mastered", row.mastered],
@@ -198,6 +207,7 @@ export function renderOverview() {
           <p>${lead}</p>
         </div>
       </div>
+      ${claimsBlock()}
       <div class="overview-grid">
         <article class="hero-card">
           <div class="hero-card__top">
@@ -425,6 +435,13 @@ function wizardBody() {
   const wizard = store.wizard;
   const topics = (store.report?.topics || []).map((topic) => topic.title);
   if (!wizard) return "";
+  if (!(store.report?.subjects || []).length) {
+    return `<section class="panel">
+      <div class="who"><b>Работу отправить нельзя</b><span>Нет предмета</span></div>
+      <p>В этом классе нет назначения на предмет. Пока учителя предмета нет, заданий нет.</p>
+      <button class="btn btn-primary" type="button" data-act="nav" data-screen="tasks">Закрыть</button>
+    </section>`;
+  }
   const titles = wizard.mode === "stimul"
     ? ["Тема", "Сколько заданий", "Кому отправить", "Просмотр"]
     : ["Тема", "Вопросы", "Кому отправить", "Просмотр"];
@@ -462,8 +479,8 @@ function wizardBody() {
       </div>
       ${wizard.audience === "selected" ? `<p class="hint">Отдельных групп на сервере нет. Отметьте учеников ${esc(classTitle())}.</p>
         <div class="stack tight">${students.map((student) => {
-          const on = wizard.students.includes(student.display_name);
-          return `<button class="choice ${on ? "is-on" : ""}" type="button" data-act="toggle-student" data-name="${esc(student.display_name)}" aria-pressed="${on}">${esc(student.display_name)}</button>`;
+          const on = (wizard.studentIds || []).includes(student.user_id);
+          return `<button class="choice ${on ? "is-on" : ""}" type="button" data-act="toggle-student" data-id="${student.user_id}" data-name="${esc(student.display_name)}" aria-pressed="${on}">${esc(student.display_name)}</button>`;
         }).join("")}</div>` : `<p class="hint">Работа уйдёт ученикам ${esc(classTitle())}.</p>`}`;
   } else {
     const draft = wizard.draft;
@@ -602,6 +619,7 @@ export function startCompose(topic = "", mode = "own") {
     difficulty: "normal",
     audience: "class",
     students: [],
+    studentIds: [],
     own: [],
     useMaterial: false,
     draft: null,
@@ -668,7 +686,12 @@ export function wizardNext() {
       return;
     }
   }
-  if (wizard.step === 3 && wizard.audience === "selected" && !wizard.students.length) {
+  if (wizard.step === 3 && !(store.report?.students || []).length) {
+    wizard.fieldError = "В классе нет учеников, отправлять некому.";
+    refresh();
+    return;
+  }
+  if (wizard.step === 3 && wizard.audience === "selected" && !(wizard.studentIds || []).length) {
     wizard.fieldError = "Отметьте хотя бы одного ученика.";
     refresh();
     return;
@@ -708,12 +731,16 @@ export function setAudience(value) {
   refresh();
 }
 
-export function toggleStudent(name) {
+export function toggleStudent(id, name) {
   const wizard = store.wizard;
-  if (!wizard || !name) return;
-  wizard.students = wizard.students.includes(name)
-    ? wizard.students.filter((item) => item !== name)
-    : [...wizard.students, name];
+  const key = Number(id);
+  if (!wizard || !key) return;
+  const ids = wizard.studentIds || [];
+  wizard.studentIds = ids.includes(key) ? ids.filter((item) => item !== key) : [...ids, key];
+  const roster = store.report?.students || [];
+  wizard.students = wizard.studentIds
+    .map((item) => roster.find((student) => student.user_id === item)?.display_name || (item === key ? name : ""))
+    .filter(Boolean);
   refresh();
 }
 
@@ -732,6 +759,7 @@ function draftPayload() {
     difficulty: wizard.difficulty,
     audience: wizard.audience,
     students: wizard.audience === "selected" ? wizard.students : [],
+    student_ids: wizard.audience === "selected" ? wizard.studentIds || [] : [],
     use_material: false,
   };
 }
@@ -894,7 +922,7 @@ export async function showClassInfo() {
   const title = classTitle();
   await confirmDialog({
     title: title,
-    text: `Сейчас в кабинете один класс: ${title}. Других классов в данных нет, поэтому переключать не на что.`,
+    text: `Сейчас открыт ${title}. Другой класс выбирается в списке, если он назначен.`,
     confirm: "Понятно",
   });
 }

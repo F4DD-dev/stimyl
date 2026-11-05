@@ -16,9 +16,14 @@ from app.db.models import (
     Attempt,
     AuditLog,
     AuthIdentity,
+    ClassSubjectTeacher,
     ClassTeacher,
     Consent,
     Enrollment,
+    JoinApplication,
+    Notice,
+    OutboundNotice,
+    StaffSeat,
     LearningSession,
     LoginGuard,
     Message,
@@ -30,6 +35,8 @@ from app.db.models import (
     TopicState,
     TransferCode,
     User,
+    WorkAnswer,
+    WorkRecipient,
     UserSession,
     WebLoginCode,
 )
@@ -353,7 +360,8 @@ async def _issue_login(
     if user.role == "teacher" and user.status != "active":
         return IssuedCode(False, detail=PENDING_BROWSER)
     allowed = {"teacher", "admin", "student"} if allow_student else {"teacher", "admin"}
-    if user.role not in allowed or user.status != "active":
+    pending_student = allow_student and user.role == "student" and user.status == "pending"
+    if not pending_student and (user.role not in allowed or user.status != "active"):
         return IssuedCode(False, detail=WEB_DENIED)
     since = _now() - timedelta(hours=1)
     issued = await session.scalar(
@@ -428,7 +436,7 @@ async def claim_webapp_ticket(
     if row is None or row.used_at is not None or _aware(row.expires_at) < now:
         return None
     user = await session.get(User, row.user_id)
-    if user is None or user.deleted_at is not None or user.status != "active":
+    if user is None or user.deleted_at is not None or user.status not in {"active", "pending"}:
         row.used_at = now
         return None
     bound = await ensure_webapp_identity(session, user, web_user_id)
@@ -748,6 +756,16 @@ async def delete_user_data(session: AsyncSession, user_id: int, actor_id: int | 
     await session.execute(delete(LearningSession).where(LearningSession.user_id == user_id))
     await session.execute(delete(Enrollment).where(Enrollment.user_id == user_id))
     await session.execute(delete(ClassTeacher).where(ClassTeacher.user_id == user_id))
+    await session.execute(delete(ClassSubjectTeacher).where(ClassSubjectTeacher.user_id == user_id))
+    await session.execute(delete(JoinApplication).where(JoinApplication.user_id == user_id))
+    await session.execute(
+        update(JoinApplication).where(JoinApplication.reviewed_by == user_id).values(reviewed_by=None)
+    )
+    await session.execute(update(StaffSeat).where(StaffSeat.user_id == user_id).values(user_id=None))
+    await session.execute(delete(Notice).where(Notice.user_id == user_id))
+    await session.execute(delete(OutboundNotice).where(OutboundNotice.user_id == user_id))
+    await session.execute(delete(WorkAnswer).where(WorkAnswer.user_id == user_id))
+    await session.execute(delete(WorkRecipient).where(WorkRecipient.user_id == user_id))
     await session.execute(delete(WebLoginCode).where(WebLoginCode.user_id == user_id))
     await session.execute(delete(UserSession).where(UserSession.user_id == user_id))
     await session.execute(delete(Consent).where(Consent.user_id == user_id))

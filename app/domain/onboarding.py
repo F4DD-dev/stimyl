@@ -43,15 +43,23 @@ def bootstrap_enabled(settings: Settings) -> bool:
     return settings.env != "prod" and bool(settings.first_teacher_bootstrap)
 
 
+async def prototype_class(session: AsyncSession) -> SchoolClass | None:
+    """8Б демо или тестовой школы, не одноимённый класс из списка учреждений."""
+    return await session.scalar(
+        select(SchoolClass)
+        .join(School, School.id == SchoolClass.school_id)
+        .where(SchoolClass.title == CLASS_TITLE, School.external_key.is_(None))
+        .order_by(SchoolClass.id)
+    )
+
+
 async def ensure_prototype(session: AsyncSession) -> tuple[SchoolClass, Subject]:
     """Класс 8Б и математика. Повтор ничего не дублирует и людей не создаёт."""
     await seed_topics(session)
     subject = await session.scalar(select(Subject).where(Subject.title == SUBJECT_TITLE))
     if subject is None:
         raise RuntimeError("subject missing")
-    school_class = await session.scalar(
-        select(SchoolClass).where(SchoolClass.title == CLASS_TITLE).order_by(SchoolClass.id)
-    )
+    school_class = await prototype_class(session)
     if school_class is not None:
         return school_class, subject
     school = await session.scalar(select(School).order_by(School.id))
@@ -130,16 +138,11 @@ async def register_phone(
             f"Ты учитель-администратор. Класс {school_class.title}, предмет {subject.title}.",
         )
 
-    await _make_student(session, user, school_class, application)
-    notified = await notify_new_claim(session, user, school_class, settings)
-    if notified:
-        reply = f"Заявка в класс {school_class.title} отправлена учителю и ждёт подтверждения."
-    else:
-        reply = (
-            f"Заявка в класс {school_class.title} записана. "
-            "Ответственный учитель ещё не назначен, принять её пока некому."
-        )
-    return PhoneOutcome(True, "student", reply)
+    return PhoneOutcome(
+        True,
+        "choose",
+        "Номер подтверждён. Выбери, кто ты, затем школу и класс.",
+    )
 
 
 def _known_text(user: User, class_title: str, subject_title: str) -> str:
@@ -259,17 +262,28 @@ async def _make_student(
 
 
 async def claims_for(session: AsyncSession, actor: User) -> list[dict]:
-    if not actor.can_manage_school:
+    if actor.role != "teacher" or actor.status != "active" or actor.deleted_at is not None:
         return []
-    rows = (
-        await session.execute(
-            select(JoinApplication, User, SchoolClass)
-            .join(User, User.id == JoinApplication.user_id)
-            .join(SchoolClass, SchoolClass.id == JoinApplication.class_id)
-            .where(JoinApplication.status == "pending", JoinApplication.wanted_role == "student")
-            .order_by(JoinApplication.created_at)
+    query = (
+        select(JoinApplication, User, SchoolClass)
+        .join(User, User.id == JoinApplication.user_id)
+        .join(SchoolClass, SchoolClass.id == JoinApplication.class_id)
+        .where(
+            JoinApplication.status == "pending",
+            JoinApplication.wanted_role.in_(("student", "teacher")),
         )
-    ).all()
+        .order_by(JoinApplication.created_at)
+    )
+    if not actor.can_manage_school:
+        class_ids = list(
+            await session.scalars(
+                select(ClassTeacher.class_id).where(ClassTeacher.user_id == actor.id)
+            )
+        )
+        if not class_ids:
+            return []
+        query = query.where(JoinApplication.class_id.in_(class_ids))
+    rows = (await session.execute(query)).all()
     return [_claim_dict(application, person, school_class) for application, person, school_class in rows]
 
 
@@ -282,11 +296,30 @@ def _claim_dict(application: JoinApplication, person: User, school_class: School
         "class_title": school_class.title,
         "class_id": school_class.id,
         "status": application.status,
+        "wanted_role": application.wanted_role,
     }
 
 
+async def _can_review(session: AsyncSession, actor: User, class_id: int) -> bool:
+    if (
+        actor.role != "teacher"
+        or actor.status != "active"
+        or actor.deleted_at is not None
+    ):
+        return False
+    if actor.can_manage_school:
+        return True
+    link = await session.scalar(
+        select(ClassTeacher.user_id).where(
+            ClassTeacher.class_id == class_id,
+            ClassTeacher.user_id == actor.id,
+        )
+    )
+    return link is not None
+
+
 async def accept_claim(session: AsyncSession, actor: User, student_id: int) -> tuple[bool, str]:
-    if actor.role != "teacher" or not actor.can_manage_school or actor.id == student_id:
+    if actor.id == student_id or actor.role != "teacher" or actor.status != "active" or actor.deleted_at is not None:
         return False, "Недостаточно прав"
     application = await session.scalar(
         select(JoinApplication)
@@ -299,13 +332,65 @@ async def accept_claim(session: AsyncSession, actor: User, student_id: int) -> t
         or student is None
         or application.status != "pending"
         or application.class_id is None
-        or application.wanted_role != "student"
+        or application.wanted_role not in {"student", "teacher"}
     ):
         return False, "Заявки нет"
+    if not await _can_review(session, actor, application.class_id):
+        return False, "Недостаточно прав"
     now = datetime.now(UTC)
     application.status = "approved"
     application.reviewed_by = actor.id
     application.reviewed_at = now
+    school_class = await session.get(SchoolClass, application.class_id)
+    title = school_class.title if school_class is not None else CLASS_TITLE
+    if application.wanted_role == "teacher":
+        student.role = "teacher"
+        student.status = "active"
+        link = await session.scalar(
+            select(ClassTeacher).where(
+                ClassTeacher.class_id == application.class_id,
+                ClassTeacher.user_id == student.id,
+            )
+        )
+        if link is None:
+            session.add(ClassTeacher(class_id=application.class_id, user_id=student.id))
+        await seed_topics(session)
+        subject = await session.scalar(select(Subject).where(Subject.title == SUBJECT_TITLE))
+        if subject is not None:
+            post = await session.scalar(
+                select(ClassSubjectTeacher).where(
+                    ClassSubjectTeacher.class_id == application.class_id,
+                    ClassSubjectTeacher.user_id == student.id,
+                    ClassSubjectTeacher.subject_id == subject.id,
+                )
+            )
+            if post is None:
+                session.add(
+                    ClassSubjectTeacher(
+                        class_id=application.class_id,
+                        user_id=student.id,
+                        subject_id=subject.id,
+                    )
+                )
+        enrollment = await session.scalar(
+            select(Enrollment).where(
+                Enrollment.class_id == application.class_id,
+                Enrollment.user_id == student.id,
+            )
+        )
+        if enrollment is not None:
+            await session.delete(enrollment)
+        await enqueue_notice(
+            session,
+            student.id,
+            kind="enrolled",
+            title="Тебя приняли в класс",
+            body=f"Тебя приняли учителем в класс {title}. Можно открыть кабинет.",
+            button_text="Войти в кабинет",
+            button_payload="web_login",
+        )
+        await session.flush()
+        return True, student.display_name
     student.role = "student"
     student.status = "active"
     enrollment = await session.scalar(
@@ -318,8 +403,6 @@ async def accept_claim(session: AsyncSession, actor: User, student_id: int) -> t
         session.add(Enrollment(class_id=application.class_id, user_id=student.id, status="active"))
     else:
         enrollment.status = "active"
-    school_class = await session.get(SchoolClass, application.class_id)
-    title = school_class.title if school_class is not None else CLASS_TITLE
     await enqueue_notice(
         session,
         student.id,
@@ -334,7 +417,7 @@ async def accept_claim(session: AsyncSession, actor: User, student_id: int) -> t
 
 
 async def reject_claim(session: AsyncSession, actor: User, student_id: int) -> tuple[bool, str]:
-    if actor.role != "teacher" or not actor.can_manage_school or actor.id == student_id:
+    if actor.id == student_id or actor.role != "teacher" or actor.status != "active" or actor.deleted_at is not None:
         return False, "Недостаточно прав"
     application = await session.scalar(
         select(JoinApplication)
@@ -342,8 +425,10 @@ async def reject_claim(session: AsyncSession, actor: User, student_id: int) -> t
         .with_for_update()
     )
     student = await session.get(User, student_id)
-    if application is None or student is None or application.status != "pending":
+    if application is None or student is None or application.status != "pending" or application.class_id is None:
         return False, "Заявки нет"
+    if not await _can_review(session, actor, application.class_id):
+        return False, "Недостаточно прав"
     now = datetime.now(UTC)
     application.status = "rejected"
     application.reviewed_by = actor.id

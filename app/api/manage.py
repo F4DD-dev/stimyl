@@ -25,6 +25,10 @@ class AppointmentBody(BaseModel):
     subject_id: int
 
 
+async def _teacher(request: Request, session: AsyncSession) -> User:
+    return await user_from_cookie(request, session, "teacher")
+
+
 async def _manager(request: Request, session: AsyncSession) -> User:
     user = await user_from_cookie(request, session, "teacher")
     if not user.can_manage_school:
@@ -34,7 +38,7 @@ async def _manager(request: Request, session: AsyncSession) -> User:
 
 @router.get("/api/manage/claims")
 async def claims(request: Request, session: AsyncSession = Depends(db_session)) -> dict:
-    actor = await _manager(request, session)
+    actor = await _teacher(request, session)
     return {"items": await claims_for(session, actor)}
 
 
@@ -44,7 +48,7 @@ async def accept(
     request: Request,
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    actor = await _manager(request, session)
+    actor = await _teacher(request, session)
     ok, detail = await accept_claim(session, actor, user_id)
     if not ok:
         raise HTTPException(status_code=404, detail=detail)
@@ -58,7 +62,7 @@ async def reject(
     request: Request,
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    actor = await _manager(request, session)
+    actor = await _teacher(request, session)
     ok, detail = await reject_claim(session, actor, user_id)
     if not ok:
         raise HTTPException(status_code=404, detail=detail)

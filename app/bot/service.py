@@ -585,6 +585,7 @@ async def class_report(
         wrong,
         _today(settings),
         activity=activity,
+        student_ids=[row.id for row in student_rows],
     )
 
 

@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import client_ip, db_session, user_from_cookie
-from app.db.models import ClassTeacher, Enrollment, SchoolClass
+from app.db.models import ClassTeacher, Enrollment, JoinApplication, School, SchoolClass
 from app.domain.account_copy import BLOCKED, OPEN_FROM_CHAT, PENDING_BROWSER
 from app.domain.accounts import (
     BOT_PROVIDER,
@@ -81,7 +81,7 @@ async def open_session(
     if user.status == "blocked":
         logger.info("miniapp session rejected reason=blocked")
         raise HTTPException(status_code=403, detail=BLOCKED)
-    if user.status != "active":
+    if user.status not in {"active", "pending"}:
         logger.info("miniapp session rejected reason=pending")
         raise HTTPException(status_code=403, detail=PENDING_BROWSER)
     raw, csrf = await open_browser_session(
@@ -102,7 +102,7 @@ async def current_session(
     request: Request,
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    user = await user_from_cookie(request, session)
+    user = await user_from_cookie(request, session, allow_pending=True)
     class_title = await session.scalar(
         select(SchoolClass.title)
         .join(Enrollment, Enrollment.class_id == SchoolClass.id)
@@ -116,6 +116,25 @@ async def current_session(
             .where(ClassTeacher.user_id == user.id)
             .order_by(SchoolClass.id)
         )
+    application = await session.get(JoinApplication, user.id)
+    school_title = ""
+    application_status = application.status if application is not None else ""
+    class_has_teacher = False
+    if application is not None and application.class_id is not None and not class_title:
+        school_class = await session.get(SchoolClass, application.class_id)
+        if school_class is not None:
+            class_title = school_class.title
+            school = await session.get(School, school_class.school_id)
+            school_title = school.title if school is not None else ""
+            class_has_teacher = (
+                await session.scalar(
+                    select(ClassTeacher.user_id).where(ClassTeacher.class_id == school_class.id)
+                )
+                is not None
+            )
+    elif application is not None and application.school_id is not None:
+        school = await session.get(School, application.school_id)
+        school_title = school.title if school is not None else ""
     return {
         "role": user.role,
         "display_name": user.display_name,
@@ -123,7 +142,10 @@ async def current_session(
         "csrf": getattr(request.state, "csrf", ""),
         "can_manage_school": bool(user.can_manage_school),
         "class_title": class_title or "",
+        "school_title": school_title,
         "status": user.status,
+        "application_status": application_status,
+        "class_has_teacher": class_has_teacher,
     }
 
 

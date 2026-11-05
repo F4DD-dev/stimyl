@@ -25,6 +25,7 @@ from app.domain.onboarding import (
     claims_for,
     enqueue_notice,
     ensure_prototype,
+    prototype_class,
 )
 
 BOT = "max"
@@ -99,9 +100,7 @@ async def grant_school_manager(
     card = await describe_person(session, max_id)
     if not card.found or card.user_id is None:
         return CommandResult(False, False, card.text)
-    school_class = await session.scalar(
-        select(SchoolClass).where(SchoolClass.title == CLASS_TITLE).order_by(SchoolClass.id)
-    )
+    school_class = await prototype_class(session)
     class_note = school_class.title if school_class is not None else CLASS_TITLE
     plan = (
         f"{card.text}\n"
@@ -191,9 +190,7 @@ async def transfer_school_manager(
 
 
 async def class_status(session: AsyncSession) -> str:
-    school_class = await session.scalar(
-        select(SchoolClass).where(SchoolClass.title == CLASS_TITLE).order_by(SchoolClass.id)
-    )
+    school_class = await prototype_class(session)
     if school_class is None:
         return "Класса 8Б ещё нет. Команда никого не создаёт."
     subject = await session.scalar(select(Subject).where(Subject.title == SUBJECT_TITLE))
@@ -259,9 +256,8 @@ async def bot_students(session: AsyncSession, user: User) -> str:
         )
     )
     if user.can_manage_school:
-        prototype = await session.scalar(
-            select(SchoolClass.id).where(SchoolClass.title == CLASS_TITLE).order_by(SchoolClass.id)
-        )
+        prototype_row = await prototype_class(session)
+        prototype = prototype_row.id if prototype_row is not None else None
         if prototype is not None and prototype not in class_ids:
             class_ids.append(prototype)
     if not class_ids:

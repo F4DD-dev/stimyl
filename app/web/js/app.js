@@ -17,7 +17,7 @@ import {
   submitAnswer,
   submitQuestion,
   takePhoto,
-} from "./student.js?v=11";
+} from "./student.js?v=12";
 import { go, refresh, store, subscribe } from "./store.js";
 import {
   focusStudent,
@@ -40,7 +40,7 @@ import {
   wizardBack,
   wizardNext,
   writeOwn,
-} from "./teacher.js?v=11";
+} from "./teacher.js?v=12";
 import { acceptOne, appoint, changePerson, loadManage, rejectOne } from "./manage.js?v=9";
 import { brand, confirmDialog, esc, icon, mark, skeleton, toast } from "./ui.js?v=3";
 
@@ -218,7 +218,16 @@ async function boot() {
     store.nameChanged = Boolean(me.name_changed);
     store.canManage = Boolean(me.can_manage_school);
     store.classTitle = me.class_title || "";
+    store.schoolTitle = me.school_title || "";
+    store.applicationStatus = me.application_status || "";
+    store.classHasTeacher = Boolean(me.class_has_teacher);
     store.preview = false;
+    if (me.status === "pending") {
+      store.booting = false;
+      store.gate = "waiting";
+      refresh();
+      return;
+    }
     if (!store.fromMax && entry !== "auto" && entry !== me.role) {
       store.booting = false;
       store.gate = "mismatch";
@@ -428,6 +437,20 @@ function returnToChat() {
 }
 
 function renderGate() {
+  if (store.gate === "waiting") {
+    const school = store.schoolTitle ? `${store.schoolTitle}, ` : "";
+    const room = store.classTitle ? `класс ${store.classTitle}` : "класс ещё не выбран";
+    const rejected = store.applicationStatus === "rejected";
+    const quiet = !store.classHasTeacher
+      ? "Учителя в классе нет, поэтому заданий нет. Они появятся, когда учителя назначат и заявку примут."
+      : "Заданий пока нет. Они появятся после того, как заявку примут.";
+    return `<div class="gate">${brand()}
+      <h1>${rejected ? "Заявку отклонили" : "Заявка на рассмотрении"}</h1>
+      <p>${rejected ? "Вернись в чат и выбери школу и класс снова." : `${esc(school)}${esc(room)}. Кабинет открыт, решение ещё не пришло.`}</p>
+      ${rejected ? "" : `<p>${quiet}</p>`}
+      <button class="btn btn-primary" type="button" data-act="retry-auth">Проверить заявку</button>
+    </div>`;
+  }
   if (store.gate === "ticket") {
     return `<div class="gate">${brand()}
       <h1>Кабинет</h1>
@@ -697,7 +720,7 @@ async function onAction(act, button) {
   else if (act === "count") setCount(button.dataset.value);
   else if (act === "difficulty") setDifficulty(button.dataset.value);
   else if (act === "audience") setAudience(button.dataset.value);
-  else if (act === "toggle-student") toggleStudent(button.dataset.name);
+  else if (act === "toggle-student") toggleStudent(button.dataset.id, button.dataset.name);
   else if (act === "redraft") await loadDraft();
   else if (act === "send-assignment") await sendAssignment();
 }

@@ -4,10 +4,20 @@ from sqlalchemy import func, select
 
 from app.db.models import AuditLog, Enrollment, JoinApplication, OutboundNotice, RuntimeFlag, User
 from app.domain.accounts import accept_consent
-from app.domain.onboarding import BOOTSTRAP_KEY, accept_claim, register_phone, reject_claim
+from app.domain.directory import file_student_application
+from app.domain.onboarding import BOOTSTRAP_KEY, accept_claim, ensure_prototype, register_phone, reject_claim
 from app.domain.school_admin import grant_school_manager, transfer_school_manager
 from tests.support import message, post_update
 from tests.test_onboarding import _consent, _contact, _started
+
+
+async def _claim(api, user_id: int) -> None:
+    factory = api.app.state.session_factory
+    async with factory() as session:
+        user = await session.get(User, user_id)
+        school_class, _subject = await ensure_prototype(session)
+        await file_student_application(session, user, school_class, api.settings)
+        await session.commit()
 
 
 async def _person(api, external_id: str, name: str, digits: str) -> int:
@@ -59,6 +69,7 @@ async def test_manager_can_accept_once_and_a_second_click_does_not_duplicate(api
     api.settings.first_teacher_bootstrap = True
     teacher_id = await _person(api, "920001", "Марина", "79005550001")
     student_id = await _person(api, "920002", "Егор", "79005550002")
+    await _claim(api, student_id)
     factory = api.app.state.session_factory
 
     async def once() -> bool:
@@ -95,6 +106,7 @@ async def test_missing_manager_is_explicit_and_grant_reopens_the_queue(api):
     api.settings.env = "prod"
     api.settings.first_teacher_bootstrap = False
     student_id = await _person(api, "930002", "Егор", "79006660002")
+    await _claim(api, student_id)
     factory = api.app.state.session_factory
     async with factory() as session:
         flag = await session.get(RuntimeFlag, BOOTSTRAP_KEY)
@@ -177,6 +189,13 @@ async def test_new_claim_notifies_the_manager_with_three_buttons(api):
     await post_update(api, _started(940002, "Егор"))
     await post_update(api, _consent(940002, "Егор"))
     await post_update(api, _contact(940002, "Егор", "egor-phone", "79007770002", token))
+    assert "кто ты" in api.memory.sent[-1]["text"].casefold()
+    from tests.test_onboarding import _click
+
+    await _click(api, 940002, "Егор", "role:student")
+    await _click(api, 940002, "Егор", "city:0")
+    await _click(api, 940002, "Егор", "school:blg-16")
+    await _click(api, 940002, "Егор", "8Б", by_text=True)
     assert "заявк" in api.memory.sent[-1]["text"].casefold()
 
     from app.bot.delivery import send_pending_notices
@@ -191,7 +210,7 @@ async def test_new_claim_notifies_the_manager_with_three_buttons(api):
     assert labels == {"Принять", "Отклонить", "Заявки"}
 
     await post_update(api, message(940002, "Егор", "заявки", "egor-apps"))
-    assert "учител" in api.memory.sent[-1]["text"].casefold()
+    assert "подожд" in api.memory.sent[-1]["text"].casefold()
 
 
 async def test_transfer_moves_the_flag_and_preview_does_not(api):

@@ -42,7 +42,17 @@ from app.domain.accounts import (
     take_hint,
     touch,
 )
-from app.domain.directory import application_of, placed
+from app.domain.directory import (
+    application_of,
+    choose_city,
+    choose_class,
+    choose_role,
+    choose_school,
+    ensure_directory,
+    placed,
+    role_reply,
+    school_reply,
+)
 from app.domain.onboarding import accept_claim, register_phone, reject_claim, reviewer_name
 from app.domain.phone import normalize_phone, phone_from_vcard, verify_contact_hash
 from app.domain.school_admin import bot_applications, bot_my_class, bot_students
@@ -129,6 +139,8 @@ async def open_gate(
     if user.phone_hash is None:
         phone = await _phone_gate(session, user, incoming, settings)
         return GateOutcome(user, phone.replies, True)
+    if not await placed(session, user):
+        return await _placement(session, user, incoming, settings)
     if incoming.payload == CONSENT_YES:
         return GateOutcome(user, [GateReply(ALREADY)], True)
 
@@ -258,6 +270,95 @@ def _join_reply(joined, *, unknown: bool) -> str | None:
     return None
 
 
+async def _placement(
+    session: AsyncSession, user: User, incoming: Incoming, settings: Settings
+) -> GateOutcome:
+    """Школа и класс до кабинета. Пока заявку не приняли, учёба не начинается."""
+    action = _named_action(incoming.payload)
+    row = await application_of(session, user)
+    picking = action.startswith(("role:", "city:", "school:", "class:")) or row is None or row.status in {
+        "draft",
+        "rejected",
+    }
+    if picking:
+        await ensure_directory(session)
+    if action.startswith("role:"):
+        text, buttons = await choose_role(session, user, action.split(":", 1)[1])
+        return GateOutcome(user, [GateReply(text, buttons)], True)
+    if action.startswith("city:") and action.split(":", 1)[1].isdigit():
+        text, buttons = await choose_city(session, user, int(action.split(":", 1)[1]))
+        return GateOutcome(user, [GateReply(text, buttons)], True)
+    if action.startswith("school:"):
+        text, buttons = await choose_school(
+            session,
+            user,
+            action.split(":", 1)[1],
+            allow_admin_bootstrap=False,
+        )
+        return GateOutcome(user, [GateReply(text, buttons)], True)
+    if action.startswith("class:") and action.split(":", 1)[1].isdigit():
+        text, buttons = await choose_class(session, user, int(action.split(":", 1)[1]), settings)
+        replies = [GateReply(text, buttons)]
+        row = await application_of(session, user)
+        if row is not None and row.status == "pending":
+            opened = await _send_app(session, user, settings, label="Открыть кабинет", lead=text)
+            if opened.replies and opened.replies[0].app_payload:
+                replies = opened.replies
+            else:
+                replies = [GateReply(text)]
+        return GateOutcome(user, replies, True)
+    if action in {WEB_LOGIN, "open_cabinet", "progress"} or _fold(incoming.text or "") in {
+        "войти в кабинет",
+        "открыть кабинет",
+        "мой прогресс",
+    }:
+        row = await application_of(session, user)
+        if row is not None and row.status == "pending":
+            return await _send_app(
+                session,
+                user,
+                settings,
+                label="Открыть кабинет",
+                lead="Кнопка откроет кабинет. Заявка ещё ждёт решения, заданий пока нет.",
+            )
+    row = await application_of(session, user)
+    if row is not None and row.status == "pending":
+        return GateOutcome(
+            user,
+            [
+                GateReply(
+                    "Заявка уже отправлена. Открой кабинет и подожди, пока её примут.",
+                    (("Открыть кабинет", "progress"),),
+                )
+            ],
+            True,
+        )
+    if row is not None and row.status == "rejected":
+        text, buttons = role_reply()
+        return GateOutcome(
+            user,
+            [GateReply("Заявку отклонили. Выбери школу и класс снова."), GateReply(text, buttons)],
+            True,
+        )
+    if row is not None and row.status == "draft" and row.school_id and not row.class_id:
+        from app.db.models import School
+
+        school = await session.get(School, row.school_id)
+        if school is not None and school.external_key:
+            text, buttons = await choose_school(
+                session,
+                user,
+                school.external_key,
+                allow_admin_bootstrap=False,
+            )
+            return GateOutcome(user, [GateReply(text, buttons)], True)
+    if row is not None and row.status == "draft" and row.city and not row.school_id:
+        text, buttons = school_reply(row.city)
+        return GateOutcome(user, [GateReply(text, buttons)], True)
+    text, buttons = role_reply()
+    return GateOutcome(user, [GateReply(text, buttons)], True)
+
+
 def _ask_phone() -> GateReply:
     return GateReply(
         "Нажми «Поделиться номером». Номер текстом и пересланную карточку не принимаю.",
@@ -318,6 +419,10 @@ async def _phone_gate(
         )
     result = await register_phone(session, user, digits, settings)
     replies = [GateReply(result.text)]
+    if result.ok and result.kind == "choose":
+        text, buttons = role_reply()
+        replies.append(GateReply(text, buttons))
+        return GateOutcome(user, replies, True)
     if result.ok and result.kind == "teacher":
         cabinet = await _send_code(session, user, settings)
         return GateOutcome(user, replies + cabinet.replies, True)

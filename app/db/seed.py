@@ -71,7 +71,12 @@ async def _school(session: AsyncSession) -> School:
 
 
 async def _class(session: AsyncSession, school: School) -> SchoolClass:
-    found = await session.scalar(select(SchoolClass).where(SchoolClass.title == DEMO_CLASS_TITLE))
+    found = await session.scalar(
+        select(SchoolClass).where(
+            SchoolClass.school_id == school.id,
+            SchoolClass.title == DEMO_CLASS_TITLE,
+        )
+    )
     if found is not None:
         return found
     found = SchoolClass(

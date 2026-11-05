@@ -2,9 +2,9 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
-from app.db.models import Topic, WorkAnswer, WorkRecipient
+from app.db.models import ClassTeacher, Topic, WorkAnswer, WorkRecipient
 from tests.support import auth_as
 
 
@@ -127,3 +127,71 @@ async def test_stimul_refuses_a_topic_outside_the_programme(seeded):
     async with api.app.state.session_factory() as session:
         stored = await session.scalar(select(Topic).where(Topic.title == "Сложение дробей"))
     assert stored is None
+
+
+async def test_class_without_a_teacher_has_no_assignments(seeded):
+    api = seeded
+    await auth_as(api, "900001")
+    saved = await api.client.post(
+        "/api/teacher/works",
+        json={
+            "topic": "Дроби",
+            "goal": "Общий знаменатель",
+            "count": 1,
+            "difficulty": "easy",
+            "audience": "selected",
+            "students": ["Алексей"],
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    work_id = saved.json()["id"]
+    item_id = saved.json()["items"][0]["id"]
+    published = await api.client.post(f"/api/teacher/works/{work_id}/publish")
+    assert published.status_code == 200, published.text
+
+    factory = api.app.state.session_factory
+    async with factory() as session:
+        await session.execute(delete(ClassTeacher))
+        await session.commit()
+
+    await auth_as(api, "900002")
+    works = await api.client.get("/api/student/works")
+    assert works.status_code == 200, works.text
+    assert works.json()["items"] == []
+    assert works.json()["reason"] == "no_teacher"
+    refused = await api.client.post(
+        f"/api/student/works/{work_id}/answers",
+        json={"answers": [{"item_id": item_id, "answer": "1/2"}]},
+    )
+    assert refused.status_code == 404
+
+
+async def test_second_submit_does_not_create_another_attempt(seeded):
+    api = seeded
+    await auth_as(api, "900001")
+    saved = await api.client.post(
+        "/api/teacher/works",
+        json={
+            "topic": "Дроби",
+            "goal": "Общий знаменатель",
+            "count": 1,
+            "difficulty": "easy",
+            "audience": "selected",
+            "students": ["Алексей"],
+        },
+    )
+    work_id = saved.json()["id"]
+    item_id = saved.json()["items"][0]["id"]
+    assert (await api.client.post(f"/api/teacher/works/{work_id}/publish")).status_code == 200
+    await auth_as(api, "900002")
+    body = {"answers": [{"item_id": item_id, "answer": "1/2"}]}
+    first = await api.client.post(f"/api/student/works/{work_id}/answers", json=body)
+    assert first.status_code == 200, first.text
+    second = await api.client.post(f"/api/student/works/{work_id}/answers", json=body)
+    assert second.status_code == 200, second.text
+    assert second.json()["status"] == "done"
+    from app.db.models import Attempt
+
+    async with api.app.state.session_factory() as session:
+        count = len(list(await session.scalars(select(Attempt).where(Attempt.user_id.is_not(None)))))
+    assert count == 1

@@ -491,7 +491,7 @@ export function renderTasks() {
       ${store.worksError ? `<p class="field-error">${esc(store.worksError.message)}</p>` : ""}
       ${items.length ? filled : `<article class="empty-task-card">
         <div class="empty-task-card__art" aria-hidden="true"><div class="task-sheet task-sheet--back"></div><div class="task-sheet task-sheet--front"><i></i><i></i><i></i></div><span class="art-dot art-dot--one"></span><span class="art-dot art-dot--two"></span></div>
-        <span class="eyebrow">Пока тихо</span><h2>Заданий пока нет</h2><p>${store.preview ? "В демонстрации список с сервера не подставляется." : "Когда учитель опубликует работу, она появится здесь и в чате."}</p>
+        <span class="eyebrow">Пока тихо</span><h2>Заданий пока нет</h2><p>${store.preview ? "В демонстрации список с сервера не подставляется." : store.works?.reason === "no_teacher" ? "В классе нет учителя, поэтому заданий нет." : "Когда учитель опубликует работу, она появится здесь и в чате."}</p>
       </article>`}
     </div>
   </div>`;

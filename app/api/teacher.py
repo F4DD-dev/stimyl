@@ -120,7 +120,7 @@ async def teacher_class(
     payload["classes"] = await classes_of(session, teacher)
     payload["can_manage_school"] = bool(teacher.can_manage_school)
     payload["claims_reviewer"] = await reviewer_name(session)
-    payload["pending_claims"] = await claims_for(session, teacher) if teacher.can_manage_school else []
+    payload["pending_claims"] = await claims_for(session, teacher)
     active_students = 0
     if current is not None:
         active_students = int(
