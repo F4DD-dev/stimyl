@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     llm_model: str = "google/gemma-4-31b-it:free"
     llm_vision_model: str | None = None
     llm_fallback_models: str = "google/gemma-4-26b-a4b-it:free,nvidia/nemotron-3.5-super-vl:free"
+    gigachat_scope: str = "GIGACHAT_API_PERS"
     llm_reasoning: bool = False
     llm_explain_topics: bool = False
     llm_explain_mistakes: bool = False

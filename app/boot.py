@@ -124,12 +124,13 @@ async def probe_max_tls(
 
 LLM_EDGE_HOSTS = (
     "openrouter.ai",
+    "api.giga.chat",
+    "ngw.devices.sberbank.ru",
     "integrate.api.nvidia.com",
     "llm.api.cloud.yandex.net",
     "api.siliconflow.cn",
     "api.deepseek.com",
     "text.pollinations.ai",
-    "gigachat.devices.sberbank.ru",
 )
 
 

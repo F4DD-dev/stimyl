@@ -9,6 +9,7 @@ from app.core.config import Settings
 from app.domain.assist import LessonDraft, TaskDraft, TeacherAsk, plain, task_confirmed
 from app.llm import prompts
 from app.llm.client import ChatClient, loads_object
+from app.llm.gigachat import GigaChatClient
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +107,9 @@ def _task(raw: object) -> TaskDraft | None:
 class LlmTutor:
     enabled = True
 
-    def __init__(self, settings: Settings, client: ChatClient | None = None) -> None:
+    def __init__(
+        self, settings: Settings, client: ChatClient | GigaChatClient | None = None
+    ) -> None:
         self._chat = client or ChatClient(settings)
         self._reasoning = settings.llm_reasoning
         self._verify = settings.llm_verify
@@ -343,7 +346,13 @@ class LlmTutor:
 def build_explainer(settings: Settings) -> Explainer:
     if not settings.feature_llm or not settings.llm_base_url:
         return NullExplainer()
-    if "openrouter.ai" in settings.llm_base_url and not settings.llm_api_key:
+    base = settings.llm_base_url
+    if "giga.chat" in base or "sberbank" in base:
+        if not settings.llm_api_key:
+            logger.warning("gigachat is set without LLM_API_KEY, assistant is off")
+            return NullExplainer()
+        return LlmTutor(settings, client=GigaChatClient(settings))
+    if "openrouter.ai" in base and not settings.llm_api_key:
         logger.warning("openrouter is set without LLM_API_KEY, assistant is off")
         return NullExplainer()
     return LlmTutor(settings)
