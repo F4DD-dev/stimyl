@@ -14,6 +14,20 @@ logger = logging.getLogger(__name__)
 
 _RETRY_STATUS = {408, 429, 500, 502, 503, 504}
 
+_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
+try:
+    from curl_cffi import CurlError
+    from curl_cffi.requests import AsyncSession as _CurlSession
+except ImportError:
+    _CurlSession = None
+    _TRANSPORT_ERRORS = (httpx.HTTPError,)
+else:
+    _TRANSPORT_ERRORS = (httpx.HTTPError, CurlError)
+
 
 class ChatClient:
     def __init__(self, settings: Settings) -> None:
@@ -59,6 +73,8 @@ class ChatClient:
         }
         if self._key:
             headers["Authorization"] = f"Bearer {self._key}"
+        if self._openrouter:
+            headers.setdefault("User-Agent", _BROWSER_UA)
         if time.time() < _quota["closed_until"]:
             logger.warning("llm %s skipped: daily free quota is used up", purpose)
             return None
@@ -66,11 +82,8 @@ class ChatClient:
         pause = 1.5
         for attempt in range(3):
             try:
-                async with httpx.AsyncClient(timeout=self._timeout) as client:
-                    response = await client.post(
-                        f"{self._base}/chat/completions", headers=headers, json=body
-                    )
-            except httpx.HTTPError as exc:
+                response = await self._post(f"{self._base}/chat/completions", headers, body)
+            except _TRANSPORT_ERRORS as exc:
                 logger.error("llm %s transport %s attempt=%s", purpose, type(exc).__name__, attempt)
                 if attempt == 2:
                     return None
@@ -83,15 +96,23 @@ class ChatClient:
                 return None
             if response.status_code in _RETRY_STATUS and attempt < 1:
                 wait = _retry_after(response) or pause
-                logger.warning("llm %s status=%s retry in %.1fs", purpose, response.status_code, wait)
+                logger.warning(
+                    "llm %s status=%s retry in %.1fs", purpose, response.status_code, wait
+                )
                 await asyncio.sleep(min(wait, 12))
                 pause *= 2
                 continue
             if response.status_code == 400 and json_mode and "response_format" in body:
                 body.pop("response_format")
                 continue
-            if not response.is_success:
-                logger.error("llm %s status=%s code=%s", purpose, response.status_code, _code(response))
+            if response.status_code >= 400:
+                logger.error(
+                    "llm %s status=%s code=%s edge=%s",
+                    purpose,
+                    response.status_code,
+                    _code(response),
+                    _edge(response),
+                )
                 return None
             text = _content(response)
             try:
@@ -107,6 +128,14 @@ class ChatClient:
             )
             return text
         return None
+
+    async def _post(self, url: str, headers: dict, body: dict):
+        """OpenRouter — браузерным TLS-отпечатком: Cloudflare отбивает голый httpx."""
+        if self._openrouter and _CurlSession is not None:
+            async with _CurlSession(impersonate="chrome", timeout=self._timeout) as session:
+                return await session.post(url, headers=headers, json=body)
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            return await client.post(url, headers=headers, json=body)
 
 
 _quota = {"closed_until": 0.0}
@@ -134,7 +163,12 @@ def _retry_after(response: httpx.Response) -> float | None:
         return None
 
 
-def _code(response: httpx.Response) -> str:
+def _edge(response) -> str:
+    """Кто отказал: cf-ray/server показывают блок на уровне Cloudflare до API."""
+    return response.headers.get("cf-ray") or response.headers.get("server", "")
+
+
+def _code(response) -> str:
     try:
         payload = response.json()
     except ValueError:
@@ -142,6 +176,8 @@ def _code(response: httpx.Response) -> str:
     error = payload.get("error") if isinstance(payload, dict) else None
     if isinstance(error, dict):
         return str(error.get("code") or "")[:40]
+    if isinstance(error, str):
+        return error[:40]
     return ""
 
 
