@@ -42,7 +42,7 @@ import {
   writeOwn,
 } from "./teacher.js?v=11";
 import { acceptOne, appoint, changePerson, loadManage, rejectOne } from "./manage.js?v=9";
-import { brand, confirmDialog, esc, icon, mark, skeleton, toast } from "./ui.js?v=2";
+import { brand, confirmDialog, esc, icon, mark, skeleton, toast } from "./ui.js?v=3";
 
 const TITLES = {
   home: "Главная",
@@ -300,7 +300,7 @@ function sidenav() {
       ];
   const current = store.screen === "lesson" ? "home" : store.screen === "compose" || store.screen === "results" ? "tasks" : store.screen === "manage" || store.screen === "history" ? "profile" : store.screen;
   return `<aside class="sidenav">
-    <div class="side-brand">${brand()}</div>
+    <div class="side-brand">${brand({ home: true })}</div>
     <p class="side-note">${teacher ? "Кабинет учителя" : "Кабинет ученика"}</p>
     ${items.map(([id, label, glyph]) => {
       const active = current === id;

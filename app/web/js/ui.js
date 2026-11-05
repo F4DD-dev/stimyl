@@ -60,8 +60,10 @@ export function mark(large = false) {
   return `<span class="logo${large ? " logo--large" : ""}" aria-hidden="true"><span class="logo__dot logo__dot--green"></span><span class="logo__dot logo__dot--coral"></span><span class="logo__dot logo__dot--yellow"></span></span>`;
 }
 
-export function brand() {
-  return `<span class="brand">${mark()}<span class="logo-lock"><span class="brand__name">Стимул</span><span class="brand__line" aria-hidden="true"></span></span></span>`;
+export function brand({ home = false } = {}) {
+  const inner = `${mark()}<span class="logo-lock"><span class="brand__name">Стимул</span><span class="brand__line" aria-hidden="true"></span></span>`;
+  if (!home) return `<span class="brand">${inner}</span>`;
+  return `<button class="brand" type="button" data-act="nav" data-screen="stimul" aria-label="Стимул">${inner}</button>`;
 }
 
 export function classbar({ title, subject, letter, unread, pickClass = false }) {
@@ -70,7 +72,7 @@ export function classbar({ title, subject, letter, unread, pickClass = false }) 
     ? `<button class="classbar__class" type="button" data-act="class-sheet"><strong>${esc(title || "Класс")}</strong>${subjectLine}</button>`
     : `<div class="classbar__class"><strong>${esc(title || "Класс")}</strong>${subjectLine}</div>`;
   return `<header class="classbar">
-    ${brand()}
+    ${brand({ home: true })}
     ${klass}
     <div class="classbar__actions">
       <button class="icon-button" type="button" data-act="notices" aria-label="Уведомления">${icon("bell")}${unread ? `<span class="notification-dot"></span>` : ""}</button>
