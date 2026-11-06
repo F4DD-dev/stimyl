@@ -1,6 +1,7 @@
-import { askAssistant, deleteMaterial, getAssignments, getClass, getMaterials, getNotices, getWorkResult, postDraft, publishWork, saveWork, uploadMaterial } from "./api.js?v=3";
+import { deleteMaterial, getAssignments, getClass, getMaterials, getNotices, getWorkResult, postDraft, publishWork, saveWork, uploadMaterial } from "./api.js?v=4";
+import { chatTitle, loadChats, newChat, openChat, sendChat, showChatList } from "./chat.js?v=1";
 import { renderManage } from "./manage.js";
-import { go, refresh, store } from "./store.js";
+import { go, refresh, store } from "./store.js?v=2";
 import {
   classbar,
   confirmDialog,
@@ -406,30 +407,78 @@ function renderResult(work) {
   </div>`;
 }
 
+function chatBubble(message) {
+  if (message.role === "user") {
+    return `<div class="bubble me">${esc(message.text)}</div>`;
+  }
+  const payload = message.payload || {};
+  if (message.kind === "draft" && payload.draft) {
+    const draft = payload.draft;
+    return `<div class="bubble"><strong>Черновик готов</strong>
+      <p>${esc(draft.topic || "")} · ${esc(draft.count || "")} заданий · ${esc((draft.audience === "selected" ? (draft.students || []).join(", ") : "весь класс") || "")}</p>
+      <p class="hint">Открыл мастер проверки — вопросы можно поправить перед публикацией.</p></div>`;
+  }
+  return `<div class="bubble">${esc(message.text || payload.text || "")}</div>`;
+}
+
+function chatThread() {
+  const messages = store.chatMessages || [];
+  const rows = messages.length
+    ? messages.map(chatBubble).join("")
+    : `<p class="quiet">Попросите собрать проверку или спросите, как дела у класса. Каждый разговор хранится отдельно.</p>`;
+  return `<div class="stimul-thread">${rows}</div>
+    <form id="chat-form" class="composer composer--text">
+      <input id="chat-input" class="field" value="${esc(store.chatDraft)}" placeholder="Например: проверка по дробям для Ани" aria-label="Запрос помощнику" ${store.chatBusy ? "disabled" : ""}>
+      <button class="composer__send" type="submit" aria-label="Отправить" ${store.chatBusy ? "disabled" : ""}>${icon("arrow")}</button>
+    </form>
+    <div class="ask-actions">
+      <button class="btn btn-ghost" type="button" data-act="assistant-chats">Чаты</button>
+    </div>
+    ${store.chatRateNote ? `<p class="assistant-notice" role="status">${esc(store.chatRateNote)}</p>` : ""}
+    ${store.chatError && store.chatError !== store.chatRateNote ? `<p class="field-error">${esc(store.chatError)}</p>` : ""}
+    ${store.chatBusy ? `<p class="statusline" role="status">Собираю ответ…</p>` : ""}`;
+}
+
+function chatList() {
+  const items = store.chats?.items || [];
+  return `<div class="page-heading">
+      <span class="eyebrow">Помощник</span>
+      <h1 id="page-title">Разговоры</h1>
+      <p>История запросов и ответов. Видна только вам.</p>
+    </div>
+    ${store.chatsError ? `<p class="field-error">${esc(store.chatsError)}</p>` : ""}
+    <button class="btn btn-primary" type="button" data-act="assistant-new">Новый разговор</button>
+    <div class="topic-preview" style="margin-top:14px">
+      ${items.length ? items.map((item) => `<button class="study-row" type="button" data-act="assistant-open" data-id="${item.id}">
+        <span class="topic-number topic-number--violet">✦</span>
+        <span><strong>${esc(item.title || "Без названия")}</strong><small>${esc(new Date(item.updated_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }))}</small></span>
+        <span class="topic-preview__arrow">${icon("arrow")}</span>
+      </button>`).join("") : `<p class="quiet">Разговоров пока нет.</p>`}
+    </div>`;
+}
+
 export function renderStimul() {
-  const samples = ["Собери короткую проверку по дробям", "Какие темы класса сейчас слабее?", "Тест по загруженному материалу, 3 задания"];
-  const answer = store.stimulAnswer;
   const items = store.materials?.items || [];
+  if (store.chatView === "list") {
+    return `<div class="fig">
+      ${topbar()}
+      <div class="fig-page assistant-page">${chatList()}</div>
+    </div>`;
+  }
   return `<div class="fig">
     ${topbar()}
     <div class="fig-page assistant-page">
       <div class="assistant-intro">
         <div class="assistant-intro__icon">${icon("spark")}</div>
         <div>
-          <h1 id="page-title">Чем помочь?</h1>
-          <p>Соберу проверку по теме или по материалу урока и покажу слабые места класса.</p>
+          <span class="eyebrow">Помощник</span>
+          <h1 id="page-title">${esc(chatTitle())}</h1>
+          <p>Соберу проверку по теме или по материалу урока и покажу слабые места класса. История запросов хранится отдельно для каждого учителя.</p>
         </div>
       </div>
-      <div class="prompt-grid">
-        ${samples.map((text, index) => `<button type="button" data-act="stimul-sample" data-text="${esc(text)}"><span>${String(index + 1).padStart(2, "0")}</span><strong>${esc(text)}</strong>${icon("arrow")}</button>`).join("")}
-      </div>
-      ${store.stimulBusy ? `<p class="statusline" role="status">Собираю ответ…</p>` : ""}
-      ${answer ? `<article class="card card-flat assistant-answer"><h2>${esc(answer.title)}</h2><p>${esc(answer.text)}</p></article>` : ""}
+      ${store.chatId ? "" : `<button class="text-button" type="button" data-act="assistant-chats">Все разговоры</button>`}
+      ${chatThread()}
       ${store.stimulNote ? `<div class="assistant-notice" role="status">${icon("check")}<span>${esc(store.stimulNote)}</span></div>` : ""}
-      <form id="stimul-form" class="composer composer--text">
-        <input id="stimul-input" value="${esc(store.stimulDraft)}" placeholder="Например: проверка по дробям для Ани" aria-label="Запрос помощнику" ${store.stimulBusy ? "disabled" : ""}>
-        <button class="composer__send" type="submit" aria-label="Отправить" ${store.stimulBusy ? "disabled" : ""}>${icon("arrow")}</button>
-      </form>
       <section class="materials">
         <div class="materials__head">
           <div><strong>Материалы урока</strong><small>Учебник, параграф или фото страницы. По ним собираются задания.</small></div>
@@ -447,42 +496,16 @@ function kindLabel(kind) {
 }
 
 export async function sendStimul(text) {
-  const question = (text ?? store.stimulDraft ?? "").trim();
-  if (store.stimulBusy) return;
-  if (question.length < 2) {
-    store.stimulNote = "Напишите, что нужно: тему, сколько заданий и кому.";
-    refresh();
-    return;
-  }
-  if (store.preview) {
-    store.stimulNote = "В демонстрации помощник к серверу не ходит.";
-    refresh();
-    return;
-  }
-  store.stimulBusy = true;
-  store.stimulNote = "";
-  refresh();
-  try {
-    const reply = await askAssistant(question, store.classId);
-    if (!reply || !reply.kind) {
-      store.stimulNote = "Ответ пустой. Попробуйте сформулировать иначе.";
-      return;
-    }
-    if (reply.kind === "draft" && reply.draft) {
-      openAssistantWizard(reply);
-      return;
-    }
-    store.stimulAnswer = {
-      title: reply.kind === "summary" ? "Как у класса" : "Подсказка",
-      text: reply.text || "",
-    };
-    store.stimulDraft = "";
-  } catch (error) {
-    store.stimulNote = error.message;
-  } finally {
-    store.stimulBusy = false;
-    refresh();
-  }
+  const question = (text ?? store.chatDraft ?? store.stimulDraft ?? "").trim();
+  if (!question) return;
+  await sendChat(question, {
+    classId: store.classId || null,
+    onReply: (reply) => {
+      if (reply && reply.kind === "draft" && reply.draft) {
+        openAssistantWizard(reply);
+      }
+    },
+  });
 }
 
 function openAssistantWizard(reply) {

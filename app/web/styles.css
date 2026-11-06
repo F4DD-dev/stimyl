@@ -531,6 +531,12 @@ body.is-flow .tabbar { display: none; }
   color: white;
   border-radius: 12px 12px 4px 12px;
 }
+.bubble p { margin: 6px 0 0; font-size: 14px; line-height: 1.5; }
+.bubble strong { font-size: 14px; }
+.bubble-ok { color: #3c7a34; }
+.bubble-bad { color: #a33b2e; }
+.stimul-thread { display: flex; flex-direction: column; gap: 8px; margin: 14px 0 18px; }
+.stimul-thread .quiet { padding: 4px 2px; }
 .prompt-list { display: flex; flex-direction: column; }
 .prompt-list button {
   min-height: 44px;

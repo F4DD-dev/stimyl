@@ -1,6 +1,7 @@
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +11,7 @@ from app.bot.assist import clean_photo
 from app.bot.compose import ASSISTANT_OFF, NO_BANK, class_summary, compose_draft
 from app.bot.service import class_report
 from app.db.models import ClassTeacher, Enrollment, SchoolClass, User
+from app.domain import chats as chat_store
 from app.domain.accounts import approve_enrollment, rotate_class_key, set_class_join
 from app.domain.assist import match_students
 from app.domain.images import image_kind
@@ -186,19 +188,20 @@ class AskBody(BaseModel):
     class_id: int | None = None
 
 
-@router.post("/api/teacher/assistant")
-async def assistant(
-    body: AskBody,
+async def _assistant_answer(
     request: Request,
-    session: AsyncSession = Depends(db_session),
+    session: AsyncSession,
+    report,
+    teacher: User,
+    text: str,
+    class_id: int | None,
 ) -> dict:
-    """Просьба учителя словами. Работу не отправляет: возвращает черновик на проверку."""
-    report = await _report(request, session, body.class_id)
+    """Ответ помощника на просьбу учителя. Работу не отправляет: черновик на проверку."""
     tutor = request.app.state.explainer
     if not tutor.enabled:
         raise HTTPException(status_code=503, detail=ASSISTANT_OFF)
     titles = [topic.title for topic in report.topics]
-    ask = await tutor.read_teacher(body.text, titles)
+    ask = await tutor.read_teacher(text, titles)
     if ask is None:
         raise HTTPException(status_code=503, detail=ASSISTANT_OFF)
     if ask.intent == "summary":
@@ -211,11 +214,10 @@ async def assistant(
     roster = [(student.user_id, student.display_name) for student in report.students]
     ids, names, unknown = match_students(list(ask.students), roster)
     audience = "selected" if ids else "class"
-    teacher = await user_from_cookie(request, session, "teacher")
     composed = await compose_draft(
         session,
         tutor,
-        class_id=await owned_class(session, teacher, body.class_id),
+        class_id=await owned_class(session, teacher, class_id),
         topic=ask.topic,
         goal=ask.goal or ask.topic,
         count=ask.count,
@@ -241,6 +243,19 @@ async def assistant(
         },
         "unknown_students": unknown,
     }
+
+
+@router.post("/api/teacher/assistant")
+async def assistant(
+    body: AskBody,
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    report = await _report(request, session, body.class_id)
+    teacher = await user_from_cookie(request, session, "teacher")
+    return await _assistant_answer(
+        request, session, report, teacher, body.text, body.class_id
+    )
 
 
 @router.get("/api/teacher/materials")
@@ -361,3 +376,122 @@ async def class_key(
         raise HTTPException(status_code=403, detail="Нет доступа к классу")
     await session.commit()
     return {"join_open": body.action == "enable"}
+
+
+TEACHER_KIND = "teacher"
+
+
+class ChatCreateBody(BaseModel):
+    title: str = Field(default="", max_length=200)
+
+
+class ChatMessageBody(BaseModel):
+    text: str = Field(min_length=1, max_length=1500)
+    class_id: int | None = None
+
+
+async def _teacher_chat(
+    session: AsyncSession, teacher: User, chat_id: int
+):
+    chat = await chat_store.get_chat(session, teacher.id, TEACHER_KIND, chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail="Чат не найден")
+    return chat
+
+
+def _reply_text(reply: dict) -> str:
+    if reply.get("kind") == "draft":
+        draft = reply.get("draft") or {}
+        return (
+            f"Черновик работы: {draft.get('topic') or ''}. "
+            f"{draft.get('count') or ''} заданий. Открыл мастер проверки."
+        ).strip()
+    return str(reply.get("text") or "")[:500] or "Готово."
+
+
+@router.get("/api/teacher/chats")
+async def chats(
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    teacher = await user_from_cookie(request, session, "teacher")
+    items = await chat_store.list_chats(session, teacher.id, TEACHER_KIND)
+    return {
+        "items": [
+            {
+                "id": chat.id,
+                "title": chat.title,
+                "updated_at": chat.updated_at.isoformat(),
+            }
+            for chat in items
+        ]
+    }
+
+
+@router.post("/api/teacher/chats")
+async def create_chat(
+    body: ChatCreateBody,
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    teacher = await user_from_cookie(request, session, "teacher")
+    chat = await chat_store.create_chat(session, teacher.id, TEACHER_KIND, body.title)
+    await session.commit()
+    return {"id": chat.id, "title": chat.title}
+
+
+@router.get("/api/teacher/chats/{chat_id}")
+async def chat_messages(
+    chat_id: int,
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    teacher = await user_from_cookie(request, session, "teacher")
+    chat = await _teacher_chat(session, teacher, chat_id)
+    return chat_store.chat_view(chat, await chat_store.messages_of(session, chat.id))
+
+
+@router.post("/api/teacher/chats/{chat_id}/messages")
+async def chat_message(
+    chat_id: int,
+    body: ChatMessageBody,
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    teacher = await user_from_cookie(request, session, "teacher")
+    chat = await _teacher_chat(session, teacher, chat_id)
+    settings = request.app.state.settings
+    allowed, detail = await chat_store.rate_status(session, teacher.id, settings)
+    if not allowed:
+        return JSONResponse(
+            {"detail": detail, "code": "rate_limited"}, status_code=429
+        )
+    text = body.text.strip()
+    await chat_store.add_message(session, chat, role="user", text=text)
+    try:
+        report = await _report(request, session, body.class_id)
+        reply = await _assistant_answer(
+            request, session, report, teacher, text, body.class_id
+        )
+        await chat_store.add_message(
+            session,
+            chat,
+            role="assistant",
+            kind=reply.get("kind") or "text",
+            text=_reply_text(reply),
+            payload=reply,
+        )
+        await session.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        await session.rollback()
+        raise HTTPException(status_code=500, detail="Не получилось сохранить ответ") from None
+    return {
+        "ok": True,
+        "chat_id": chat.id,
+        "reply": reply,
+        "messages": chat_store.chat_view(
+            chat, await chat_store.messages_of(session, chat.id)
+        )["messages"],
+    }

@@ -224,6 +224,35 @@ export const askAssistant = (text, classId) =>
     timeout: LLM_WAIT,
   });
 
+const chatBase = (kind) => `/api/${kind}/chats`;
+
+export const getChats = (kind) => request(chatBase(kind));
+export const getChat = (kind, id) => request(`${chatBase(kind)}/${id}`);
+export const createChat = (kind, title) =>
+  request(chatBase(kind), {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ title: title || "" }),
+  });
+export const sendChatMessage = (kind, id, text, classId) =>
+  request(`${chatBase(kind)}/${id}/messages`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ text, class_id: classId || null }),
+    timeout: LLM_WAIT,
+  });
+
+export function sendChatPhoto(kind, id, file, text) {
+  const body = new FormData();
+  body.append("photo", file);
+  body.append("text", text || "");
+  return request(`${chatBase(kind)}/${id}/messages/photo`, {
+    method: "POST",
+    body,
+    timeout: LLM_WAIT,
+  });
+}
+
 export const getMaterials = (classId) =>
   request(
     classId

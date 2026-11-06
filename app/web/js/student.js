@@ -1,6 +1,7 @@
-import { answerWork, getHistory, getProgress, getStudentWorks, practice, sendPhoto } from "./api.js?v=3";
+import { answerWork, getHistory, getProgress, getStudentWorks, practice, sendPhoto } from "./api.js?v=4";
+import { chatTitle, loadChats, newChat, openChat, sendChat, showChatList } from "./chat.js?v=1";
 import { sampleLesson } from "./preview.js";
-import { go, refresh, store } from "./store.js";
+import { go, refresh, store } from "./store.js?v=2";
 import {
   classbar,
   confirmDialog,
@@ -15,6 +16,7 @@ import {
 } from "./ui.js";
 
 let photoFile = null;
+let chatPhotoFile = null;
 
 function disabled() {
   return store.busy ? "disabled" : "";
@@ -522,33 +524,150 @@ function renderWork(work) {
   </div>`;
 }
 
-export function renderStimul() {
-  const photo = store.photoURL
-    ? `<div class="attach"><img class="thumb" alt="" src="${esc(store.photoURL)}"><span>Фото прикреплено</span><button class="text-btn" type="button" data-act="clear-photo">Убрать</button></div>`
+function lessonBubble(payload) {
+  if (!payload) return "";
+  const parts = [];
+  if (payload.topic) parts.push(`<strong>${esc(payload.topic)}</strong>`);
+  if (payload.explanation) parts.push(`<p>${nl(payload.explanation)}</p>`);
+  if (payload.example) parts.push(`<p class="hint">Пример: ${nl(payload.example)}</p>`);
+  if (payload.task) parts.push(`<p><b>Задание:</b> ${nl(payload.task)}</p>`);
+  if (payload.feedback) {
+    parts.push(`<p class="${payload.correct ? "bubble-ok" : "bubble-bad"}"><b>${payload.correct ? "Верно" : "Есть ошибка"}:</b> ${nl(payload.feedback)}</p>`);
+  }
+  if (payload.given) parts.push(`<p class="hint">Твой ответ: ${esc(payload.given)}</p>`);
+  if (payload.status_line) parts.push(`<p class="hint">${nl(payload.status_line)}</p>`);
+  if (payload.notice && !payload.explanation) parts.push(`<p>${nl(payload.notice)}</p>`);
+  if (payload.photo_note) parts.push(`<p class="hint">${esc(payload.photo_note)}</p>`);
+  return parts.join("");
+}
+
+function chatMessageRow(message) {
+  if (message.role === "user") {
+    return `<div class="bubble me">${esc(message.text)}</div>`;
+  }
+  const body = message.kind === "lesson" ? lessonBubble(message.payload) : esc(message.text);
+  return `<div class="bubble">${body || esc(message.text)}</div>`;
+}
+
+function chatThread() {
+  const messages = store.chatMessages || [];
+  const rows = messages.length
+    ? messages.map(chatMessageRow).join("")
+    : `<p class="quiet">Спроси по теме урока или пришли фото страницы. Учителю этот разговор не виден.</p>`;
+  const photo = store.chatPhotoURL
+    ? `<div class="attach"><img class="thumb" alt="" src="${esc(store.chatPhotoURL)}"><button class="text-btn" type="button" data-act="clear-chat-photo">Убрать</button></div>`
     : "";
+  return `<div class="stimul-thread">${rows}</div>
+    <form id="chat-form" class="composer composer--text">
+      <input id="chat-input" class="field" value="${esc(store.chatDraft)}" placeholder="Вопрос по теме…" aria-label="Вопрос помощнику" ${store.chatBusy ? "disabled" : ""}>
+      <button class="composer__send" type="submit" aria-label="Отправить" ${store.chatBusy ? "disabled" : ""}>${icon("arrow")}</button>
+    </form>
+    ${photo}
+    <div class="ask-actions">
+      <label class="btn btn-ghost file">Фото страницы<input id="chat-photo" type="file" accept="image/*" aria-label="Фото страницы"></label>
+      <button class="btn btn-ghost" type="button" data-act="assistant-chats">Чаты</button>
+    </div>
+    ${store.chatRateNote ? `<p class="assistant-notice" role="status">${esc(store.chatRateNote)}</p>` : ""}
+    ${store.chatError && store.chatError !== store.chatRateNote ? `<p class="field-error">${esc(store.chatError)}</p>` : ""}
+    ${store.chatBusy ? `<p class="statusline" role="status">Думаю…</p>` : ""}`;
+}
+
+function chatList() {
+  const items = store.chats?.items || [];
+  return `<div class="page-heading">
+      <span class="eyebrow">Личный помощник</span>
+      <h1 id="page-title">Разговоры</h1>
+      <p>История вопросов и разборов. Каждый разговор виден только тебе.</p>
+    </div>
+    ${store.chatsError ? `<p class="field-error">${esc(store.chatsError)}</p>` : ""}
+    <button class="btn btn-primary" type="button" data-act="assistant-new">Новый разговор</button>
+    <div class="topic-preview" style="margin-top:14px">
+      ${items.length ? items.map((item) => `<button class="study-row" type="button" data-act="assistant-open" data-id="${item.id}">
+        <span class="topic-number topic-number--violet">✦</span>
+        <span><strong>${esc(item.title || "Без названия")}</strong><small>${esc(new Date(item.updated_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }))}</small></span>
+        <span class="topic-preview__arrow">${icon("arrow")}</span>
+      </button>`).join("") : `<p class="quiet">Разговоров пока нет.</p>`}
+    </div>`;
+}
+
+export function renderStimul() {
+  const klass = store.progress?.class_title || "";
+  if (store.chatView === "list") {
+    return `<div class="fig">
+      ${mast(store.progress?.display_name || store.displayName, klass)}
+      <div class="fig-page assistant-page">${chatList()}</div>
+    </div>`;
+  }
   return `<div class="fig">
-    ${mast(store.progress?.display_name || store.displayName, store.progress?.class_title)}
+    ${mast(store.progress?.display_name || store.displayName, klass)}
     <div class="fig-page assistant-page">
       <div class="assistant-intro">
         <div class="assistant-intro__icon">${icon("spark")}</div>
         <div>
           <span class="eyebrow">Личный помощник</span>
-          <h1 id="page-title">Что разобрать?</h1>
-          <p>Напиши вопрос или сними страницу — объясню способ и дам похожее задание. Готовый ответ для списывания не выдаю.</p>
+          <h1 id="page-title">${esc(chatTitle())}</h1>
+          <p>Объясню способ и дам похожее задание. Готовый ответ для списывания не выдаю — учителю разговор не виден.</p>
         </div>
       </div>
-      <section class="ask-card">
-        <textarea id="question" class="area" placeholder="Например: не понимаю, как решать x² − 5x + 6 = 0" aria-label="Вопрос" ${disabled()}>${esc(store.question)}</textarea>
-        ${photo}
-        ${store.fieldError ? `<p class="field-error">${esc(store.fieldError)}</p>` : ""}
-        <div class="ask-actions">
-          <label class="btn btn-ghost file">Фото страницы<input id="photo" type="file" accept="image/*" aria-label="Отправить фотографию"></label>
-          <button class="btn btn-primary" type="button" data-act="send-question" ${disabled()}>Разобрать</button>
-        </div>
-      </section>
-      <p class="quiet">Это тренировка: переписка остаётся у тебя, учитель видит только статус темы.</p>
+      ${store.chatId ? "" : `<button class="text-button" type="button" data-act="assistant-chats">Все разговоры</button>`}
+      ${chatThread()}
     </div>
   </div>`;
+}
+
+export function takeChatPhoto(file) {
+  if (!file) return;
+  if (file.size > 8 * 1024 * 1024) {
+    store.chatError = "Фото больше 8 МБ. Выбери снимок поменьше.";
+    refresh();
+    return;
+  }
+  if (file.type && !file.type.startsWith("image/")) {
+    store.chatError = "Нужен файл изображения.";
+    refresh();
+    return;
+  }
+  if (store.chatPhotoURL) URL.revokeObjectURL(store.chatPhotoURL);
+  chatPhotoFile = file;
+  store.chatPhotoURL = URL.createObjectURL(file);
+  store.chatError = "";
+  refresh();
+}
+
+export function clearChatPhoto() {
+  if (store.chatPhotoURL) URL.revokeObjectURL(store.chatPhotoURL);
+  chatPhotoFile = null;
+  store.chatPhotoURL = "";
+  refresh();
+}
+
+export async function openStudentChat(id) {
+  await openChat(id);
+}
+
+export async function startStudentChat() {
+  await newChat();
+}
+
+export function showStudentChats() {
+  showChatList();
+  loadChats();
+}
+
+export async function submitChat() {
+  const text = (store.chatDraft || "").trim();
+  const photo = chatPhotoFile;
+  await sendChat(text, {
+    photo,
+    onReply: (reply) => {
+      if (reply && reply.ok !== false) {
+        store.lesson = reply;
+        store.openLesson = reply;
+        rememberProgress();
+      }
+    },
+  });
+  if (!store.chatError) clearChatPhoto();
 }
 
 export async function submitWork() {

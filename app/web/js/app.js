@@ -1,14 +1,19 @@
-import { approveJoin, getHistory, getLesson, getNotices, getProgress, getSession, getStudentWorks, openSession, openTicket, readNotice, renameMe, setCsrf } from "./api.js?v=3";
+import { approveJoin, getHistory, getLesson, getNotices, getProgress, getSession, getStudentWorks, openSession, openTicket, readNotice, renameMe, setCsrf } from "./api.js?v=4";
 import { previewRole, studentPreview, teacherPreview } from "./preview.js?v=9";
 import {
   checkSubmission,
+  clearChatPhoto,
   clearPhoto,
   exitLesson,
   flush,
   openNext,
+  openStudentChat,
   openSubmission,
   pickTopic,
   renderStudent,
+  showStudentChats,
+  startStudentChat,
+  submitChat,
   submitWork,
   resume,
   retryLesson,
@@ -16,9 +21,11 @@ import {
   setMode,
   submitAnswer,
   submitQuestion,
+  takeChatPhoto,
   takePhoto,
-} from "./student.js?v=12";
-import { go, refresh, store, subscribe } from "./store.js";
+} from "./student.js?v=13";
+import { go, refresh, store, subscribe } from "./store.js?v=2";
+import { loadChats, newChat, openChat } from "./chat.js?v=1";
 import {
   addMaterial,
   focusStudent,
@@ -44,7 +51,7 @@ import {
   wizardBack,
   wizardNext,
   writeOwn,
-} from "./teacher.js?v=12";
+} from "./teacher.js?v=13";
 import { acceptOne, appoint, changePerson, loadManage, rejectOne } from "./manage.js?v=9";
 import { brand, confirmDialog, esc, icon, mark, skeleton, toast } from "./ui.js?v=3";
 
@@ -565,8 +572,41 @@ async function onAction(act, button) {
     const screen = button.dataset.screen;
     go(screen);
     if (screen === "manage") await loadManage();
-    if (screen === "stimul" && store.role === "teacher" && store.materials === null) loadMaterials();
+    if (screen === "stimul") {
+      if (store.role === "teacher" && store.materials === null) loadMaterials();
+      if (store.chats === null) loadChats();
+    }
     if (store.role === "teacher" && ["tasks", "class", "overview"].includes(screen)) await reloadQuiet();
+    return;
+  }
+  if (act === "assistant-chats") {
+    if (store.role === "teacher") {
+      store.chatView = "list";
+      refresh();
+      loadChats();
+    } else {
+      showStudentChats();
+    }
+    return;
+  }
+  if (act === "assistant-new") {
+    if (store.role === "teacher") await newChat();
+    else await startStudentChat();
+    return;
+  }
+  if (act === "assistant-open") {
+    const id = Number(button.dataset.id);
+    if (store.role === "teacher") await openChat(id);
+    else await openStudentChat(id);
+    return;
+  }
+  if (act === "assistant-back") {
+    store.chatView = "thread";
+    refresh();
+    return;
+  }
+  if (act === "clear-chat-photo") {
+    clearChatPhoto();
     return;
   }
   if (act === "toggle-ask") {
@@ -747,6 +787,12 @@ function bind() {
   document.addEventListener("submit", (event) => {
     event.preventDefault();
     if (event.target.id === "answer-form") submitAnswer();
+    if (event.target.id === "chat-form") {
+      const value = document.querySelector("#chat-input")?.value.trim() || "";
+      store.chatDraft = value;
+      if (store.role === "teacher") sendStimul(value);
+      else submitChat();
+    }
     if (event.target.id === "stimul-form") {
       const value = document.querySelector("#stimul-input")?.value.trim() || "";
       store.stimulDraft = value;
@@ -768,6 +814,7 @@ function bind() {
     }
     if (target.id === "goal" && store.wizard) store.wizard.goal = target.value;
     if (target.id === "stimul-input") store.stimulDraft = target.value;
+    if (target.id === "chat-input") store.chatDraft = target.value;
     if (target.id === "people-q") store.peopleQuery = target.value;
     if (target.dataset.prompt != null && store.wizard?.draft?.items) {
       const item = store.wizard.draft.items[Number(target.dataset.prompt)];
@@ -780,6 +827,10 @@ function bind() {
     if (target.id === "answer") store.answer = target.value;
     if (target.id === "photo") {
       takePhoto(target.files && target.files[0]);
+      target.value = "";
+    }
+    if (target.id === "chat-photo") {
+      takeChatPhoto(target.files && target.files[0]);
       target.value = "";
     }
     if (target.id === "material-file") {

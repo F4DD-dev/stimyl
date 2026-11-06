@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     llm_explain_mistakes: bool = False
     llm_verify: bool = True
     llm_timeout: float = 90
+    assistant_msgs_per_hour: int = 30
+    assistant_msgs_per_day: int = 240
     material_max_mb: int = 15
     cookie_secure: bool = False
     dev: bool = False

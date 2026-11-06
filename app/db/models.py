@@ -518,6 +518,40 @@ class MaterialChunk(Base):
     text: Mapped[str] = mapped_column(Text)
 
 
+class AssistantChat(Base):
+    """Личный чат с помощником. Отдельно от учебных сессий и виден только владельцу."""
+
+    __tablename__ = "assistant_chats"
+    __table_args__ = (
+        CheckConstraint("kind IN ('student', 'teacher')", name="ck_assistant_chats_kind"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    title: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AssistantMessage(Base):
+    """Реплика чата с помощником. payload — JSON с разбором урока или черновиком."""
+
+    __tablename__ = "assistant_messages"
+    __table_args__ = (
+        CheckConstraint("role IN ('user', 'assistant')", name="ck_assistant_messages_role"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    chat_id: Mapped[int] = mapped_column(ForeignKey("assistant_chats.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    role: Mapped[str] = mapped_column(String(16))
+    kind: Mapped[str] = mapped_column(String(32), default="text", server_default="text")
+    text: Mapped[str] = mapped_column(Text)
+    payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class OutboundNotice(Base):
     """Сообщение в MAX. В тексте нет билета: кнопка только просит свежий."""
 
