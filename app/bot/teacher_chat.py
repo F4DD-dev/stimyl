@@ -4,7 +4,12 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.compose import ASSISTANT_OFF, class_summary, compose_draft
+from app.bot.compose import (
+    ASSISTANT_OFF,
+    class_summary,
+    compose_draft,
+    pick_topic,
+)
 from app.bot.gate import GateReply
 from app.core.config import Settings
 from app.db.models import User, Work, WorkItem, WorkRecipient
@@ -50,18 +55,22 @@ async def teacher_turn(
         return [GateReply(ASSISTANT_OFF, (("Открыть кабинет", "open_cabinet"),))]
     if ask.intent == "summary":
         return [GateReply(class_summary(report), (("Собрать работу", "open_cabinet"),))]
-    if ask.intent != "work" or not ask.topic:
+    if ask.intent in {"chat", "other"}:
+        reply = ask.reply or (await tutor.teacher_reply(text) if tutor.enabled else "")
+        return [GateReply(reply or HELP)]
+    class_id = await owned_class(session, teacher, None)
+    topic = await pick_topic(session, tutor, report, ask, class_id=class_id)
+    if ask.intent != "work" or not topic:
         return [GateReply(HELP)]
     roster = [(student.user_id, student.display_name) for student in report.students]
     ids, names, unknown = match_students(list(ask.students), roster)
     audience = "selected" if ids else "class"
-    class_id = await owned_class(session, teacher, None)
     composed = await compose_draft(
         session,
         tutor,
         class_id=class_id,
-        topic=ask.topic,
-        goal=ask.goal or ask.topic,
+        topic=topic,
+        goal=ask.goal or topic,
         count=ask.count,
         difficulty=ask.difficulty,
         audience=audience,
@@ -75,8 +84,8 @@ async def teacher_turn(
         session,
         teacher,
         class_id=class_id,
-        topic=ask.topic,
-        goal=ask.goal or ask.topic,
+        topic=topic,
+        goal=ask.goal or topic,
         count=len(draft["items"]),
         difficulty=ask.difficulty,
         audience=audience,

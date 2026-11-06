@@ -116,6 +116,21 @@ async def find_fragments(
     return list(rows)
 
 
+async def recent_fragments(
+    session: AsyncSession, class_id: int | None, limit: int = 8
+) -> list[str]:
+    """Свежие фрагменты класса без поискового запроса — для вывода темы по материалу."""
+    if class_id is None:
+        return []
+    rows = await session.scalars(
+        select(MaterialChunk.text)
+        .where(MaterialChunk.class_id == class_id)
+        .order_by(MaterialChunk.id.desc())
+        .limit(limit)
+    )
+    return list(rows)
+
+
 async def class_of_student(session: AsyncSession, user_id: int) -> int | None:
     return await session.scalar(
         select(Enrollment.class_id)

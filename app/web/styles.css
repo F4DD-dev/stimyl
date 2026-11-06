@@ -419,6 +419,7 @@ th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); v
   border-radius: 12px;
   padding: 12px 14px;
 }
+body.is-chat .toast { bottom: calc(196px + env(safe-area-inset-bottom)); }
 dialog.sheet {
   width: min(480px, 100%);
   max-height: min(78dvh, 640px);
@@ -723,6 +724,7 @@ body.is-flow .tabbar { display: none; }
   body.is-flow .chat-bottom { left: 50%; }
   .chat-scroll { padding-bottom: 130px; }
   .chat-scroll-end { scroll-margin-bottom: 130px; }
+  body.is-chat .toast { bottom: 150px; }
 }
 @media (max-width: 799px) {
   .map-table { display: none; }
@@ -1199,6 +1201,22 @@ button.brand { border: 0; padding: 0; text-align: left; }
 .materials__head small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; font-weight: 400; line-height: 1.35; }
 .materials .stack { padding: 0; }
 .materials .line { padding: 10px 0; }
+.material-line { display: flex; align-items: center; gap: 10px; }
+.material-line__main { flex: 1; min-width: 0; }
+.material-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 4px 10px;
+  border-radius: 99px;
+  background: #e7f1df;
+  color: #557a39;
+  font-size: 12px;
+  font-weight: 700;
+}
+.material-state i { width: 7px; height: 7px; border-radius: 50%; background: #6da34f; }
+.material-line__del { flex: none; color: var(--muted); }
 .round-add {
   display: grid;
   place-items: center;

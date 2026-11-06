@@ -485,10 +485,14 @@ function materialsBlock() {
   return `<section class="materials">
     <div class="materials__head">
       <div><strong>Материалы урока</strong><small>Учебник, параграф или фото страницы. По ним собираются задания.</small></div>
-      <label class="btn btn-ghost file">Загрузить<input id="material-file" type="file" accept=".pdf,.docx,.pptx,.txt,image/*" aria-label="Загрузить материал"></label>
+      <label class="btn btn-ghost file">Добавить<input id="material-file" type="file" accept=".pdf,.docx,.pptx,.txt,image/*" aria-label="Загрузить материал"></label>
     </div>
     ${store.materialsError ? `<p class="field-error">${esc(store.materialsError)}</p>` : ""}
-    ${store.materials === null ? `<p class="quiet">Загружаю список…</p>` : items.length ? `<div class="stack tight">${items.map((item) => `<div class="line"><span><b>${esc(item.title)}</b><small>${item.fragments} фрагм. · ${kindLabel(item.kind)}</small></span><button class="text-btn" type="button" data-act="material-delete" data-id="${item.id}">Убрать</button></div>`).join("")}</div>` : `<p class="quiet">Пока пусто. Добавьте PDF, DOCX, PPTX, TXT или фото страницы — задания «по материалу» собираются только по загруженному.</p>`}
+    ${store.materials === null ? `<p class="quiet">Загружаю список…</p>` : items.length ? `<div class="stack tight">${items.map((item) => `<div class="line material-line">
+      <span class="material-line__main"><b>${esc(item.title)}</b><small>${item.fragments} фрагм. · ${kindLabel(item.kind)}</small></span>
+      <span class="material-state"><i></i>Активен</span>
+      <button class="icon-button material-line__del" type="button" data-act="material-delete" data-id="${item.id}" aria-label="Убрать материал" title="Убрать">${icon("close")}</button>
+    </div>`).join("")}</div>` : `<p class="quiet">Пока пусто. Добавьте PDF, DOCX, PPTX, TXT или фото страницы — задания «по материалу» собираются только по загруженному.</p>`}
   </section>`;
 }
 

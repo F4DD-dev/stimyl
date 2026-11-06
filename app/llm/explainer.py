@@ -44,6 +44,10 @@ class Explainer(Protocol):
 
     async def read_teacher(self, text: str, topics: list[str]) -> TeacherAsk | None: ...
 
+    async def teacher_reply(self, text: str) -> str | None: ...
+
+    async def topic_from_fragments(self, fragments: list[str]) -> str | None: ...
+
 
 class NullExplainer:
     enabled = False
@@ -73,6 +77,12 @@ class NullExplainer:
         return None
 
     async def read_teacher(self, text: str, topics: list[str]) -> TeacherAsk | None:
+        return None
+
+    async def teacher_reply(self, text: str) -> str | None:
+        return None
+
+    async def topic_from_fragments(self, fragments: list[str]) -> str | None:
         return None
 
 
@@ -338,14 +348,42 @@ class LlmTutor:
         difficulty = str(data.get("difficulty") or "normal")
         students = data.get("students") if isinstance(data.get("students"), list) else []
         return TeacherAsk(
-            intent=intent if intent in {"work", "summary", "other"} else "other",
+            intent=intent if intent in {"work", "summary", "chat", "other"} else "other",
             topic=plain(str(data.get("topic") or ""), 200),
             goal=plain(str(data.get("goal") or ""), 300),
             count=max(1, min(6, count)),
             difficulty=difficulty if difficulty in {"easy", "normal", "hard"} else "normal",
             students=tuple(str(item)[:200] for item in students if str(item).strip())[:40],
             use_material=bool(data.get("use_material")),
+            reply=plain(str(data.get("reply") or ""), 600),
         )
+
+    async def teacher_reply(self, text: str) -> str | None:
+        raw = await self._chat.chat(
+            [
+                {"role": "system", "content": prompts.TEACHER_CHAT_SYSTEM},
+                {"role": "user", "content": text[:1000]},
+            ],
+            max_tokens=300,
+            temperature=0.5,
+            purpose="teacher_chat",
+        )
+        return plain(raw, 600) or None
+
+    async def topic_from_fragments(self, fragments: list[str]) -> str | None:
+        if not fragments:
+            return None
+        joined = "\n---\n".join(fragment[:1200] for fragment in fragments[:6])
+        raw = await self._chat.chat(
+            [
+                {"role": "system", "content": prompts.MATERIAL_TOPIC_SYSTEM},
+                {"role": "user", "content": joined},
+            ],
+            max_tokens=60,
+            temperature=0,
+            purpose="topic",
+        )
+        return plain(raw, 120) or None
 
 
 def build_explainer(settings: Settings) -> Explainer:

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import db_session, user_from_cookie
 from app.bot.assist import clean_photo
-from app.bot.compose import ASSISTANT_OFF, NO_BANK, class_summary, compose_draft
+from app.bot.compose import ASSISTANT_OFF, NO_BANK, class_summary, compose_draft, pick_topic
 from app.bot.service import class_report
 from app.db.models import ClassTeacher, Enrollment, SchoolClass, User
 from app.domain import chats as chat_store
@@ -206,7 +206,17 @@ async def _assistant_answer(
         raise HTTPException(status_code=503, detail=ASSISTANT_OFF)
     if ask.intent == "summary":
         return {"kind": "summary", "text": class_summary(report)}
-    if ask.intent != "work" or not ask.topic:
+    if ask.intent in {"chat", "other"}:
+        reply = ask.reply or (await tutor.teacher_reply(text) if tutor.enabled else "")
+        return {
+            "kind": "chat",
+            "text": reply
+            or "Могу собрать проверку по теме, показать слабые места класса "
+            "или ответить на вопрос о работе.",
+        }
+    class_id = await owned_class(session, teacher, class_id)
+    topic = await pick_topic(session, tutor, report, ask, class_id=class_id)
+    if ask.intent != "work" or not topic:
         return {
             "kind": "help",
             "text": "Напишите тему и что проверить, например: «Дроби, сложение с разными знаменателями, 4 задания».",
@@ -217,9 +227,9 @@ async def _assistant_answer(
     composed = await compose_draft(
         session,
         tutor,
-        class_id=await owned_class(session, teacher, class_id),
-        topic=ask.topic,
-        goal=ask.goal or ask.topic,
+        class_id=class_id,
+        topic=topic,
+        goal=ask.goal or topic,
         count=ask.count,
         difficulty=ask.difficulty,
         audience=audience,
@@ -232,8 +242,8 @@ async def _assistant_answer(
         "kind": "draft",
         "draft": composed.draft,
         "wizard": {
-            "topic": ask.topic,
-            "goal": ask.goal or ask.topic,
+            "topic": topic,
+            "goal": ask.goal or topic,
             "count": composed.draft["count"],
             "difficulty": ask.difficulty,
             "audience": audience,

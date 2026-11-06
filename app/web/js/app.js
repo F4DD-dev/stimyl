@@ -51,7 +51,7 @@ import {
   wizardBack,
   wizardNext,
   writeOwn,
-} from "./teacher.js?v=14";
+} from "./teacher.js?v=15";
 import { acceptOne, appoint, changePerson, loadManage, rejectOne } from "./manage.js?v=10";
 import { brand, confirmDialog, esc, icon, mark, skeleton, toast } from "./ui.js?v=3";
 
@@ -550,6 +550,7 @@ function paint() {
   document.body.classList.toggle("role-teacher", store.role === "teacher");
   document.body.classList.toggle("role-student", store.role === "student");
   document.body.classList.toggle("is-flow", store.screen === "compose" || store.screen === "lesson");
+  document.body.classList.toggle("is-chat", store.screen === "stimul" && store.chatView === "thread");
   const app = document.querySelector("#app");
   if (!app) return;
   if (store.booting) {

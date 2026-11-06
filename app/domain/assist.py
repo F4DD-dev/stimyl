@@ -36,6 +36,7 @@ class TeacherAsk:
     difficulty: str = "normal"
     students: tuple[str, ...] = field(default_factory=tuple)
     use_material: bool = False
+    reply: str = ""
 
 
 _LATEX = (
