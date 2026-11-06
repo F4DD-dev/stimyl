@@ -9,3 +9,8 @@ __pycache__/
 dist/
 build/
 docs/API/
+AGENTS.md
+.cursor/
+.vscode/
+docs/Skils/
+nul
