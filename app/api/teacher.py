@@ -1,3 +1,4 @@
+import re
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -26,11 +27,14 @@ from app.domain.images import image_kind
 from app.domain.library import delete_material, list_materials, save_material
 from app.domain.materials import extract_text, file_kind, normalize
 from app.domain.onboarding import claims_for, reviewer_name
+from app.domain.curriculum import fold_text
 from app.domain.schoolwork import (
     classes_of,
+    ensure_subject,
     list_teacher_works,
     owned_class,
     program_of,
+    upsert_topic,
 )
 
 router = APIRouter()
@@ -50,6 +54,7 @@ class DraftBody(BaseModel):
     audience: Literal["class", "selected"]
     students: list[str] = Field(default_factory=list, max_length=40)
     use_material: bool = False
+    subject_id: int | None = None
     class_id: int | None = None
 
 
@@ -83,10 +88,21 @@ async def _prepare(request: Request, session: AsyncSession, report, body: DraftB
     if not request.app.state.settings.feature_quiz:
         raise HTTPException(status_code=404, detail="Сборка проверок выключена")
     teacher = await user_from_cookie(request, session, "teacher")
+    current = await owned_class(session, teacher, body.class_id)
+    if body.subject_id is not None:
+        appointed = await session.scalar(
+            select(ClassSubjectTeacher.subject_id).where(
+                ClassSubjectTeacher.class_id == current,
+                ClassSubjectTeacher.user_id == teacher.id,
+                ClassSubjectTeacher.subject_id == body.subject_id,
+            )
+        )
+        if appointed is None:
+            raise HTTPException(status_code=403, detail="Нет назначения на этот предмет")
     composed = await compose_draft(
         session,
         request.app.state.explainer,
-        class_id=await owned_class(session, teacher, body.class_id),
+        class_id=current,
         topic=body.topic,
         goal=body.goal,
         count=body.count,
@@ -97,6 +113,7 @@ async def _prepare(request: Request, session: AsyncSession, report, body: DraftB
     )
     if composed.error or composed.draft is None:
         raise HTTPException(status_code=composed.status, detail=composed.error or NO_BANK)
+    composed.draft["subject_id"] = body.subject_id
     return composed.draft
 
 
@@ -203,6 +220,77 @@ class AskBody(BaseModel):
     class_id: int | None = None
 
 
+_TOPIC_ADD = re.compile(
+    r"(?:добавь|создай|заведи|нужна)\s+(?:мне\s+)?тему\s+(.+)", re.IGNORECASE
+)
+
+
+def _parse_topic_add(text: str) -> tuple[str, str] | None:
+    """«Добавь тему Квадратные уравнения по физике» → (тема, предмет)."""
+    match = _TOPIC_ADD.search(text.strip())
+    if not match:
+        return None
+    rest = match.group(1).strip(" .!?")
+    topic, subject = rest, ""
+    parts = re.split(r"\s+(?:по|для)\s+(.+)$", rest)
+    if len(parts) == 2 and len(parts[0].strip()) >= 2:
+        topic, subject = parts[0].strip(), parts[1].strip()
+    if len(topic) < 2:
+        return None
+    return topic[:200], subject[:200]
+
+
+async def _add_topic_reply(
+    session: AsyncSession,
+    teacher: User,
+    class_id: int | None,
+    parsed: tuple[str, str],
+) -> dict:
+    """«Добавь тему» — это структура программы, а не черновик проверки."""
+    current = await owned_class(session, teacher, class_id)
+    if current is None:
+        return {"kind": "chat", "text": "Нет доступа к классу."}
+    title, hint = parsed
+    subjects, _topics = await program_of(session, teacher, current)
+    subject = None
+    if hint:
+        wanted = fold_text(hint)
+        subject = next(
+            (
+                item
+                for item in subjects
+                if wanted
+                and (wanted in fold_text(item["title"]) or fold_text(item["title"]) in wanted)
+            ),
+            None,
+        )
+        if subject is None:
+            created_subject, _made = await ensure_subject(session, teacher, current, hint)
+            subject = {"id": created_subject.id, "title": created_subject.title}
+    if subject is None:
+        if len(subjects) == 1:
+            subject = subjects[0]
+        elif not subjects:
+            return {
+                "kind": "chat",
+                "text": "Сначала назначьте предмет в классе, потом добавлю тему.",
+            }
+        else:
+            names = ", ".join(f"«{item['title']}»" for item in subjects)
+            return {
+                "kind": "chat",
+                "text": f"В какой предмет добавить тему «{title}»? У вас: {names}.",
+            }
+    topic, created = await upsert_topic(session, subject["id"], title)
+    await session.commit()
+    verb = "Добавил" if created else "Такая тема уже есть"
+    return {
+        "kind": "chat",
+        "text": f"{verb} «{topic.title}» в предмете «{subject['title']}». Теперь по ней можно собирать проверку.",
+        "refresh_program": True,
+    }
+
+
 async def _assistant_answer(
     request: Request,
     session: AsyncSession,
@@ -212,6 +300,9 @@ async def _assistant_answer(
     class_id: int | None,
 ) -> dict:
     """Ответ помощника на просьбу учителя. Работу не отправляет: черновик на проверку."""
+    parsed = _parse_topic_add(text)
+    if parsed is not None:
+        return await _add_topic_reply(session, teacher, class_id, parsed)
     tutor = request.app.state.explainer
     if not tutor.enabled:
         raise HTTPException(status_code=503, detail=ASSISTANT_OFF)
@@ -253,6 +344,9 @@ async def _assistant_answer(
     )
     if composed.error or composed.draft is None:
         raise HTTPException(status_code=composed.status, detail=composed.error or NO_BANK)
+    topic_subject = next(
+        (item.subject_id for item in report.topics if item.title == topic), None
+    )
     return {
         "kind": "draft",
         "draft": composed.draft,
@@ -265,6 +359,7 @@ async def _assistant_answer(
             "student_ids": ids,
             "students": names,
             "use_material": ask.use_material,
+            "subject_id": topic_subject,
         },
         "unknown_students": unknown,
     }

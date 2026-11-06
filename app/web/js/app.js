@@ -617,6 +617,18 @@ function syncBack() {
   } else if (typeof back.hide === "function") back.hide();
 }
 
+function syncFormButtons() {
+  const subjectBtn = document.querySelector('[data-act="program-save-subject"]');
+  if (subjectBtn) subjectBtn.disabled = !(store.newSubjectTitle || "").trim() || Boolean(store.busy);
+  const topicBtn = document.querySelector('[data-act="program-save-topic"]');
+  if (topicBtn) {
+    const active = store.subjectId || store.program?.subjects?.[0]?.id;
+    topicBtn.disabled = !(store.newTopicTitle || "").trim() || !active || Boolean(store.busy);
+  }
+  const linkBtn = document.querySelector('[data-act="resource-link-add"]');
+  if (linkBtn) linkBtn.disabled = !(store.resourceLinkUrl || "").trim() || Boolean(store.busy);
+}
+
 function syncChatInset() {
   const bottom = document.querySelector(".chat-bottom");
   if (!bottom) {
@@ -780,6 +792,19 @@ async function onAction(act, button) {
   }
   if (act === "resource-remove") {
     resourceRemove(button.dataset.index);
+    return;
+  }
+  if (act === "class-subject") {
+    store.subjectId = Number(button.dataset.id) || null;
+    refresh();
+    return;
+  }
+  if (act === "stimul-topic") {
+    const topic = String(button.dataset.topic || "").trim();
+    if (topic) store.chatDraft = `Собери проверку по теме «${topic}»`;
+    go("stimul");
+    if (store.role === "teacher" && store.materials === null) loadMaterials();
+    if (store.chats === null) loadChats();
     return;
   }
   if (act === "select-all-students") {
@@ -1062,10 +1087,10 @@ function bind() {
       refresh();
     }
     if (target.id === "topic" && store.wizard) store.wizard.topic = target.value;
-    if (target.id === "new-subject-title") store.newSubjectTitle = target.value;
-    if (target.id === "new-topic-title") store.newTopicTitle = target.value;
+    if (target.id === "new-subject-title") { store.newSubjectTitle = target.value; syncFormButtons(); }
+    if (target.id === "new-topic-title") { store.newTopicTitle = target.value; syncFormButtons(); }
     if (target.id === "new-topic-blurb") store.newTopicBlurb = target.value;
-    if (target.id === "resource-link-url") store.resourceLinkUrl = target.value;
+    if (target.id === "resource-link-url") { store.resourceLinkUrl = target.value; syncFormButtons(); }
     if (target.id === "resource-link-title") store.resourceLinkTitle = target.value;
     if (target.id === "material") toggleMaterial(target.checked);
     if (target.id === "wiz-subject") setWizardSubject(target.value);

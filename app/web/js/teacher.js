@@ -17,6 +17,7 @@ import {
   pill,
   plural,
   themeSwitch,
+  toast,
 } from "./ui.js?v=5";
 
 const DIFFICULTIES = [
@@ -147,15 +148,40 @@ function faceRow(students) {
   return `<div class="faces" aria-hidden="true">${faces}${extra > 0 ? `<span>+${extra}</span>` : ""}</div>`;
 }
 
+function subjectOptions() {
+  const raw = store.program?.subjects?.length ? store.program.subjects : store.report?.subjects || [];
+  return raw
+    .map((item) => ({ id: Number(item.id) || 0, title: item.title || String(item) }))
+    .filter((item) => item.id && item.title);
+}
+
+function activeSubjectId() {
+  return Number(store.subjectId) || null;
+}
+
+function sameSubject(a, b) {
+  const left = a == null ? null : Number(a);
+  const right = b == null ? null : Number(b);
+  return left == null || right == null || left === right;
+}
+
+function inActiveSubject(topic) {
+  return sameSubject(topic?.subject_id, activeSubjectId());
+}
+
 function rollup(report) {
   return (report.topics || []).map((topic) => {
     const cells = [];
     for (const student of report.students || []) {
-      const found = (student.topics || []).find((item) => item.title === topic.title);
+      const found = (student.topics || []).find(
+        (item) => item.title === topic.title && sameSubject(item.subject_id, topic.subject_id),
+      );
       if (found) cells.push(found);
     }
     return {
       title: topic.title,
+      subject_id: topic.subject_id ?? null,
+      subject_title: topic.subject_title || "",
       mastered: cells.filter((cell) => cell.status === "mastered").length,
       practice: cells.filter((cell) => cell.status === "needs_practice").length,
       repeat: cells.filter((cell) => cell.status === "repeat").length,
@@ -262,7 +288,14 @@ export function renderOverview() {
 export function renderClass() {
   if (!store.report) return errorBlock(store.reportError?.message, "retry");
   const report = store.report;
-  const rows = rollup(report);
+  const allRows = rollup(report);
+  const rows = allRows.filter((row) => sameSubject(row.subject_id, activeSubjectId()));
+  const subjectChips = subjectOptions().length > 1
+    ? `<div class="filter-row" role="tablist" aria-label="Предмет">
+      <button class="filter-chip ${!activeSubjectId() ? "filter-chip--active" : ""}" type="button" data-act="class-subject" data-id="">Все предметы</button>
+      ${subjectOptions().map((item) => `<button class="filter-chip ${activeSubjectId() === item.id ? "filter-chip--active" : ""}" type="button" data-act="class-subject" data-id="${item.id}">${esc(item.title)}</button>`).join("")}
+    </div>`
+    : "";
   const filters = [
     ["all", "Все темы"],
     ["mastered", "Усвоено"],
@@ -271,7 +304,7 @@ export function renderClass() {
   ];
   const selected = store.filters.topic !== "all" ? rows.find((row) => row.title === store.filters.topic) : null;
   const weakNames = selected
-    ? (report.students || []).filter((student) => (student.topics || []).some((topic) => topic.title === selected.title && (topic.status === "repeat" || topic.status === "needs_practice"))).map((student) => student.display_name)
+    ? (report.students || []).filter((student) => (student.topics || []).some((topic) => topic.title === selected.title && sameSubject(topic.subject_id, selected.subject_id) && (topic.status === "repeat" || topic.status === "needs_practice"))).map((student) => student.display_name)
     : [];
   const visible = rows.filter((row) => {
     if (store.filters.status === "mastered") return row.mastered > 0;
@@ -286,6 +319,7 @@ export function renderClass() {
       <h1 id="page-title">Карта класса</h1>
       <p>${report.frequent_mistakes ? esc(report.frequent_mistakes) : "Нажмите на кружок. Зелёный: усвоено. Жёлтый: нужна практика. Красный: повторить."}</p>
     </div>
+    ${subjectChips}
     <div class="filter-row" role="tablist" aria-label="Фильтр тем">
       ${filters.map(([id, label]) => `<button class="filter-chip ${store.filters.status === id ? "filter-chip--active" : ""}" type="button" data-act="filter-status" data-status="${id}">${label}</button>`).join("")}
     </div>
@@ -300,7 +334,7 @@ export function renderClass() {
           <div class="progress-track"><i style="width:${row.mastered + row.practice + row.repeat + row.none ? Math.max(4, Math.round((row.mastered / Math.max(1, row.mastered + row.practice + row.repeat + row.none)) * 100)) : 4}%"></i></div>
         </div>
         <button type="button" aria-label="Открыть тему ${esc(row.title)}" data-act="focus-topic" data-topic="${esc(row.title)}">${icon("arrow")}</button>
-        ${store.filters.topic === row.title ? `<div class="reveal-body"><p>${weakNames.length ? `Нужна работа: ${esc(weakNames.join(", "))}.` : "По этой теме нет учеников со статусом «повторить» или «нужна практика»."}</p><div class="flow-bar"><button class="btn btn-ghost" type="button" data-act="compose" data-mode="own" data-topic="${esc(row.title)}">Написать самому</button><button class="btn btn-primary" type="button" data-act="compose" data-mode="stimul" data-topic="${esc(row.title)}">Попросить Стимула</button></div></div>` : ""}
+        ${store.filters.topic === row.title ? `<div class="reveal-body"><p>${weakNames.length ? `Нужна работа: ${esc(weakNames.join(", "))}.` : "По этой теме нет учеников со статусом «повторить» или «нужна практика»."}</p><div class="flow-bar"><button class="btn btn-ghost" type="button" data-act="compose" data-mode="own" data-topic="${esc(row.title)}">Написать самому</button><button class="btn btn-primary" type="button" data-act="stimul-topic" data-topic="${esc(row.title)}">Попросить Стимула</button></div></div>` : ""}
       </article>`).join("") || `<p class="quiet">Таких тем пока нет.</p>`}
     </div>
     ${(report.priorities || []).length ? `<div><h2>Кому помочь</h2><ul class="plain">${report.priorities.map((item) => `<li>${esc(item)}</li>`).join("")}</ul></div>` : ""}
@@ -309,7 +343,7 @@ export function renderClass() {
 }
 
 function studentTone(student) {
-  const topics = student.topics || [];
+  const topics = (student.topics || []).filter(inActiveSubject);
   if (topics.some((topic) => topic.status === "repeat")) return "coral";
   if (topics.some((topic) => topic.status === "needs_practice")) return "yellow";
   if (topics.some((topic) => topic.status === "mastered")) return "green";
@@ -317,8 +351,9 @@ function studentTone(student) {
 }
 
 function matchesFilter(student) {
-  if (store.filters.status === "all") return true;
-  return (student.topics || []).some((topic) => {
+  const scoped = (student.topics || []).filter(inActiveSubject);
+  if (store.filters.status === "all") return scoped.length ? true : !(student.topics || []).length;
+  return scoped.some((topic) => {
     if (store.filters.topic !== "all" && topic.title !== store.filters.topic) return false;
     if (store.filters.status === "none") return !topic.status;
     return topic.status === store.filters.status;
@@ -340,7 +375,9 @@ function rosterPeople(report) {
 function studentSheet(report) {
   const person = (report.students || []).find((student) => student.display_name === store.focusStudent);
   if (!person) return `<p class="quiet">Нажмите на кружок ученика, чтобы увидеть темы и чем он занят.</p>`;
-  const topics = (person.topics || []).filter((topic) => store.filters.topic === "all" || topic.title === store.filters.topic);
+  const topics = (person.topics || []).filter(
+    (topic) => inActiveSubject(topic) && (store.filters.topic === "all" || topic.title === store.filters.topic),
+  );
   return `<article class="student-sheet">
     <h2>${esc(person.display_name)}</h2>
     <p>${esc(person.activity || "Пока нет занятий.")}</p>
@@ -403,7 +440,7 @@ export function renderTasks() {
           <h1 id="page-title">Задания</h1>
         </div>
         <div class="task-actions">
-          <button class="text-button" type="button" data-act="compose" data-mode="stimul">Попросить Стимула</button>
+          <button class="text-button" type="button" data-act="nav" data-screen="stimul">Попросить Стимула</button>
           <button class="round-add" type="button" data-act="compose" data-mode="own" aria-label="Новая тема">${icon("plus")}</button>
         </div>
       </div>
@@ -581,6 +618,7 @@ export async function sendStimul(text) {
       if (reply && reply.kind === "draft" && reply.draft) {
         store.lastDraftReply = reply;
       }
+      if (reply?.refresh_program) loadProgram();
     },
   });
   if (!store.chatError) clearChatPhoto();
@@ -671,7 +709,7 @@ function openAssistantWizard(reply) {
   store.wizard = {
     step: 1,
     mode: "stimul",
-    subjectId: store.subjectId || null,
+    subjectId: plan.subject_id || store.subjectId || null,
     topic: plan.topic || reply.draft.topic || "",
     goal: plan.goal || reply.draft.goal || "",
     blurb: "",
@@ -756,11 +794,15 @@ export async function removeMaterial(id) {
 
 function neededStudentIds(wizard) {
   const topic = String(wizard?.topic || "").trim();
+  const subjectId = Number(wizard?.subjectId || store.subjectId) || null;
   if (!topic) return [];
   const ids = [];
   for (const student of store.report?.students || []) {
     const hit = (student.topics || []).some(
-      (item) => item.title === topic && (item.status === "needs_practice" || item.status === "repeat"),
+      (item) =>
+        item.title === topic &&
+        (!subjectId || item.subject_id == null || Number(item.subject_id) === subjectId) &&
+        (item.status === "needs_practice" || item.status === "repeat"),
     );
     if (hit && student.user_id) ids.push(student.user_id);
   }
@@ -857,16 +899,19 @@ function autosaveLine(wizard) {
 
 function wizardBody() {
   const wizard = store.wizard;
-  const topics = (store.report?.topics || []).map((topic) => topic.title);
+  const subjects = subjectOptions();
   if (!wizard) return "";
-  if (!(store.report?.subjects || []).length) {
+  if (!subjects.length) {
     return `<section class="panel">
       <div class="who"><b>Работу отправить нельзя</b><span>Нет предмета</span></div>
       <p>В этом классе нет назначения на предмет. Пока учителя предмета нет, заданий нет.</p>
       <button class="btn btn-primary" type="button" data-act="nav" data-screen="tasks">Закрыть</button>
     </section>`;
   }
-  const subjects = store.program?.subjects || store.report?.subjects || [];
+  const activeSubject = Number(wizard.subjectId || store.subjectId || subjects[0]?.id) || null;
+  const topics = (store.report?.topics || [])
+    .filter((topic) => !activeSubject || topic.subject_id == null || Number(topic.subject_id) === activeSubject)
+    .map((topic) => topic.title);
   const titles =
     wizard.mode === "stimul"
       ? ["Тема", "Задания", "Кому", "Просмотр и отправка"]
@@ -874,7 +919,7 @@ function wizardBody() {
   const students = store.report?.students || [];
   const subjectSelect = subjects.length > 1
     ? `<label class="field-label" for="wiz-subject">Предмет</label>
-      <select id="wiz-subject" class="field">${subjects.map((item) => `<option value="${item.id}" ${Number(wizard.subjectId || subjects[0]?.id) === item.id ? "selected" : ""}>${esc(item.title)}</option>`).join("")}</select>`
+      <select id="wiz-subject" class="field">${subjects.map((item) => `<option value="${item.id}" ${activeSubject === item.id ? "selected" : ""}>${esc(item.title)}</option>`).join("")}</select>`
     : "";
   let body = "";
   if (wizard.step === 1) {
@@ -1407,7 +1452,7 @@ function draftPayload() {
     students: resolved.students,
     student_ids: resolved.student_ids,
     use_material: Boolean(wizard.useMaterial),
-    subject_id: wizard.subjectId || null,
+    subject_id: wizard.subjectId || store.subjectId || null,
     class_id: store.classId || null,
   };
 }
@@ -1700,6 +1745,9 @@ export async function loadProgram() {
     if (!store.subjectId && store.program?.subjects?.length) {
       store.subjectId = store.program.subjects[0].id;
     }
+    if (store.wizard && !store.wizard.subjectId && store.subjectId) {
+      store.wizard.subjectId = store.subjectId;
+    }
   } catch (error) {
     store.program = null;
     store.programError = error.message;
@@ -1725,8 +1773,10 @@ function teacherPreviewProgram() {
 
 function programTopics() {
   const topics = store.program?.topics || [];
-  if (!store.subjectId) return topics;
-  return topics.filter((topic) => topic.subject_id === store.subjectId);
+  const subjects = store.program?.subjects || [];
+  const active = store.subjectId || subjects[0]?.id;
+  if (!active) return topics;
+  return topics.filter((topic) => topic.subject_id === active);
 }
 
 function programBlock() {

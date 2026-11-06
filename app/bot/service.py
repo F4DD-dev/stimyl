@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot import assist
@@ -11,12 +11,14 @@ from app.bot.updates import Incoming, parse_update
 from app.core.config import Settings
 from app.db.models import (
     Attempt,
+    ClassSubjectTeacher,
     ClassTeacher,
     Enrollment,
     InboundEvent,
     LearningSession,
     Message,
     SchoolClass,
+    Subject,
     Topic,
     TopicState,
     User,
@@ -633,9 +635,20 @@ async def class_report(
             .order_by(User.id)
         )
     ).all()
+    appointed = (
+        select(ClassSubjectTeacher.subject_id)
+        .where(
+            ClassSubjectTeacher.class_id == class_id,
+            ClassSubjectTeacher.user_id == teacher.id,
+        )
+        .scalar_subquery()
+    )
     topic_rows = (
         await session.execute(
-            select(Topic.id, Topic.title, Topic.position).order_by(Topic.position)
+            select(Topic.id, Topic.title, Topic.position, Topic.subject_id, Subject.title)
+            .outerjoin(Subject, Subject.id == Topic.subject_id)
+            .where(or_(Topic.subject_id.is_(None), Topic.subject_id.in_(appointed)))
+            .order_by(Topic.position)
         )
     ).all()
     names = {row.id: row.display_name for row in student_rows}
@@ -643,7 +656,7 @@ async def class_report(
         await session.execute(
             select(
                 TopicState.user_id,
-                Topic.title,
+                TopicState.topic_id,
                 TopicState.status,
                 TopicState.correct_ratio,
                 TopicState.last_attempt_on,
@@ -662,10 +675,10 @@ async def class_report(
     else:
         wrong_rows = []
     states = {}
-    for user_id, title, status, ratio, last_on in state_rows:
+    for user_id, topic_id, status, ratio, last_on in state_rows:
         if user_id not in names:
             continue
-        states[(names[user_id], title)] = StateFact(
+        states[(names[user_id], topic_id)] = StateFact(
             TopicStatus(status),
             round(ratio * 100),
             last_on,
@@ -674,7 +687,16 @@ async def class_report(
     activity = await _class_activity(session, class_id, student_rows)
     return build_report(
         class_title or "",
-        [TopicColumn(title, position) for _id, title, position in topic_rows],
+        [
+            TopicColumn(
+                title,
+                position,
+                id=topic_id,
+                subject_id=subject_id,
+                subject_title=subject_title or "",
+            )
+            for topic_id, title, position, subject_id, subject_title in topic_rows
+        ],
         [row.display_name for row in student_rows],
         states,
         wrong,

@@ -2066,3 +2066,34 @@ body.is-chat .toast { bottom: calc(88px + env(safe-area-inset-bottom) + var(--ch
 [data-theme="dark"] .chat-composer__send { background: var(--accent-strong); }
 [data-theme="dark"] .steps li { background: var(--line-strong); }
 [data-theme="dark"] .steps .is-now .steps__btn { box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* ===== Адаптивность: границы, переносы, низкие экраны ===== */
+.field, .area, select.field, input.field, textarea.area { min-width: 0; max-width: 100%; }
+.stack > *, .flow > * { min-width: 0; }
+.flow { padding-bottom: 84px; }
+.student-list { max-height: 42dvh; overflow-y: auto; }
+.resource-row__text, .resource-card__text { min-width: 0; }
+.program__subjects { flex-wrap: wrap; }
+.program__subjects .chip { white-space: nowrap; }
+.chat-composer { flex-wrap: wrap; }
+.chat-composer .field { flex: 1 1 140px; min-width: 0; }
+.topic-row__content strong, .topic-row__content span { overflow-wrap: anywhere; }
+.work-sheet section p { overflow-wrap: anywhere; }
+.draft-item .area, .draft-item .field { min-width: 0; }
+.empty-task-card, .tip-card, .hero-card, .stat-card, .settings-card { min-width: 0; }
+@media (max-width: 380px) {
+  .fig-page, .page-inner { padding-left: 12px; padding-right: 12px; }
+  .flow-bar { padding-left: 10px; padding-right: 10px; gap: 6px; }
+  .flow-bar .btn { font-size: 13px; padding-left: 8px; padding-right: 8px; }
+  .resource-card { padding: 11px 12px; gap: 9px; }
+  .resource-card__text small { display: none; }
+}
+@media (max-height: 560px) and (orientation: landscape) {
+  .splash__stage { gap: 10px; }
+  .splash__logo .logo { width: 44px; height: 44px; }
+  .ai-fab { width: 48px; height: 48px; bottom: calc(76px + env(safe-area-inset-bottom)); }
+  .flow { padding-bottom: 70px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .resource-card, .flow-back, .ai-fab { transition: none; }
+}

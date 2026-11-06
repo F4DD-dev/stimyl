@@ -9,6 +9,9 @@ from app.domain.status import TopicStatus
 class TopicColumn:
     title: str
     position: int
+    id: int = 0
+    subject_id: int | None = None
+    subject_title: str = ""
 
 
 @dataclass(frozen=True)
@@ -17,6 +20,8 @@ class Cell:
     status: str | None
     correct_percent: int | None
     stalled: bool
+    subject_id: int | None = None
+    subject_title: str = ""
 
 
 @dataclass(frozen=True)
@@ -39,7 +44,15 @@ class ClassReport:
     def as_dict(self) -> dict:
         return {
             "class_title": self.class_title,
-            "topics": [{"title": topic.title} for topic in self.topics],
+            "topics": [
+                {
+                    "id": topic.id,
+                    "title": topic.title,
+                    "subject_id": topic.subject_id,
+                    "subject_title": topic.subject_title,
+                }
+                for topic in self.topics
+            ],
             "students": [
                 {
                     "display_name": student.display_name,
@@ -51,6 +64,8 @@ class ClassReport:
                             "status": cell.status,
                             "correct_percent": cell.correct_percent,
                             "stalled": cell.stalled,
+                            "subject_id": cell.subject_id,
+                            "subject_title": cell.subject_title,
                         }
                         for cell in student.cells
                     ],
@@ -93,7 +108,7 @@ def build_report(
     class_title: str,
     topics: list[TopicColumn],
     students: list[str],
-    states: dict[tuple[str, str], StateFact],
+    states: dict[tuple[str, int | str], StateFact],
     wrong_counts: dict[str, int],
     today: date,
     stall_days: int = 7,
@@ -108,16 +123,27 @@ def build_report(
     for index, name in enumerate(students):
         cells: list[Cell] = []
         for topic in ordered_topics:
-            fact = states.get((name, topic.title))
+            fact = states.get((name, topic.id)) or states.get((name, topic.title))
             if fact is None:
-                cells.append(Cell(topic.title, None, None, False))
+                cells.append(
+                    Cell(topic.title, None, None, False, topic.subject_id, topic.subject_title)
+                )
                 continue
             is_stalled = (
                 fact.status not in {TopicStatus.mastered, TopicStatus.started}
                 and fact.last_attempt_on <= horizon
             )
             percent = None if fact.status is TopicStatus.started else fact.correct_percent
-            cells.append(Cell(topic.title, fact.status.value, percent, is_stalled))
+            cells.append(
+                Cell(
+                    topic.title,
+                    fact.status.value,
+                    percent,
+                    is_stalled,
+                    topic.subject_id,
+                    topic.subject_title,
+                )
+            )
             if fact.status is TopicStatus.repeat:
                 repeat_names[topic.title].append(name)
             if is_stalled:

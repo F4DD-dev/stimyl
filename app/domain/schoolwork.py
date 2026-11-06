@@ -764,6 +764,61 @@ async def _subject_for_teacher(
     return post
 
 
+async def ensure_subject(
+    session: AsyncSession, teacher: User, class_id: int, title: str
+) -> tuple[Subject, bool]:
+    """Предмет из справочника + назначение учителя в классе. Создаёт при отсутствии."""
+    cleaned = " ".join(title.split()).strip()[:200]
+    subject = await session.scalar(select(Subject).where(Subject.title == cleaned))
+    created = subject is None
+    if subject is None:
+        subject = Subject(title=cleaned)
+        session.add(subject)
+        await session.flush()
+    post = await session.scalar(
+        select(ClassSubjectTeacher.subject_id).where(
+            ClassSubjectTeacher.class_id == class_id,
+            ClassSubjectTeacher.user_id == teacher.id,
+            ClassSubjectTeacher.subject_id == subject.id,
+        )
+    )
+    if post is None:
+        session.add(
+            ClassSubjectTeacher(
+                class_id=class_id, user_id=teacher.id, subject_id=subject.id
+            )
+        )
+        await session.flush()
+    return subject, created
+
+
+async def upsert_topic(
+    session: AsyncSession, subject_id: int, title: str, blurb: str = ""
+) -> tuple[Topic, bool]:
+    """Тема предмета: находит по fold-тексту или создаёт следующей по position."""
+    cleaned = " ".join(title.split()).strip()[:200]
+    rows = list(await session.scalars(select(Topic).where(Topic.subject_id == subject_id)))
+    folded = fold_text(cleaned)
+    found = next((row for row in rows if fold_text(row.title) == folded), None)
+    created = found is None
+    if found is None:
+        position = await session.scalar(
+            select(func.max(Topic.position)).where(Topic.subject_id == subject_id)
+        )
+        found = Topic(
+            subject_id=subject_id,
+            title=cleaned,
+            position=int(position or 0) + 1,
+            blurb="",
+        )
+        session.add(found)
+        await session.flush()
+    note = " ".join(blurb.split()).strip()[:800]
+    if note:
+        found.blurb = note
+    return found, created
+
+
 async def program_of(
     session: AsyncSession, teacher: User, class_id: int
 ) -> tuple[list[dict], list[dict]]:
