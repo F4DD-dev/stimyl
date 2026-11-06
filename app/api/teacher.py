@@ -12,8 +12,8 @@ from app.bot.assist import clean_photo
 from app.bot.compose import (
     ASSISTANT_OFF,
     NO_BANK,
-    class_context,
     class_summary,
+    classroom_context,
     compose_draft,
     pick_topic,
 )
@@ -337,7 +337,7 @@ async def _assistant_answer(
     if not tutor.enabled:
         raise HTTPException(status_code=503, detail=ASSISTANT_OFF)
     titles = [topic.title for topic in report.topics]
-    context = class_context(report)
+    context = await classroom_context(session, teacher, class_id, report)
     ask = await tutor.read_teacher(text, titles, history, context)
     if ask is None:
         raise HTTPException(status_code=503, detail=ASSISTANT_OFF)

@@ -6,8 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.compose import (
     ASSISTANT_OFF,
-    class_context,
     class_summary,
+    classroom_context,
     compose_draft,
     pick_topic,
 )
@@ -51,7 +51,7 @@ async def teacher_turn(
     report = await class_report(session, teacher, settings)
     if report is None:
         return [GateReply("Класс к вам ещё не привязан. Откройте кабинет, чтобы выбрать класс.")]
-    context = class_context(report)
+    context = await classroom_context(session, teacher, None, report)
     ask = await tutor.read_teacher(
         text, [topic.title for topic in report.topics], context=context
     )

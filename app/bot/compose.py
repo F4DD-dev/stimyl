@@ -9,6 +9,7 @@ from app.domain.assist import TeacherAsk, match_topic
 from app.domain.drafts import build_check_draft, build_stimul_draft
 from app.domain.library import find_fragments, has_materials, recent_fragments
 from app.domain.report import ClassReport
+from app.domain.schoolwork import list_teacher_works
 from app.domain.status import TopicStatus
 from app.llm.explainer import Explainer
 
@@ -165,6 +166,76 @@ def class_context(report: ClassReport) -> str:
         f"Предметы: {', '.join(subjects) if subjects else 'не назначены'}. "
         f"Тем в программе: {len(report.topics)}."
     )
+
+
+_STATUS_RU = {
+    "mastered": "усвоено",
+    "needs_practice": "нужна практика",
+    "repeat": "повторить",
+    "started": "в процессе",
+}
+
+
+async def classroom_context(
+    session: AsyncSession,
+    teacher,
+    class_id: int | None,
+    report: ClassReport,
+) -> str:
+    """Полный срез класса для ответов помощника: ученики, темы, работы.
+    Только агрегаты и статусы — личная переписка сюда не попадает."""
+    lines = [class_context(report)]
+    by_subject: dict[str, list[str]] = {}
+    for topic in report.topics:
+        by_subject.setdefault(topic.subject_title or "Без предмета", []).append(topic.title)
+    if by_subject:
+        lines.append("Темы по предметам:")
+        for subject, titles in by_subject.items():
+            lines.append(f"- {subject}: {', '.join(titles)}")
+    if report.students:
+        lines.append("Ученики и прогресс:")
+        for student in report.students[:15]:
+            counts: dict[str, int] = {}
+            weak: list[str] = []
+            for cell in student.cells:
+                key = cell.status or "none"
+                counts[key] = counts.get(key, 0) + 1
+                if cell.status in {"needs_practice", "repeat"}:
+                    weak.append(cell.title)
+            parts = [
+                f"{_STATUS_RU.get(key, key)} {count}"
+                for key, count in counts.items()
+                if key != "none" and count
+            ]
+            detail = ", ".join(parts) or "попыток нет"
+            if weak:
+                detail += f"; слабые темы: {', '.join(weak[:4])}"
+            activity = f"; сейчас: {student.activity}" if student.activity else ""
+            lines.append(f"- {student.display_name}: {detail}{activity}")
+        if len(report.students) > 15:
+            lines.append(f"- …и ещё {len(report.students) - 15}")
+    try:
+        works = await list_teacher_works(session, teacher, class_id)
+    except Exception:
+        works = []
+    published = [work for work in works if work.get("status") == "published"][:8]
+    drafts = [work for work in works if work.get("status") != "published"][:5]
+    if published or drafts:
+        lines.append("Работы:")
+        for work in published:
+            handed = work.get("handed") or []
+            line = (
+                f"- «{work.get('title')}» ({work.get('subject') or 'без предмета'}): "
+                f"опубликована, сдали {work.get('done')}/{work.get('recipients')}"
+            )
+            if handed:
+                line += f", сдали: {', '.join(handed)}"
+            lines.append(line)
+        for work in drafts:
+            lines.append(
+                f"- «{work.get('title')}» ({work.get('subject') or 'без предмета'}): черновик"
+            )
+    return "\n".join(lines)
 
 
 def class_summary(report: ClassReport) -> str:
