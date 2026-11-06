@@ -291,6 +291,24 @@ async def _add_topic_reply(
     }
 
 
+_PROGRESS_WORDS = re.compile(
+    r"справля|успева|прогресс|статистик|результат|успеваемост|оценк|успех|"
+    r"кто\s+(?:слаб|лучше|худш|не\s+справ)|насколько|как\s+(?:дела|справ|идут)|"
+    r"сдали|решили",
+    re.IGNORECASE,
+)
+_WORK_VERBS = re.compile(
+    r"собери|сделай|создай|подготовь|проверь|провер|задач|тест|домашн|карточк|"
+    r"вопрос|задани|практик|экзамен|контрольн",
+    re.IGNORECASE,
+)
+
+
+def _progress_question(text: str) -> bool:
+    """Вопрос про успеваемость класса, а не просьба собрать проверку."""
+    return bool(_PROGRESS_WORDS.search(text)) and not _WORK_VERBS.search(text)
+
+
 async def _assistant_answer(
     request: Request,
     session: AsyncSession,
@@ -320,6 +338,8 @@ async def _assistant_answer(
             or "Могу собрать проверку по теме, показать слабые места класса "
             "или ответить на вопрос о работе.",
         }
+    if ask.intent == "work" and _progress_question(text):
+        return {"kind": "summary", "text": class_summary(report)}
     class_id = await owned_class(session, teacher, class_id)
     topic = await pick_topic(session, tutor, report, ask, class_id=class_id)
     if ask.intent != "work" or not topic:
