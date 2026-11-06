@@ -141,15 +141,15 @@ async def probe_llm_edges(hosts: tuple[str, ...] = LLM_EDGE_HOSTS, timeout: floa
         from curl_cffi.requests import AsyncSession
     except ImportError:
         return ["no curl_cffi"]
-    notes: list[str] = []
+    async def check(session, host: str) -> str:
+        try:
+            response = await session.get(f"https://{host}/", verify=False)
+            return f"{host}: {response.status_code}"
+        except Exception as exc:
+            return f"{host}: {type(exc).__name__}"
+
     async with AsyncSession(impersonate="chrome", timeout=timeout) as session:
-        for host in hosts:
-            try:
-                response = await session.get(f"https://{host}/", verify=False)
-                notes.append(f"{host}: {response.status_code}")
-            except Exception as exc:
-                notes.append(f"{host}: {type(exc).__name__}")
-    return notes
+        return list(await asyncio.gather(*(check(session, host) for host in hosts)))
 
 
 def main() -> None:

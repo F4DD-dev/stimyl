@@ -60,8 +60,10 @@ async def _bring_up(app: FastAPI, settings: Settings) -> None:
                 logger.warning("max tls %s", note)
     app.state.max_tls = notes
     try:
-        for note in await probe_llm_edges():
+        for note in await asyncio.wait_for(probe_llm_edges(), timeout=15):
             logger.info("llm edge %s", note)
+    except asyncio.TimeoutError:
+        logger.warning("llm edge probe timed out")
     except Exception:
         logger.error("llm edge probe failed")
     engine = make_engine(settings.database_url)
