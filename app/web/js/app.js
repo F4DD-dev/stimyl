@@ -1,4 +1,4 @@
-import { approveJoin, getHistory, getLesson, getNotices, getProgress, getSession, getStudentWorks, openSession, openTicket, readNotice, renameMe, setCsrf } from "./api.js?v=4";
+import { approveJoin, getHistory, getLesson, getNotices, getProgress, getSession, getStudentWorks, openSession, openTicket, readNotice, renameMe, setCsrf } from "./api.js?v=5";
 import { previewRole, studentPreview, teacherPreview } from "./preview.js?v=9";
 import {
   checkSubmission,
@@ -23,9 +23,9 @@ import {
   submitQuestion,
   takeChatPhoto,
   takePhoto,
-} from "./student.js?v=13";
-import { go, refresh, store, subscribe } from "./store.js?v=2";
-import { loadChats, newChat, openChat } from "./chat.js?v=1";
+} from "./student.js?v=14";
+import { go, refresh, store, subscribe } from "./store.js?v=3";
+import { loadChats, newChat, openChat } from "./chat.js?v=2";
 import {
   addMaterial,
   focusStudent,
@@ -51,8 +51,8 @@ import {
   wizardBack,
   wizardNext,
   writeOwn,
-} from "./teacher.js?v=13";
-import { acceptOne, appoint, changePerson, loadManage, rejectOne } from "./manage.js?v=9";
+} from "./teacher.js?v=14";
+import { acceptOne, appoint, changePerson, loadManage, rejectOne } from "./manage.js?v=10";
 import { brand, confirmDialog, esc, icon, mark, skeleton, toast } from "./ui.js?v=3";
 
 const TITLES = {
@@ -562,6 +562,9 @@ function paint() {
     return;
   }
   app.innerHTML = frame(pageInner());
+  if (store.screen === "stimul" && store.chatView === "thread") {
+    document.querySelector(".chat-scroll-end")?.scrollIntoView({ block: "end" });
+  }
   syncBack();
   focusTitle();
   document.title = `Стимул — ${TITLES[store.screen] || "Стимул"}`;
@@ -603,6 +606,13 @@ async function onAction(act, button) {
   if (act === "assistant-back") {
     store.chatView = "thread";
     refresh();
+    return;
+  }
+  if (act === "chat-sample") {
+    const text = button.dataset.text || "";
+    store.chatDraft = text;
+    if (store.role === "teacher") await sendStimul(text);
+    else await submitChat();
     return;
   }
   if (act === "clear-chat-photo") {

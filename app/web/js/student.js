@@ -1,7 +1,7 @@
-import { answerWork, getHistory, getProgress, getStudentWorks, practice, sendPhoto } from "./api.js?v=4";
-import { chatTitle, loadChats, newChat, openChat, sendChat, showChatList } from "./chat.js?v=1";
+import { answerWork, getHistory, getProgress, getStudentWorks, practice, sendPhoto } from "./api.js?v=5";
+import { chatTitle, loadChats, newChat, openChat, sendChat, showChatList } from "./chat.js?v=2";
 import { sampleLesson } from "./preview.js";
-import { go, refresh, store } from "./store.js?v=2";
+import { go, refresh, store } from "./store.js?v=3";
 import {
   classbar,
   confirmDialog,
@@ -11,6 +11,7 @@ import {
   firstName,
   icon,
   initials,
+  mark,
   nl,
   pill,
 } from "./ui.js";
@@ -543,38 +544,54 @@ function lessonBubble(payload) {
 
 function chatMessageRow(message) {
   if (message.role === "user") {
-    return `<div class="bubble me">${esc(message.text)}</div>`;
+    return `<div class="chat-msg chat-msg--me"><div class="chat-msg__bubble">${nl(message.text)}</div></div>`;
   }
-  const body = message.kind === "lesson" ? lessonBubble(message.payload) : esc(message.text);
-  return `<div class="bubble">${body || esc(message.text)}</div>`;
+  const body = message.kind === "lesson" ? lessonBubble(message.payload) : nl(message.text);
+  return `<div class="chat-msg"><span class="chat-msg__avatar">${mark()}</span><div class="chat-msg__body">${body || nl(message.text)}</div></div>`;
+}
+
+function chatEmpty() {
+  const samples = [
+    "Объясни, как сложить дроби с разными знаменателями",
+    "Что такое дискриминант?",
+    "Как решить квадратное уравнение?",
+  ];
+  return `<div class="chat-empty">
+    <div class="chat-empty__mark">${mark(true)}</div>
+    <h2>С чем помочь?</h2>
+    <p>Объясню способ и дам похожее задание. Готовый ответ для списывания не выдаю.</p>
+    <div class="chat-suggest">${samples.map((text) => `<button type="button" data-act="chat-sample" data-text="${esc(text)}">${esc(text)}</button>`).join("")}</div>
+  </div>`;
 }
 
 function chatThread() {
   const messages = store.chatMessages || [];
-  const rows = messages.length
-    ? messages.map(chatMessageRow).join("")
-    : `<p class="quiet">Спроси по теме урока или пришли фото страницы. Учителю этот разговор не виден.</p>`;
-  const photo = store.chatPhotoURL
-    ? `<div class="attach"><img class="thumb" alt="" src="${esc(store.chatPhotoURL)}"><button class="text-btn" type="button" data-act="clear-chat-photo">Убрать</button></div>`
+  const typing = store.chatBusy
+    ? `<div class="chat-msg"><span class="chat-msg__avatar">${mark()}</span><div class="chat-typing" role="status" aria-label="Стимул пишет"><i></i><i></i><i></i></div></div>`
     : "";
-  return `<div class="stimul-thread">${rows}</div>
-    <form id="chat-form" class="composer composer--text">
-      <input id="chat-input" class="field" value="${esc(store.chatDraft)}" placeholder="Вопрос по теме…" aria-label="Вопрос помощнику" ${store.chatBusy ? "disabled" : ""}>
-      <button class="composer__send" type="submit" aria-label="Отправить" ${store.chatBusy ? "disabled" : ""}>${icon("arrow")}</button>
-    </form>
-    ${photo}
-    <div class="ask-actions">
-      <label class="btn btn-ghost file">Фото страницы<input id="chat-photo" type="file" accept="image/*" aria-label="Фото страницы"></label>
-      <button class="btn btn-ghost" type="button" data-act="assistant-chats">Чаты</button>
-    </div>
-    ${store.chatRateNote ? `<p class="assistant-notice" role="status">${esc(store.chatRateNote)}</p>` : ""}
-    ${store.chatError && store.chatError !== store.chatRateNote ? `<p class="field-error">${esc(store.chatError)}</p>` : ""}
-    ${store.chatBusy ? `<p class="statusline" role="status">Думаю…</p>` : ""}`;
+  const rows = messages.length ? messages.map(chatMessageRow).join("") + typing : typing || chatEmpty();
+  const photo = store.chatPhotoURL
+    ? `<div class="chat-photo-chip"><img alt="" src="${esc(store.chatPhotoURL)}"><span>Фото прикреплено</span><button class="text-btn" type="button" data-act="clear-chat-photo">Убрать</button></div>`
+    : "";
+  return `<div class="chat-scroll"><div class="chat-thread">${rows}</div><div class="chat-scroll-end"></div></div>
+    <div class="chat-bottom">
+      ${photo}
+      ${store.chatRateNote ? `<p class="chat-status" role="status">${esc(store.chatRateNote)}</p>` : ""}
+      ${store.chatError && store.chatError !== store.chatRateNote ? `<p class="chat-error" role="alert">${esc(store.chatError)}</p>` : ""}
+      ${store.chatStatus ? `<p class="chat-status" role="status">${esc(store.chatStatus)}</p>` : ""}
+      <form id="chat-form" class="chat-composer">
+        <label class="chat-composer__attach" aria-label="Фото страницы">${icon("image")}<input id="chat-photo" type="file" accept="image/*"></label>
+        <input id="chat-input" value="${esc(store.chatDraft)}" placeholder="Спросить Стимула" autocomplete="off" aria-label="Вопрос помощнику" ${store.chatBusy ? "disabled" : ""}>
+        <button class="chat-composer__send" type="submit" aria-label="Отправить" ${store.chatBusy ? "disabled" : ""}>${icon("send")}</button>
+      </form>
+      <p class="chat-note">Разговор виден только тебе. Учителю уходит статус темы, не текст.</p>
+    </div>`;
 }
 
 function chatList() {
   const items = store.chats?.items || [];
-  return `<div class="page-heading">
+  return `${store.chatId ? `<button class="text-button back" type="button" data-act="assistant-back">${icon("chevron")} К разговору</button>` : ""}
+    <div class="page-heading">
       <span class="eyebrow">Личный помощник</span>
       <h1 id="page-title">Разговоры</h1>
       <p>История вопросов и разборов. Каждый разговор виден только тебе.</p>
@@ -600,16 +617,14 @@ export function renderStimul() {
   }
   return `<div class="fig">
     ${mast(store.progress?.display_name || store.displayName, klass)}
-    <div class="fig-page assistant-page">
-      <div class="assistant-intro">
-        <div class="assistant-intro__icon">${icon("spark")}</div>
-        <div>
-          <span class="eyebrow">Личный помощник</span>
-          <h1 id="page-title">${esc(chatTitle())}</h1>
-          <p>Объясню способ и дам похожее задание. Готовый ответ для списывания не выдаю — учителю разговор не виден.</p>
+    <div class="fig-page assistant-page chat-page">
+      <div class="chat-head">
+        <div class="chat-head__who">${mark()}<div><span class="eyebrow">Личный помощник</span><h1 id="page-title">${esc(chatTitle())}</h1></div></div>
+        <div class="chat-head__actions">
+          <button class="chat-tool" type="button" data-act="assistant-chats" aria-label="Разговоры" title="Разговоры">${icon("list")}</button>
+          <button class="chat-tool" type="button" data-act="assistant-new" aria-label="Новый разговор" title="Новый разговор">${icon("plus")}</button>
         </div>
       </div>
-      ${store.chatId ? "" : `<button class="text-button" type="button" data-act="assistant-chats">Все разговоры</button>`}
       ${chatThread()}
     </div>
   </div>`;

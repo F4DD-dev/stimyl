@@ -1,5 +1,5 @@
-import { acceptClaim, appointTeacher, getCatalog, getClaims, getPeople, rejectClaim, savePerson } from "./api.js?v=4";
-import { refresh, store } from "./store.js?v=2";
+import { acceptClaim, appointTeacher, getCatalog, getClaims, getPeople, rejectClaim, savePerson } from "./api.js?v=5";
+import { refresh, store } from "./store.js?v=3";
 import { emptyBlock, errorBlock, esc } from "./ui.js";
 
 function when(value) {

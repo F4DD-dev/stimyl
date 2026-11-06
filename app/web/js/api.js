@@ -109,6 +109,7 @@ export async function request(path, options = {}) {
 }
 
 export const getSession = () => request("/api/session");
+export const getAssistantStatus = () => request("/api/assistant/status");
 
 export const renameMe = (displayName) =>
   request("/api/profile/name", {

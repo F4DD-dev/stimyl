@@ -41,6 +41,7 @@ class GigaChatClient:
         self._token = ""
         self._token_until = 0.0
         self._lock = asyncio.Lock()
+        self.last_error = ""
 
     def _client(self, timeout: float) -> httpx.AsyncClient:
         if self._transport is not None:
@@ -64,15 +65,18 @@ class GigaChatClient:
                         data={"scope": self._scope},
                     )
             except httpx.HTTPError as exc:
+                self.last_error = f"oauth transport {type(exc).__name__}"
                 logger.error("gigachat oauth transport %s", type(exc).__name__)
                 return None
             if response.status_code != 200:
+                self.last_error = f"oauth status {response.status_code}"
                 logger.error("gigachat oauth status=%s", response.status_code)
                 return None
             try:
                 payload = response.json()
                 token = str(payload["access_token"])
             except (ValueError, KeyError, TypeError):
+                self.last_error = "oauth bad payload"
                 logger.error("gigachat oauth bad payload")
                 return None
             self._token = token
@@ -101,10 +105,16 @@ class GigaChatClient:
             "temperature": temperature,
         }
         started = time.monotonic()
+        deadline = started + min(self._timeout, 75)
         pause = 1.5
         for attempt in range(3):
+            left = deadline - time.monotonic()
+            if left <= 0:
+                self.last_error = f"{purpose} out of time"
+                logger.error("gigachat %s out of time", purpose)
+                return None
             try:
-                async with self._client(timeout=self._timeout) as client:
+                async with self._client(timeout=min(self._timeout, max(left, 5))) as client:
                     response = await client.post(
                         f"{self._base}/chat/completions",
                         headers={
@@ -119,6 +129,7 @@ class GigaChatClient:
                     "gigachat %s transport %s attempt=%s", purpose, type(exc).__name__, attempt
                 )
                 if attempt == 2:
+                    self.last_error = f"{purpose} transport {type(exc).__name__}"
                     return None
                 await asyncio.sleep(pause)
                 pause *= 2
@@ -137,6 +148,7 @@ class GigaChatClient:
                 pause *= 2
                 continue
             if response.status_code >= 400:
+                self.last_error = f"{purpose} status {response.status_code}"
                 logger.error(
                     "gigachat %s status=%s code=%s edge=%s",
                     purpose,
@@ -146,6 +158,10 @@ class GigaChatClient:
                 )
                 return None
             text = _content(response)
+            if text is None:
+                self.last_error = f"{purpose} empty reply"
+            else:
+                self.last_error = ""
             logger.info(
                 "gigachat %s ok model=%s ms=%d chars=%d",
                 purpose,

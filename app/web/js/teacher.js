@@ -1,7 +1,7 @@
-import { deleteMaterial, getAssignments, getClass, getMaterials, getNotices, getWorkResult, postDraft, publishWork, saveWork, uploadMaterial } from "./api.js?v=4";
-import { chatTitle, loadChats, newChat, openChat, sendChat, showChatList } from "./chat.js?v=1";
+import { deleteMaterial, getAssignments, getClass, getMaterials, getNotices, getWorkResult, postDraft, publishWork, saveWork, uploadMaterial } from "./api.js?v=5";
+import { chatTitle, loadChats, newChat, openChat, sendChat, showChatList } from "./chat.js?v=2";
 import { renderManage } from "./manage.js";
-import { go, refresh, store } from "./store.js?v=2";
+import { go, refresh, store } from "./store.js?v=3";
 import {
   classbar,
   confirmDialog,
@@ -12,6 +12,7 @@ import {
   firstName,
   icon,
   initials,
+  nl,
   pill,
 } from "./ui.js";
 
@@ -407,41 +408,63 @@ function renderResult(work) {
   </div>`;
 }
 
-function chatBubble(message) {
+function chatRow(message) {
   if (message.role === "user") {
-    return `<div class="bubble me">${esc(message.text)}</div>`;
+    return `<div class="chat-msg chat-msg--me"><div class="chat-msg__bubble">${nl(message.text)}</div></div>`;
   }
   const payload = message.payload || {};
+  let body;
   if (message.kind === "draft" && payload.draft) {
     const draft = payload.draft;
-    return `<div class="bubble"><strong>Черновик готов</strong>
+    body = `<div class="chat-card"><strong>Черновик готов</strong>
       <p>${esc(draft.topic || "")} · ${esc(draft.count || "")} заданий · ${esc((draft.audience === "selected" ? (draft.students || []).join(", ") : "весь класс") || "")}</p>
       <p class="hint">Открыл мастер проверки — вопросы можно поправить перед публикацией.</p></div>`;
+  } else {
+    body = `<p>${nl(message.text || payload.text || "")}</p>`;
   }
-  return `<div class="bubble">${esc(message.text || payload.text || "")}</div>`;
+  return `<div class="chat-msg"><span class="chat-msg__avatar">${mark()}</span><div class="chat-msg__body">${body}</div></div>`;
+}
+
+function chatEmpty() {
+  const samples = [
+    "Собери проверку по дробям на 4 задания",
+    "Как дела у класса?",
+    "Проверка по уравнениям для Ани",
+  ];
+  return `<div class="chat-empty">
+    <div class="chat-empty__mark">${mark(true)}</div>
+    <h2>С чем помочь?</h2>
+    <p>Соберу проверку по теме или по материалу урока и покажу слабые места класса.</p>
+    <div class="chat-suggest">${samples.map((text) => `<button type="button" data-act="chat-sample" data-text="${esc(text)}">${esc(text)}</button>`).join("")}</div>
+  </div>`;
 }
 
 function chatThread() {
   const messages = store.chatMessages || [];
-  const rows = messages.length
-    ? messages.map(chatBubble).join("")
-    : `<p class="quiet">Попросите собрать проверку или спросите, как дела у класса. Каждый разговор хранится отдельно.</p>`;
-  return `<div class="stimul-thread">${rows}</div>
-    <form id="chat-form" class="composer composer--text">
-      <input id="chat-input" class="field" value="${esc(store.chatDraft)}" placeholder="Например: проверка по дробям для Ани" aria-label="Запрос помощнику" ${store.chatBusy ? "disabled" : ""}>
-      <button class="composer__send" type="submit" aria-label="Отправить" ${store.chatBusy ? "disabled" : ""}>${icon("arrow")}</button>
-    </form>
-    <div class="ask-actions">
-      <button class="btn btn-ghost" type="button" data-act="assistant-chats">Чаты</button>
-    </div>
-    ${store.chatRateNote ? `<p class="assistant-notice" role="status">${esc(store.chatRateNote)}</p>` : ""}
-    ${store.chatError && store.chatError !== store.chatRateNote ? `<p class="field-error">${esc(store.chatError)}</p>` : ""}
-    ${store.chatBusy ? `<p class="statusline" role="status">Собираю ответ…</p>` : ""}`;
+  const typing = store.chatBusy
+    ? `<div class="chat-msg"><span class="chat-msg__avatar">${mark()}</span><div class="chat-typing" role="status" aria-label="Стимул пишет"><i></i><i></i><i></i></div></div>`
+    : "";
+  const rows = messages.length ? messages.map(chatRow).join("") + typing : typing || chatEmpty();
+  return `<div class="chat-scroll"><div class="chat-thread">${rows}</div>
+    ${store.stimulNote ? `<div class="assistant-notice" role="status">${icon("check")}<span>${esc(store.stimulNote)}</span></div>` : ""}
+    ${materialsBlock()}
+    <div class="chat-scroll-end"></div></div>
+    <div class="chat-bottom">
+      ${store.chatRateNote ? `<p class="chat-status" role="status">${esc(store.chatRateNote)}</p>` : ""}
+      ${store.chatError && store.chatError !== store.chatRateNote ? `<p class="chat-error" role="alert">${esc(store.chatError)}</p>` : ""}
+      ${store.chatStatus ? `<p class="chat-status" role="status">${esc(store.chatStatus)}</p>` : ""}
+      <form id="chat-form" class="chat-composer">
+        <input id="chat-input" value="${esc(store.chatDraft)}" placeholder="Спросить Стимула" autocomplete="off" aria-label="Запрос помощнику" ${store.chatBusy ? "disabled" : ""}>
+        <button class="chat-composer__send" type="submit" aria-label="Отправить" ${store.chatBusy ? "disabled" : ""}>${icon("send")}</button>
+      </form>
+      <p class="chat-note">Разговор хранится отдельно и виден только вам.</p>
+    </div>`;
 }
 
 function chatList() {
   const items = store.chats?.items || [];
-  return `<div class="page-heading">
+  return `${store.chatId ? `<button class="text-button back" type="button" data-act="assistant-back">${icon("chevron")} К разговору</button>` : ""}
+    <div class="page-heading">
       <span class="eyebrow">Помощник</span>
       <h1 id="page-title">Разговоры</h1>
       <p>История запросов и ответов. Видна только вам.</p>
@@ -457,8 +480,19 @@ function chatList() {
     </div>`;
 }
 
-export function renderStimul() {
+function materialsBlock() {
   const items = store.materials?.items || [];
+  return `<section class="materials">
+    <div class="materials__head">
+      <div><strong>Материалы урока</strong><small>Учебник, параграф или фото страницы. По ним собираются задания.</small></div>
+      <label class="btn btn-ghost file">Загрузить<input id="material-file" type="file" accept=".pdf,.docx,.pptx,.txt,image/*" aria-label="Загрузить материал"></label>
+    </div>
+    ${store.materialsError ? `<p class="field-error">${esc(store.materialsError)}</p>` : ""}
+    ${store.materials === null ? `<p class="quiet">Загружаю список…</p>` : items.length ? `<div class="stack tight">${items.map((item) => `<div class="line"><span><b>${esc(item.title)}</b><small>${item.fragments} фрагм. · ${kindLabel(item.kind)}</small></span><button class="text-btn" type="button" data-act="material-delete" data-id="${item.id}">Убрать</button></div>`).join("")}</div>` : `<p class="quiet">Пока пусто. Добавьте PDF, DOCX, PPTX, TXT или фото страницы — задания «по материалу» собираются только по загруженному.</p>`}
+  </section>`;
+}
+
+export function renderStimul() {
   if (store.chatView === "list") {
     return `<div class="fig">
       ${topbar()}
@@ -467,26 +501,15 @@ export function renderStimul() {
   }
   return `<div class="fig">
     ${topbar()}
-    <div class="fig-page assistant-page">
-      <div class="assistant-intro">
-        <div class="assistant-intro__icon">${icon("spark")}</div>
-        <div>
-          <span class="eyebrow">Помощник</span>
-          <h1 id="page-title">${esc(chatTitle())}</h1>
-          <p>Соберу проверку по теме или по материалу урока и покажу слабые места класса. История запросов хранится отдельно для каждого учителя.</p>
+    <div class="fig-page assistant-page chat-page">
+      <div class="chat-head">
+        <div class="chat-head__who">${mark()}<div><span class="eyebrow">Помощник</span><h1 id="page-title">${esc(chatTitle())}</h1></div></div>
+        <div class="chat-head__actions">
+          <button class="chat-tool" type="button" data-act="assistant-chats" aria-label="Разговоры" title="Разговоры">${icon("list")}</button>
+          <button class="chat-tool" type="button" data-act="assistant-new" aria-label="Новый разговор" title="Новый разговор">${icon("plus")}</button>
         </div>
       </div>
-      ${store.chatId ? "" : `<button class="text-button" type="button" data-act="assistant-chats">Все разговоры</button>`}
       ${chatThread()}
-      ${store.stimulNote ? `<div class="assistant-notice" role="status">${icon("check")}<span>${esc(store.stimulNote)}</span></div>` : ""}
-      <section class="materials">
-        <div class="materials__head">
-          <div><strong>Материалы урока</strong><small>Учебник, параграф или фото страницы. По ним собираются задания.</small></div>
-          <label class="btn btn-ghost file">Загрузить<input id="material-file" type="file" accept=".pdf,.docx,.pptx,.txt,image/*" aria-label="Загрузить материал"></label>
-        </div>
-        ${store.materialsError ? `<p class="field-error">${esc(store.materialsError)}</p>` : ""}
-        ${store.materials === null ? `<p class="quiet">Загружаю список…</p>` : items.length ? `<div class="stack tight">${items.map((item) => `<div class="line"><span><b>${esc(item.title)}</b><small>${item.fragments} фрагм. · ${kindLabel(item.kind)}</small></span><button class="text-btn" type="button" data-act="material-delete" data-id="${item.id}">Убрать</button></div>`).join("")}</div>` : `<p class="quiet">Пока пусто. Добавьте PDF, DOCX, PPTX, TXT или фото страницы — задания «по материалу» собираются только по загруженному.</p>`}
-      </section>
     </div>
   </div>`;
 }

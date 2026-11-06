@@ -41,6 +41,7 @@ class ChatClient:
         self._fallbacks = [
             item.strip() for item in settings.llm_fallback_models.split(",") if item.strip()
         ]
+        self.last_error = ""
 
     async def chat(
         self,
@@ -77,21 +78,35 @@ class ChatClient:
             headers.setdefault("User-Agent", _BROWSER_UA)
         if time.time() < _quota["closed_until"]:
             logger.warning("llm %s skipped: daily free quota is used up", purpose)
+            self.last_error = "daily free quota is used up"
             return None
         started = time.monotonic()
+        deadline = started + min(self._timeout, 75)
         pause = 1.5
         for attempt in range(3):
+            left = deadline - time.monotonic()
+            if left <= 0:
+                self.last_error = f"{purpose} out of time"
+                logger.error("llm %s out of time", purpose)
+                return None
             try:
-                response = await self._post(f"{self._base}/chat/completions", headers, body)
+                response = await self._post(
+                    f"{self._base}/chat/completions",
+                    headers,
+                    body,
+                    timeout=min(self._timeout, max(left, 5)),
+                )
             except _TRANSPORT_ERRORS as exc:
                 logger.error("llm %s transport %s attempt=%s", purpose, type(exc).__name__, attempt)
                 if attempt == 2:
+                    self.last_error = f"{purpose} transport {type(exc).__name__}"
                     return None
                 await asyncio.sleep(pause)
                 pause *= 2
                 continue
             if response.status_code == 429 and _daily_limit(response):
                 _quota["closed_until"] = _next_utc_midnight()
+                self.last_error = "daily free quota is used up"
                 logger.error("llm %s daily free quota is used up until next UTC day", purpose)
                 return None
             if response.status_code in _RETRY_STATUS and attempt < 1:
@@ -106,6 +121,7 @@ class ChatClient:
                 body.pop("response_format")
                 continue
             if response.status_code >= 400:
+                self.last_error = f"{purpose} status {response.status_code}"
                 logger.error(
                     "llm %s status=%s code=%s edge=%s",
                     purpose,
@@ -115,6 +131,10 @@ class ChatClient:
                 )
                 return None
             text = _content(response)
+            if text is None:
+                self.last_error = f"{purpose} empty reply"
+            else:
+                self.last_error = ""
             try:
                 served = response.json().get("model") or body["model"]
             except (ValueError, AttributeError):
@@ -129,12 +149,13 @@ class ChatClient:
             return text
         return None
 
-    async def _post(self, url: str, headers: dict, body: dict):
+    async def _post(self, url: str, headers: dict, body: dict, timeout: float | None = None):
         """OpenRouter — браузерным TLS-отпечатком: Cloudflare отбивает голый httpx."""
+        limit = timeout if timeout is not None else self._timeout
         if self._openrouter and _CurlSession is not None:
-            async with _CurlSession(impersonate="chrome", timeout=self._timeout) as session:
+            async with _CurlSession(impersonate="chrome", timeout=limit) as session:
                 return await session.post(url, headers=headers, json=body)
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        async with httpx.AsyncClient(timeout=limit) as client:
             return await client.post(url, headers=headers, json=body)
 
 

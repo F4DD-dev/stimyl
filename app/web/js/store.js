@@ -58,6 +58,7 @@ export const store = {
   chatError: "",
   chatPhotoURL: "",
   chatRateNote: "",
+  chatStatus: "",
   materials: null,
   materialsError: "",
   focusStudent: "",

@@ -149,6 +149,32 @@ async def current_session(
     }
 
 
+@router.get("/api/assistant/status")
+async def assistant_status(
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Состояние помощника для кабинета: включён ли провайдер и последняя ошибка."""
+    await user_from_cookie(request, session)
+    settings = request.app.state.settings
+    tutor = getattr(request.app.state, "explainer", None)
+    base = (settings.llm_base_url or "").lower()
+    if "giga.chat" in base or "sberbank" in base:
+        provider = "gigachat"
+    elif "openrouter.ai" in base:
+        provider = "openrouter"
+    elif base:
+        provider = "custom"
+    else:
+        provider = "off"
+    return {
+        "enabled": bool(getattr(tutor, "enabled", False)),
+        "provider": provider,
+        "model": getattr(getattr(tutor, "_chat", None), "model", "") or "",
+        "last_error": getattr(tutor, "last_error", "") or "",
+    }
+
+
 @router.post("/api/profile/name")
 async def rename_profile(
     body: RenameBody,

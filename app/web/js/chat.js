@@ -1,5 +1,5 @@
-import { createChat, getChat, getChats, sendChatMessage, sendChatPhoto } from "./api.js?v=4";
-import { refresh, store } from "./store.js?v=2";
+import { createChat, getAssistantStatus, getChat, getChats, sendChatMessage, sendChatPhoto } from "./api.js?v=5";
+import { refresh, store } from "./store.js?v=3";
 
 export function chatKind() {
   return store.role === "teacher" ? "teacher" : "student";
@@ -67,6 +67,23 @@ export function showChatList() {
   refresh();
 }
 
+export async function loadAssistantStatus() {
+  if (store.preview) return;
+  try {
+    const status = await getAssistantStatus();
+    if (!status.enabled) {
+      store.chatStatus = "Помощник на сервере выключен: проверьте LLM_BASE_URL и LLM_API_KEY.";
+    } else if (status.last_error) {
+      store.chatStatus = `Причина последнего сбоя: ${status.provider} — ${status.last_error}`;
+    } else {
+      store.chatStatus = "";
+    }
+  } catch {
+    store.chatStatus = "";
+  }
+  refresh();
+}
+
 async function ensureChat(text) {
   if (store.chatId) return store.chatId;
   const created = await createChat(chatKind(), (text || "").slice(0, 60));
@@ -93,6 +110,7 @@ export async function sendChat(text, { classId = null, photo = null, onReply = n
   store.chatBusy = true;
   store.chatError = "";
   store.chatRateNote = "";
+  store.chatStatus = "";
   refresh();
   try {
     const id = await ensureChat(trimmed);
@@ -108,6 +126,7 @@ export async function sendChat(text, { classId = null, photo = null, onReply = n
   } catch (error) {
     store.chatError = error.message;
     if (error.code === "rate_limited") store.chatRateNote = error.message;
+    if (!error.status || error.status >= 500) loadAssistantStatus();
   } finally {
     store.chatBusy = false;
     refresh();

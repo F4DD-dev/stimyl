@@ -47,6 +47,7 @@ class Explainer(Protocol):
 
 class NullExplainer:
     enabled = False
+    last_error = ""
 
     async def explain_topic(self, topic_title: str) -> str | None:
         return None
@@ -115,6 +116,10 @@ class LlmTutor:
         self._verify = settings.llm_verify
         self._topics = settings.llm_explain_topics
         self._mistakes = settings.llm_explain_mistakes
+
+    @property
+    def last_error(self) -> str:
+        return getattr(self._chat, "last_error", "") or ""
 
     async def explain_topic(self, topic_title: str) -> str | None:
         if not self._topics:
