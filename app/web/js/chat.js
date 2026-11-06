@@ -1,5 +1,5 @@
-import { createChat, getAssistantStatus, getChat, getChats, sendChatMessage, sendChatPhoto } from "./api.js?v=6";
-import { refresh, store } from "./store.js?v=4";
+import { createChat, getAssistantStatus, getChat, getChats, sendChatMessage, sendChatPhoto } from "./api.js?v=7";
+import { refresh, store } from "./store.js?v=5";
 
 export function takeChatPhoto(file) {
   if (!file) return;

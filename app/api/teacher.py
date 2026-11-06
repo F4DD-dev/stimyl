@@ -10,7 +10,15 @@ from app.api.deps import db_session, user_from_cookie
 from app.bot.assist import clean_photo
 from app.bot.compose import ASSISTANT_OFF, NO_BANK, class_summary, compose_draft, pick_topic
 from app.bot.service import class_report
-from app.db.models import ClassTeacher, Enrollment, SchoolClass, User
+from app.db.models import (
+    ClassSubjectTeacher,
+    ClassTeacher,
+    Enrollment,
+    SchoolClass,
+    Subject,
+    Topic,
+    User,
+)
 from app.domain import chats as chat_store
 from app.domain.accounts import approve_enrollment, rotate_class_key, set_class_join
 from app.domain.assist import match_students
@@ -18,7 +26,12 @@ from app.domain.images import image_kind
 from app.domain.library import delete_material, list_materials, save_material
 from app.domain.materials import extract_text, file_kind, normalize
 from app.domain.onboarding import claims_for, reviewer_name
-from app.domain.schoolwork import classes_of, list_teacher_works, owned_class
+from app.domain.schoolwork import (
+    classes_of,
+    list_teacher_works,
+    owned_class,
+    program_of,
+)
 
 router = APIRouter()
 
@@ -343,6 +356,119 @@ async def remove_material(
         raise HTTPException(status_code=404, detail="Материала нет")
     await session.commit()
     return {"ok": True}
+
+
+@router.get("/api/teacher/program")
+async def program(
+    request: Request,
+    class_id: int | None = None,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    teacher = await user_from_cookie(request, session, "teacher")
+    current = await owned_class(session, teacher, class_id)
+    if current is None:
+        raise HTTPException(status_code=403, detail="Нет доступа к классу")
+    subjects, topics = await program_of(session, teacher, current)
+    return {"subjects": subjects, "topics": topics, "class_id": current}
+
+
+class SubjectBody(BaseModel):
+    title: str = Field(min_length=2, max_length=200)
+    class_id: int | None = None
+
+
+@router.post("/api/teacher/subjects")
+async def create_subject(
+    body: SubjectBody,
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    teacher = await user_from_cookie(request, session, "teacher")
+    current = await owned_class(session, teacher, body.class_id)
+    if current is None:
+        raise HTTPException(status_code=403, detail="Нет доступа к классу")
+    title = " ".join(body.title.split()).strip()[:200]
+    subject = await session.scalar(select(Subject).where(Subject.title == title))
+    created = subject is None
+    if subject is None:
+        subject = Subject(title=title)
+        session.add(subject)
+        await session.flush()
+    post = await session.scalar(
+        select(ClassSubjectTeacher.subject_id).where(
+            ClassSubjectTeacher.class_id == current,
+            ClassSubjectTeacher.user_id == teacher.id,
+            ClassSubjectTeacher.subject_id == subject.id,
+        )
+    )
+    if post is None:
+        session.add(
+            ClassSubjectTeacher(
+                class_id=current, user_id=teacher.id, subject_id=subject.id
+            )
+        )
+        await session.flush()
+    await session.commit()
+    return {"id": subject.id, "title": subject.title, "created": created}
+
+
+class TopicBody(BaseModel):
+    subject_id: int
+    title: str = Field(min_length=2, max_length=200)
+    blurb: str = Field(default="", max_length=800)
+    class_id: int | None = None
+
+
+@router.post("/api/teacher/topics")
+async def create_topic(
+    body: TopicBody,
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    teacher = await user_from_cookie(request, session, "teacher")
+    current = await owned_class(session, teacher, body.class_id)
+    if current is None:
+        raise HTTPException(status_code=403, detail="Нет доступа к классу")
+    post = await session.scalar(
+        select(ClassSubjectTeacher.subject_id).where(
+            ClassSubjectTeacher.class_id == current,
+            ClassSubjectTeacher.user_id == teacher.id,
+            ClassSubjectTeacher.subject_id == body.subject_id,
+        )
+    )
+    if post is None:
+        raise HTTPException(status_code=403, detail="Нет назначения на этот предмет")
+    from app.domain.curriculum import fold_text
+
+    title = " ".join(body.title.split()).strip()[:200]
+    rows = list(
+        await session.scalars(select(Topic).where(Topic.subject_id == body.subject_id))
+    )
+    folded = fold_text(title)
+    found = next((row for row in rows if fold_text(row.title) == folded), None)
+    if found is None:
+        position = await session.scalar(
+            select(func.max(Topic.position)).where(Topic.subject_id == body.subject_id)
+        )
+        found = Topic(
+            subject_id=body.subject_id,
+            title=title,
+            position=int(position or 0) + 1,
+            blurb="",
+        )
+        session.add(found)
+        await session.flush()
+    note = " ".join(body.blurb.split()).strip()[:800]
+    if note:
+        found.blurb = note
+    await session.commit()
+    return {
+        "id": found.id,
+        "subject_id": found.subject_id,
+        "title": found.title,
+        "blurb": found.blurb,
+        "position": found.position,
+    }
 
 
 class KeyBody(BaseModel):

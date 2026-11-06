@@ -274,3 +274,41 @@ export const deleteMaterial = (id, classId) =>
   request(`/api/teacher/materials/${id}${classId ? `?class_id=${classId}` : ""}`, {
     method: "DELETE",
   });
+
+export const getProgram = (classId) =>
+  request(
+    classId
+      ? `/api/teacher/program?class_id=${encodeURIComponent(classId)}`
+      : "/api/teacher/program",
+  );
+
+export const createSubject = (body) =>
+  request("/api/teacher/subjects", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+
+export const createTopic = (body) =>
+  request("/api/teacher/topics", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(body),
+  });
+
+export function attachWorkResource(workId, { title, url, file }) {
+  const body = new FormData();
+  body.append("title", title || "");
+  if (url) body.append("url", url);
+  if (file) body.append("file", file);
+  return request(`/api/teacher/works/${workId}/resources`, {
+    method: "POST",
+    body,
+    timeout: LLM_WAIT,
+  });
+}
+
+export const deleteWorkResource = (workId, resourceId) =>
+  request(`/api/teacher/works/${workId}/resources/${resourceId}`, {
+    method: "DELETE",
+  });

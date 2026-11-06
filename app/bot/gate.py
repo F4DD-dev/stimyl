@@ -3,11 +3,12 @@
 import logging
 from dataclasses import dataclass
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.updates import Incoming
 from app.core.config import Settings
-from app.db.models import User
+from app.db.models import RuntimeFlag, User
 from app.domain.account_copy import (
     ALREADY,
     BLOCKED,
@@ -224,9 +225,40 @@ async def open_gate(
     return GateOutcome(user, replies, False)
 
 
+WELCOME_TEXT = (
+    "Привет! Я **Стимул** — твой интеллектуальный помощник по учёбе.\n\n"
+    "Пришли вопрос текстом или фото страницы — объясню простыми словами, "
+    "покажу пример и дам короткую практику. Без готового ответа «на списать»: "
+    "сначала разбираем вместе, потом закрепляем.\n\n"
+    "А если ты учитель — соберу проверку по теме и покажу, кому нужна помощь, "
+    "не читая личные вопросы учеников.\n\n"
+    "Давай начнём?"
+)
+
+
+async def _welcome_once(session: AsyncSession, external: str) -> GateReply | None:
+    """Приветствие только при первом обращении. Флаг — чтобы не слать повторно."""
+    key = f"welcomed:{external}"[:64]
+    flag = await session.scalar(
+        select(RuntimeFlag).where(RuntimeFlag.key == key).with_for_update()
+    )
+    if flag is not None:
+        return None
+    session.add(RuntimeFlag(key=key, value="1"))
+    await session.flush()
+    return GateReply(WELCOME_TEXT)
+
+
 async def _without_account(
     session: AsyncSession, incoming: Incoming, settings: Settings
 ) -> GateOutcome:
+    welcome = await _welcome_once(session, incoming.max_user_id)
+
+    def greet(replies: list[GateReply]) -> GateOutcome:
+        if welcome is not None:
+            replies.insert(0, welcome)
+        return GateOutcome(None, replies, True)
+
     if incoming.payload == CONSENT_YES:
         user = await accept_consent(session, incoming.max_user_id, incoming.name, settings)
         replies = [
@@ -249,10 +281,12 @@ async def _without_account(
             replies.append(_ask_phone())
         else:
             replies.append(GateReply("Можно заниматься."))
+        if welcome is not None:
+            replies.insert(0, welcome)
         return GateOutcome(user, replies, True)
     if incoming.payload == CONSENT_NO_PAYLOAD:
-        return GateOutcome(None, [GateReply(CONSENT_NO)], True)
-    return GateOutcome(None, [_consent_reply(settings)], True)
+        return greet([GateReply(CONSENT_NO)])
+    return greet([_consent_reply(settings)])
 
 
 def _join_reply(joined, *, unknown: bool) -> str | None:

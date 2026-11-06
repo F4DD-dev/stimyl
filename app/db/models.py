@@ -8,6 +8,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -476,6 +477,25 @@ class WorkAnswer(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     answer: Mapped[str] = mapped_column(String(200))
     correct: Mapped[bool] = mapped_column(Boolean)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class WorkResource(Base):
+    """Файл или ссылка, которую учитель прикрепил к работе. Ученик видит их в сдании."""
+
+    __tablename__ = "work_resources"
+    __table_args__ = (
+        CheckConstraint("kind IN ('file', 'link')", name="ck_work_resources_kind"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    work_id: Mapped[int] = mapped_column(ForeignKey("works.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(8))
+    title: Mapped[str] = mapped_column(String(200))
+    url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    mime: Mapped[str] = mapped_column(String(100), default="application/octet-stream")
+    blob: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    size: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 

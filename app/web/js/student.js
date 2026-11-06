@@ -1,7 +1,7 @@
-import { answerWork, getHistory, getProgress, getStudentWorks, practice, sendPhoto } from "./api.js?v=5";
-import { chatTitle, clearChatPhoto, loadChats, newChat, openChat, sendChat, showChatList } from "./chat.js?v=3";
+import { answerWork, getHistory, getProgress, getStudentWorks, practice, sendPhoto } from "./api.js?v=7";
+import { chatTitle, clearChatPhoto, loadChats, newChat, openChat, sendChat, showChatList } from "./chat.js?v=4";
 import { sampleLesson } from "./preview.js";
-import { go, refresh, store } from "./store.js?v=4";
+import { go, refresh, store } from "./store.js?v=5";
 import { themePref } from "./theme.js?v=1";
 import {
   classbar,
@@ -16,7 +16,7 @@ import {
   nl,
   pill,
   themeSwitch,
-} from "./ui.js?v=4";
+} from "./ui.js?v=5";
 
 let photoFile = null;
 
@@ -508,6 +508,15 @@ export function renderTasks() {
   </div>`;
 }
 
+function resourceKindHint(item) {
+  if (item.kind === "link") return "ссылка";
+  const name = String(item.title || "").toLowerCase();
+  const mime = String(item.mime || "").toLowerCase();
+  if (mime.includes("pdf") || name.endsWith(".pdf")) return "PDF · скачать";
+  if (mime.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/.test(name)) return "изображение · скачать";
+  return "файл · скачать";
+}
+
 function renderWork(work) {
   const due = formatDue(work.due_at);
   return `<div class="fig">
@@ -520,6 +529,14 @@ function renderWork(work) {
         <p>${esc(work.topic && work.topic !== work.title ? work.topic : work.goal || "")}${work.author ? ` Назначил ${esc(work.author)}.` : ""}${due ? ` Срок ${esc(due)}.` : ""}</p>
         ${work.study ? `<p>${esc(work.study)}</p>` : ""}
       </div>
+      ${(work.resources || []).length ? `<div class="resource-list">
+        <p class="field-label">Материалы</p>
+        ${work.resources.map((item) => `<a class="resource-card" href="${esc(item.url)}" ${item.kind === "link" ? 'target="_blank" rel="noopener noreferrer"' : ""}>
+          <span class="resource-card__icon">${icon(item.kind === "link" ? "link" : "download")}</span>
+          <span class="resource-card__text"><strong>${esc(item.title)}</strong><small>${esc(resourceKindHint(item))}</small></span>
+          <span class="resource-card__go">${icon("arrow")}</span>
+        </a>`).join("")}
+      </div>` : ""}
       <div class="work-sheet">
         ${(work.items || []).map((item) => `<section>
           <h2>Задание ${item.position}</h2>

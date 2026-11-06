@@ -20,6 +20,7 @@ from app.db.models import (
     WorkAnswer,
     WorkItem,
     WorkRecipient,
+    WorkResource,
 )
 from app.domain.answers import answers_match
 from app.domain.curriculum import fold_text, topic_by_title
@@ -86,11 +87,14 @@ async def save_work(
     work_id: int | None = None,
     own_items: list[tuple[str, str]] | None = None,
     blurb: str = "",
+    subject_id: int | None = None,
 ) -> tuple[dict | None, str | None, int]:
     current = await owned_class(session, teacher, class_id)
     if current is None:
         return None, "Нет доступа к классу", 403
-    topic_row, topic_error = await _topic_for_teacher(session, teacher, current, topic, blurb)
+    topic_row, topic_error = await _topic_for_teacher(
+        session, teacher, current, topic, blurb, subject_id
+    )
     if topic_error or topic_row is None:
         status = 422 if topic_error == "Напишите тему" else 403
         return None, topic_error or "Тему не удалось записать", status
@@ -257,6 +261,13 @@ async def list_student_works(session: AsyncSession, student: User) -> list[dict]
                 )
             )
         }
+        resources = list(
+            await session.scalars(
+                select(WorkResource)
+                .where(WorkResource.work_id == work.id)
+                .order_by(WorkResource.id)
+            )
+        )
         items.append(
             {
                 "id": work.id,
@@ -267,6 +278,7 @@ async def list_student_works(session: AsyncSession, student: User) -> list[dict]
                 "author": author.display_name,
                 "study": await _study_text(session, work),
                 "status": recipient.status,
+                "resources": [_resource_dict(row, work.id) for row in resources],
                 "due_at": work.due_at.isoformat() if work.due_at else None,
                 "items": [
                     {
@@ -452,6 +464,116 @@ async def student_assignment_note(session: AsyncSession, student: User) -> str:
     return ""
 
 
+def _resource_dict(row: WorkResource, work_id: int) -> dict:
+    if row.kind == "link":
+        url = row.url or ""
+    else:
+        url = f"/api/student/works/{work_id}/resources/{row.id}/file"
+    return {
+        "id": row.id,
+        "kind": row.kind,
+        "title": row.title,
+        "url": url,
+        "mime": row.mime,
+        "size": row.size,
+    }
+
+
+async def attach_resource(
+    session: AsyncSession,
+    teacher: User,
+    work_id: int,
+    *,
+    title: str,
+    url: str | None,
+    file_name: str,
+    mime: str,
+    blob: bytes | None,
+) -> tuple[dict | None, str | None, int]:
+    """Файл или ссылка к черновику работы. После публикации уже не меняется."""
+    work = await session.get(Work, work_id)
+    if work is None or work.author_id != teacher.id:
+        return None, "Работы нет", 404
+    if await owned_class(session, teacher, work.class_id) is None:
+        return None, "Нет доступа к классу", 403
+    if work.status != "draft":
+        return None, "Опубликованную работу уже не меняю", 409
+    cleaned = " ".join(title.split()).strip()[:200]
+    if blob is not None:
+        if not blob:
+            return None, "Файл пустой", 422
+        if len(blob) > 15 * 1024 * 1024:
+            return None, "Файл больше 15 МБ", 413
+        kind = "file"
+        link = None
+        safe_mime = (mime or "application/octet-stream").strip()[:100] or "application/octet-stream"
+        safe_name = (file_name or "material").strip()[:200] or "material"
+        size = len(blob)
+        label = cleaned or safe_name.rsplit(".", 1)[0] or safe_name
+    else:
+        link = (url or "").strip()[:1000]
+        if not link.startswith(("https://", "http://")):
+            return None, "Нужна ссылка http:// или https://", 422
+        if not cleaned:
+            return None, "Напишите название материала", 422
+        kind = "link"
+        safe_mime = "text/uri-list"
+        safe_name = ""
+        size = len(link)
+        label = cleaned
+    now = datetime.now(UTC)
+    row = WorkResource(
+        work_id=work.id,
+        kind=kind,
+        title=label[:200],
+        url=link,
+        mime=safe_mime,
+        blob=blob,
+        size=size,
+        created_at=now,
+    )
+    session.add(row)
+    await session.flush()
+    return {"id": row.id, "kind": kind, "title": row.title, "url": row.url or ""}, None, 200
+
+
+async def detach_resource(
+    session: AsyncSession, teacher: User, work_id: int, resource_id: int
+) -> tuple[bool, str | None, int]:
+    work = await session.get(Work, work_id)
+    if work is None or work.author_id != teacher.id:
+        return False, "Работы нет", 404
+    if await owned_class(session, teacher, work.class_id) is None:
+        return False, "Нет доступа к классу", 403
+    if work.status != "draft":
+        return False, "Опубликованную работу уже не меняю", 409
+    row = await session.get(WorkResource, resource_id)
+    if row is None or row.work_id != work.id:
+        return False, "Материала нет", 404
+    await session.delete(row)
+    await session.flush()
+    return True, None, 200
+
+
+async def student_resource_file(
+    session: AsyncSession, student: User, work_id: int, resource_id: int
+) -> tuple[WorkResource | None, str | None, int]:
+    work = await session.get(Work, work_id)
+    recipient = await session.scalar(
+        select(WorkRecipient).where(
+            WorkRecipient.work_id == work_id,
+            WorkRecipient.user_id == student.id,
+            WorkRecipient.status.in_(("assigned", "done")),
+        )
+    )
+    if work is None or work.status != "published" or recipient is None:
+        return None, "Материала нет", 404
+    row = await session.get(WorkResource, resource_id)
+    if row is None or row.work_id != work.id or row.kind != "file" or row.blob is None:
+        return None, "Материала нет", 404
+    return row, None, 200
+
+
 async def class_has_teacher(session: AsyncSession, class_id: int) -> bool:
     found = await session.scalar(
         select(ClassTeacher.user_id).where(ClassTeacher.class_id == class_id)
@@ -626,19 +748,78 @@ async def _appointed_subject(session: AsyncSession, teacher: User, class_id: int
     )
 
 
+async def _subject_for_teacher(
+    session: AsyncSession, teacher: User, class_id: int, subject_id: int | None
+) -> int | None:
+    """Выбранный предмет, если учитель назначен на него в этом классе. Иначе первый."""
+    if subject_id is None:
+        return await _appointed_subject(session, teacher, class_id)
+    post = await session.scalar(
+        select(ClassSubjectTeacher.subject_id).where(
+            ClassSubjectTeacher.class_id == class_id,
+            ClassSubjectTeacher.user_id == teacher.id,
+            ClassSubjectTeacher.subject_id == subject_id,
+        )
+    )
+    return post
+
+
+async def program_of(
+    session: AsyncSession, teacher: User, class_id: int
+) -> tuple[list[dict], list[dict]]:
+    """Предметы учителя в классе и темы этих предметов — для конструктора."""
+    subject_ids = list(
+        await session.scalars(
+            select(ClassSubjectTeacher.subject_id)
+            .where(
+                ClassSubjectTeacher.class_id == class_id,
+                ClassSubjectTeacher.user_id == teacher.id,
+            )
+            .order_by(ClassSubjectTeacher.subject_id)
+        )
+    )
+    if not subject_ids:
+        return [], []
+    subjects = []
+    for subject_id in subject_ids:
+        subject = await session.get(Subject, subject_id)
+        if subject is not None:
+            subjects.append({"id": subject.id, "title": subject.title})
+    topic_rows = (
+        await session.execute(
+            select(Topic)
+            .where(Topic.subject_id.in_(subject_ids))
+            .order_by(Topic.subject_id, Topic.position)
+        )
+    ).scalars().all()
+    topics = [
+        {
+            "id": topic.id,
+            "subject_id": topic.subject_id,
+            "title": topic.title,
+            "blurb": topic.blurb,
+            "position": topic.position,
+        }
+        for topic in topic_rows
+    ]
+    return subjects, topics
+
+
 async def _topic_for_teacher(
     session: AsyncSession,
     teacher: User,
     class_id: int,
     title: str,
     blurb: str,
+    subject_id: int | None = None,
 ) -> tuple[Topic | None, str | None]:
     cleaned = " ".join(title.split()).strip()[:200]
     if len(cleaned) < 2:
         return None, "Напишите тему"
-    subject_id = await _appointed_subject(session, teacher, class_id)
-    if subject_id is None:
+    resolved = await _subject_for_teacher(session, teacher, class_id, subject_id)
+    if resolved is None:
         return None, "Нет назначения на этот предмет"
+    subject_id = resolved
     rows = list(await session.scalars(select(Topic).where(Topic.subject_id == subject_id)))
     folded = fold_text(cleaned)
     found = next((row for row in rows if fold_text(row.title) == folded), None)

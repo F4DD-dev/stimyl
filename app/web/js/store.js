@@ -64,6 +64,17 @@ export const store = {
   materials: null,
   materialsError: "",
   focusStudent: "",
+  subjectId: null,
+  wizardReturn: "",
+  program: null,
+  programError: "",
+  programForm: "",
+  newSubjectTitle: "",
+  newTopicTitle: "",
+  newTopicBlurb: "",
+  resourceLinkOpen: false,
+  resourceLinkUrl: "",
+  resourceLinkTitle: "",
 };
 
 const listeners = new Set();

@@ -1,7 +1,7 @@
-import { deleteMaterial, getAssignments, getClass, getMaterials, getNotices, getWorkResult, postDraft, publishWork, saveWork, uploadMaterial } from "./api.js?v=6";
-import { chatTitle, clearChatPhoto, loadChats, newChat, openChat, sendChat, showChatList } from "./chat.js?v=3";
-import { renderManage } from "./manage.js?v=11";
-import { go, refresh, store } from "./store.js?v=4";
+import { attachWorkResource, createSubject, createTopic, deleteMaterial, deleteWorkResource, getAssignments, getClass, getMaterials, getNotices, getProgram, getWorkResult, postDraft, publishWork, saveWork, uploadMaterial } from "./api.js?v=7";
+import { chatTitle, clearChatPhoto, loadChats, newChat, openChat, sendChat, showChatList } from "./chat.js?v=4";
+import { renderManage } from "./manage.js?v=12";
+import { go, refresh, store } from "./store.js?v=5";
 import { themePref } from "./theme.js?v=1";
 import {
   classbar,
@@ -17,7 +17,7 @@ import {
   pill,
   plural,
   themeSwitch,
-} from "./ui.js?v=4";
+} from "./ui.js?v=5";
 
 const DIFFICULTIES = [
   ["easy", "Проще"],
@@ -639,6 +639,7 @@ export async function sendDraftNow(mid) {
       due_at: null,
       class_id: store.classId || null,
       work_id: null,
+      subject_id: store.subjectId || null,
     });
     if (!saved?.persisted || !saved.id) {
       store.chatError = "Сервер не сохранил работу. Ученикам ничего не ушло.";
@@ -666,9 +667,11 @@ function openAssistantWizard(reply) {
   const students = reply.draft.audience === "selected"
     ? (plan.students || [])
     : [];
+  store.wizardReturn = "stimul";
   store.wizard = {
-    step: 4,
+    step: 1,
     mode: "stimul",
+    subjectId: store.subjectId || null,
     topic: plan.topic || reply.draft.topic || "",
     goal: plan.goal || reply.draft.goal || "",
     blurb: "",
@@ -681,12 +684,16 @@ function openAssistantWizard(reply) {
     own: [],
     useMaterial: Boolean(plan.use_material),
     dueAt: "",
+    resources: [],
     autosave: "idle",
     draft: reply.draft,
     draftError: null,
     sendError: null,
     fieldError: "",
+    triedKey: "",
+    draftKey: "",
   };
+  store.wizard.triedKey = store.wizard.draftKey = draftPayloadKey();
   const unknown = (reply.unknown_students || []).join(", ");
   if (unknown) {
     store.wizard.sendError = null;
@@ -859,14 +866,20 @@ function wizardBody() {
       <button class="btn btn-primary" type="button" data-act="nav" data-screen="tasks">Закрыть</button>
     </section>`;
   }
+  const subjects = store.program?.subjects || store.report?.subjects || [];
   const titles =
     wizard.mode === "stimul"
       ? ["Тема", "Задания", "Кому", "Просмотр и отправка"]
       : ["Тема", "Вопросы", "Кому", "Просмотр и отправка"];
   const students = store.report?.students || [];
+  const subjectSelect = subjects.length > 1
+    ? `<label class="field-label" for="wiz-subject">Предмет</label>
+      <select id="wiz-subject" class="field">${subjects.map((item) => `<option value="${item.id}" ${Number(wizard.subjectId || subjects[0]?.id) === item.id ? "selected" : ""}>${esc(item.title)}</option>`).join("")}</select>`
+    : "";
   let body = "";
   if (wizard.step === 1) {
-    body = `<label class="field-label" for="topic">Тема</label>
+    body = `${subjectSelect}
+      <label class="field-label" for="topic">Тема</label>
       <input id="topic" class="field" list="topic-list" value="${esc(wizard.topic)}" placeholder="Например: проценты" autocomplete="off">
       <datalist id="topic-list">${topics.map((title) => `<option value="${esc(title)}"></option>`).join("")}</datalist>
       <label class="field-label" for="goal">Что проверить <span class="hint-inline">необязательно</span></label>
@@ -922,6 +935,7 @@ function wizardBody() {
         <p class="hint">${esc(audienceText)}</p>
         <label class="field-label" for="due-at">Срок сдачи <span class="hint-inline">необязательно</span></label>
         <input id="due-at" class="field" type="datetime-local" value="${esc(wizard.dueAt || "")}">
+        ${resourcesBlock(wizard)}
         <div class="stack tight">${(draft.items || []).map((item, index) => {
           const bad = item.checked === false;
           return `<article class="card card-flat draft-item ${bad ? "draft-item--issue" : ""}">
@@ -942,13 +956,16 @@ function wizardBody() {
       ${wizard.mode === "own" ? "" : `<button class="text-btn" type="button" data-act="redraft" ${store.busy ? "disabled" : ""}>Собрать заново</button>`}`;
   }
   const actions = wizard.step < 4
-    ? `${wizard.step > 1 ? `<button class="btn btn-ghost" type="button" data-act="wizard-back">Назад</button>` : `<button class="btn btn-ghost" type="button" data-act="nav" data-screen="tasks">Закрыть</button>`}
+    ? `${wizard.step > 1 ? `<button class="btn btn-ghost" type="button" data-act="wizard-back">Назад</button>` : `<button class="btn btn-ghost" type="button" data-act="wizard-exit">Закрыть</button>`}
         <button class="btn btn-primary" type="button" data-act="wizard-next">Дальше</button>`
     : `<button class="btn btn-ghost" type="button" data-act="save-draft" ${!wizard.draft || store.busy ? "disabled" : ""}>Черновик</button>
         <button class="btn btn-primary" type="button" data-act="send-assignment" ${!wizard.draft || store.busy ? "disabled" : ""}>Опубликовать</button>`;
   return `<div class="stack flow">
     <header class="flow-head">
-      <div class="who"><b>${titles[wizard.step - 1]}</b><span>Шаг ${wizard.step} из 4</span></div>
+      <div class="flow-head__top">
+        <button class="flow-back" type="button" data-act="wizard-back" aria-label="Назад на шаг" title="Назад">${icon("chevron")}</button>
+        <div class="who"><b>${titles[wizard.step - 1]}</b><span>Шаг ${wizard.step} из 4</span></div>
+      </div>
       <ol class="steps" aria-label="Этапы">${titles.map((title, index) => {
         const n = index + 1;
         const cls = n < wizard.step ? "is-done" : n === wizard.step ? "is-now" : "";
@@ -1026,6 +1043,13 @@ export function renderProfile() {
       </div>
       <div class="settings-card" style="margin-top:14px">
         <div class="settings-card__heading">
+          <span class="eyebrow">Конструктор</span>
+          <h2>Предметы и темы</h2>
+        </div>
+        ${store.screen === "profile" ? programBlock() : ""}
+      </div>
+      <div class="settings-card" style="margin-top:14px">
+        <div class="settings-card__heading">
           <span class="eyebrow">Оформление</span>
           <h2>Тема</h2>
         </div>
@@ -1059,9 +1083,11 @@ export function setFilter(status) {
 }
 
 export function startCompose(topic = "", mode = "own") {
+  if (store.screen !== "compose") store.wizardReturn = store.screen || "tasks";
   store.wizard = {
     step: 1,
     mode: mode === "stimul" ? "stimul" : "own",
+    subjectId: store.subjectId || null,
     topic: topic || "",
     goal: "",
     blurb: "",
@@ -1074,14 +1100,25 @@ export function startCompose(topic = "", mode = "own") {
     own: [],
     useMaterial: false,
     dueAt: "",
+    resources: [],
     autosave: "idle",
     draft: null,
     draftError: null,
     sendError: null,
     fieldError: "",
+    triedKey: "",
+    draftKey: "",
   };
+  if (!store.program && !store.preview) loadProgram();
   if (store.screen !== "compose") go("compose");
   else refresh();
+}
+
+export function wizardExit() {
+  const back = store.wizardReturn && store.wizardReturn !== "compose" ? store.wizardReturn : "tasks";
+  store.wizard = null;
+  store.wizardReturn = "";
+  go(back);
 }
 
 function readWizardFields() {
@@ -1160,7 +1197,7 @@ export function wizardNext() {
   wizard.step += 1;
   if (wizard.step === 4 && wizard.mode === "own") sealOwnDraft();
   refresh();
-  if (wizard.step === 4 && wizard.mode !== "own") loadDraft();
+  if (wizard.step === 4) maybeLoadDraft();
 }
 
 export function wizardGoto(step) {
@@ -1172,7 +1209,7 @@ export function wizardGoto(step) {
     wizard.fieldError = "";
     wizard.step = target;
     refresh();
-    if (target === 4 && wizard.mode !== "own" && !wizard.draft && !wizard.draftError && !store.busy) loadDraft();
+    if (target === 4) maybeLoadDraft();
     return;
   }
   while (wizard.step < target) {
@@ -1184,7 +1221,7 @@ export function wizardGoto(step) {
     if (wizard.step === 4 && wizard.mode === "own") sealOwnDraft();
   }
   refresh();
-  if (target === 4 && wizard.mode !== "own" && !wizard.draft && !wizard.draftError && !store.busy) loadDraft();
+  if (target === 4) maybeLoadDraft();
 }
 
 export function wizardBack() {
@@ -1193,7 +1230,11 @@ export function wizardBack() {
   readWizardFields();
   wizard.fieldError = "";
   wizard.sendError = null;
-  wizard.step = Math.max(1, wizard.step - 1);
+  if (wizard.step <= 1) {
+    wizardExit();
+    return;
+  }
+  wizard.step -= 1;
   refresh();
 }
 
@@ -1324,6 +1365,7 @@ export async function autosaveDraft() {
       wizard.workId = saved.id;
       wizard.draft.persisted = true;
       wizard.autosave = "saved";
+      await uploadStagedResources(saved.id);
     } else {
       wizard.autosave = "error";
     }
@@ -1365,8 +1407,50 @@ function draftPayload() {
     students: resolved.students,
     student_ids: resolved.student_ids,
     use_material: Boolean(wizard.useMaterial),
+    subject_id: wizard.subjectId || null,
     class_id: store.classId || null,
   };
+}
+
+function draftPayloadKey() {
+  const wizard = store.wizard;
+  if (!wizard) return "";
+  return JSON.stringify(draftPayload());
+}
+
+function maybeLoadDraft() {
+  const wizard = store.wizard;
+  if (!wizard || wizard.step !== 4 || wizard.mode === "own" || store.busy || store.preview) return;
+  const key = draftPayloadKey();
+  if (wizard.draft && wizard.draftKey === key) return;
+  if (wizard.triedKey === key) return;
+  loadDraft();
+}
+
+async function uploadStagedResources(workId) {
+  const wizard = store.wizard;
+  const staged = wizard?.resources || [];
+  if (!staged.length || !workId) return true;
+  for (const item of staged) {
+    if (item.sent || item.failed) continue;
+    try {
+      if (item.url) {
+        const saved = await attachWorkResource(workId, { title: item.title, url: item.url });
+        item.persistedId = { work: workId, id: saved?.id };
+      } else if (item.file) {
+        const saved = await attachWorkResource(workId, { title: item.title, file: item.file });
+        item.persistedId = { work: workId, id: saved?.id };
+      } else {
+        continue;
+      }
+      item.sent = true;
+    } catch (error) {
+      item.failed = true;
+      wizard.sendError = `Материал «${item.title}» не загрузился: ${error.message || "ошибка сети"}. Нажмите «Опубликовать» ещё раз.`;
+      return false;
+    }
+  }
+  return true;
 }
 
 function sealOwnDraft() {
@@ -1398,6 +1482,7 @@ export async function loadDraft() {
   const wizard = store.wizard;
   if (!wizard || store.busy) return;
   readWizardFields();
+  wizard.triedKey = draftPayloadKey();
   wizard.draftError = null;
   wizard.sendError = null;
   store.busy = true;
@@ -1409,6 +1494,7 @@ export async function loadDraft() {
       return;
     }
     wizard.draft = await postDraft(draftPayload());
+    wizard.draftKey = wizard.triedKey;
   } catch (error) {
     wizard.draft = null;
     wizard.draftError = error;
@@ -1457,6 +1543,7 @@ export async function saveDraft() {
     wizard.workId = saved.id;
     wizard.autosave = "saved";
     wizard.sendError = null;
+    if (!(await uploadStagedResources(saved.id))) return;
     await confirmDialog({ title: "Черновик сохранён", text: "Ученикам работа ещё не отправлена.", confirm: "Хорошо" });
   } catch (error) {
     wizard.sendError = error.message;
@@ -1489,6 +1576,8 @@ export async function sendAssignment() {
       wizard.sendError = "Сервер не сохранил работу. Ученикам ничего не ушло.";
       return;
     }
+    wizard.workId = saved.id;
+    if (!(await uploadStagedResources(saved.id))) return;
     const published = await publishWork(saved.id);
     if (!published?.persisted) {
       wizard.sendError = "Черновик записан, публикация не подтверждена. Ученикам ничего не ушло.";
@@ -1591,5 +1680,278 @@ export async function reloadTeacher() {
   }
   store.canManage = Boolean(store.report?.can_manage_school);
   store.loading = false;
+  refresh();
+}
+
+/* ===== Конструктор: предметы, темы, материалы работы ===== */
+
+export async function loadProgram() {
+  if (store.programLoading) return;
+  store.programLoading = true;
+  if (store.preview) {
+    store.program = teacherPreviewProgram();
+    store.programLoading = false;
+    refresh();
+    return;
+  }
+  store.programError = "";
+  try {
+    store.program = await getProgram(store.classId || undefined);
+    if (!store.subjectId && store.program?.subjects?.length) {
+      store.subjectId = store.program.subjects[0].id;
+    }
+  } catch (error) {
+    store.program = null;
+    store.programError = error.message;
+  } finally {
+    store.programLoading = false;
+  }
+  refresh();
+}
+
+function teacherPreviewProgram() {
+  return {
+    subjects: [
+      { id: 1, title: "Математика" },
+      { id: 2, title: "История" },
+    ],
+    topics: [
+      { id: 11, subject_id: 1, title: "Дроби", blurb: "", position: 1 },
+      { id: 12, subject_id: 1, title: "Линейные уравнения", blurb: "", position: 2 },
+      { id: 21, subject_id: 2, title: "Древний Рим", blurb: "Республика и империя.", position: 1 },
+    ],
+  };
+}
+
+function programTopics() {
+  const topics = store.program?.topics || [];
+  if (!store.subjectId) return topics;
+  return topics.filter((topic) => topic.subject_id === store.subjectId);
+}
+
+function programBlock() {
+  if (store.programError) {
+    return `<p class="field-error">${esc(store.programError)}</p>
+      <button class="text-btn" type="button" data-act="program-retry">Повторить</button>`;
+  }
+  if (!store.program) return `<p class="hint">Загружаю предметы…</p>`;
+  const subjects = store.program.subjects || [];
+  if (!subjects.length) {
+    return `<p class="hint">В этом классе нет назначения на предмет. Сначала примите заявку или назначьте предмет.</p>`;
+  }
+  const active = store.subjectId || subjects[0].id;
+  const topics = programTopics();
+  const form = store.programForm === "subject"
+    ? `<div class="program-form">
+        <input id="new-subject-title" class="field" placeholder="Название предмета, например: Физика" value="${esc(store.newSubjectTitle)}" maxlength="200">
+        <div class="program-form__actions">
+          <button class="btn btn-primary" type="button" data-act="program-save-subject" ${!store.newSubjectTitle.trim() ? "disabled" : ""}>Добавить</button>
+          <button class="btn btn-ghost" type="button" data-act="program-cancel">Отмена</button>
+        </div></div>`
+    : "";
+  const topicForm = store.programForm === "topic"
+    ? `<div class="program-form">
+        <input id="new-topic-title" class="field" placeholder="Название темы" value="${esc(store.newTopicTitle)}" maxlength="200">
+        <textarea id="new-topic-blurb" class="area" placeholder="Короткое пояснение для ученика (необязательно)">${esc(store.newTopicBlurb)}</textarea>
+        <div class="program-form__actions">
+          <button class="btn btn-primary" type="button" data-act="program-save-topic" ${!store.newTopicTitle.trim() || !active ? "disabled" : ""}>Добавить тему</button>
+          <button class="btn btn-ghost" type="button" data-act="program-cancel">Отмена</button>
+        </div></div>`
+    : "";
+  return `<div class="program">
+    <div class="chips program__subjects">${subjects.map((item) => `<button class="chip ${item.id === active ? "is-on" : ""}" type="button" data-act="program-subject" data-id="${item.id}">${esc(item.title)}</button>`).join("")}
+      <button class="chip" type="button" data-act="program-new-subject">+ Предмет</button></div>
+    ${form}
+    <div class="program__topics">
+      ${topics.length ? topics.map((topic) => `<div class="program-topic"><strong>${esc(topic.title)}</strong>${topic.blurb ? `<small>${esc(topic.blurb)}</small>` : ""}</div>`).join("") : `<p class="hint">Тем пока нет — добавьте первую или напишите её в мастере работы.</p>`}
+      ${topicForm}
+      ${store.programForm !== "topic" ? `<button class="text-btn" type="button" data-act="program-new-topic" ${!active ? "disabled" : ""}>+ Тема</button>` : ""}
+    </div>
+  </div>`;
+}
+
+export async function programSubject(id) {
+  store.subjectId = Number(id) || null;
+  store.programForm = "";
+  refresh();
+}
+
+export function programNewSubject() {
+  store.programForm = "subject";
+  store.newSubjectTitle = "";
+  refresh();
+}
+
+export function programNewTopic() {
+  store.programForm = "topic";
+  store.newTopicTitle = "";
+  store.newTopicBlurb = "";
+  refresh();
+}
+
+export function programCancel() {
+  store.programForm = "";
+  refresh();
+}
+
+export async function programSaveSubject() {
+  const title = (store.newSubjectTitle || "").trim();
+  if (title.length < 2 || store.busy) return;
+  store.busy = true;
+  try {
+    const saved = await createSubject({ title, class_id: store.classId || null });
+    if (store.program) {
+      if (!store.program.subjects.some((item) => item.id === saved.id)) {
+        store.program.subjects.push({ id: saved.id, title: saved.title });
+      }
+      store.subjectId = saved.id;
+    }
+    store.newSubjectTitle = "";
+    store.programForm = "";
+    toast(`Предмет «${saved.title}» добавлен.`);
+  } catch (error) {
+    store.programError = error.message;
+  } finally {
+    store.busy = false;
+    refresh();
+  }
+}
+
+export async function programSaveTopic() {
+  const title = (store.newTopicTitle || "").trim();
+  const subjectId = store.subjectId || store.program?.subjects?.[0]?.id;
+  if (title.length < 2 || !subjectId || store.busy) return;
+  store.busy = true;
+  try {
+    const saved = await createTopic({
+      subject_id: subjectId,
+      title,
+      blurb: store.newTopicBlurb || "",
+      class_id: store.classId || null,
+    });
+    if (store.program) {
+      const exists = store.program.topics.some(
+        (item) => item.id === saved.id || (item.subject_id === saved.subject_id && item.title === saved.title),
+      );
+      if (!exists) store.program.topics.push(saved);
+    }
+    store.newTopicTitle = "";
+    store.newTopicBlurb = "";
+    store.programForm = "";
+    toast(`Тема «${saved.title}» добавлена.`);
+  } catch (error) {
+    store.programError = error.message;
+  } finally {
+    store.busy = false;
+    refresh();
+  }
+}
+
+export function setWizardSubject(value) {
+  const wizard = store.wizard;
+  if (!wizard) return;
+  const id = Number(value) || null;
+  if (wizard.subjectId !== id) {
+    wizard.subjectId = id;
+    store.subjectId = id;
+    refresh();
+  }
+}
+
+function resourceKindHint(item) {
+  if (item.url && !item.file) return "ссылка";
+  const name = String(item.file?.name || item.title || "").toLowerCase();
+  if (name.endsWith(".pdf")) return "PDF";
+  if (/\.(png|jpe?g|webp|gif)$/.test(name)) return "изображение";
+  if (/\.(docx?|pptx?|txt|md)$/.test(name)) return "документ";
+  return "файл";
+}
+
+function resourcesBlock(wizard) {
+  const staged = wizard.resources || [];
+  const rows = staged.map((item, index) => `<div class="resource-row">
+      <span class="resource-row__icon">${icon(item.url && !item.file ? "link" : "download")}</span>
+      <span class="resource-row__text"><strong>${esc(item.title || item.file?.name || "Материал")}</strong><small>${esc(resourceKindHint(item))}${item.sent ? " · приложен" : item.failed ? " · не загрузился" : ""}</small></span>
+      <button class="text-btn" type="button" data-act="resource-remove" data-index="${index}" ${store.busy ? "disabled" : ""}>Убрать</button>
+    </div>`).join("");
+  const linkForm = store.resourceLinkOpen
+    ? `<div class="program-form">
+        <input id="resource-link-url" class="field" placeholder="https://…" value="${esc(store.resourceLinkUrl)}" inputmode="url" autocomplete="off">
+        <input id="resource-link-title" class="field" placeholder="Название, например: Конспект по теме" value="${esc(store.resourceLinkTitle)}" maxlength="200">
+        <div class="program-form__actions">
+          <button class="btn btn-primary" type="button" data-act="resource-link-add" ${!(store.resourceLinkUrl || "").trim() ? "disabled" : ""}>Добавить ссылку</button>
+          <button class="btn btn-ghost" type="button" data-act="resource-link-cancel">Отмена</button>
+        </div></div>`
+    : "";
+  return `<div class="resources">
+    <p class="field-label">Материалы для ученика <span class="hint-inline">необязательно</span></p>
+    ${rows}
+    <div class="resources__add">
+      <label class="btn btn-ghost file resources__file">${icon("download")} Файл<input id="resource-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.txt,.md,.docx,.pptx"></label>
+      <button class="btn btn-ghost" type="button" data-act="resource-link-toggle">${icon("link")} Ссылка</button>
+    </div>
+    ${linkForm}
+    <p class="hint">PDF, изображение или ссылка. После публикации ученик увидит кнопки в работе.</p>
+  </div>`;
+}
+
+export function resourceFilePicked(file) {
+  const wizard = store.wizard;
+  if (!wizard || !file || store.busy) return;
+  wizard.resources = wizard.resources || [];
+  wizard.resources.push({
+    file,
+    title: String(file.name || "").replace(/\.[^.]+$/, "").slice(0, 200) || "Материал",
+    sent: false,
+    failed: false,
+  });
+  wizard.sendError = null;
+  refresh();
+}
+
+export function resourceLinkToggle() {
+  store.resourceLinkOpen = !store.resourceLinkOpen;
+  if (!store.resourceLinkOpen) {
+    store.resourceLinkUrl = "";
+    store.resourceLinkTitle = "";
+  }
+  refresh();
+}
+
+export function resourceLinkCancel() {
+  store.resourceLinkOpen = false;
+  store.resourceLinkUrl = "";
+  store.resourceLinkTitle = "";
+  refresh();
+}
+
+export function resourceLinkAdd() {
+  const wizard = store.wizard;
+  const url = (store.resourceLinkUrl || "").trim();
+  if (!wizard || !url || store.busy) return;
+  wizard.resources = wizard.resources || [];
+  wizard.resources.push({
+    url,
+    title: (store.resourceLinkTitle || "").trim() || url.replace(/^https?:\/\//, "").slice(0, 200),
+    sent: false,
+    failed: false,
+  });
+  store.resourceLinkOpen = false;
+  store.resourceLinkUrl = "";
+  store.resourceLinkTitle = "";
+  wizard.sendError = null;
+  refresh();
+}
+
+export function resourceRemove(index) {
+  const wizard = store.wizard;
+  const at = Number(index);
+  if (!wizard?.resources || !Number.isInteger(at) || at < 0 || at >= wizard.resources.length) return;
+  const item = wizard.resources[at];
+  if (item.persistedId?.id && !store.preview) {
+    deleteWorkResource(item.persistedId.work, item.persistedId.id)
+      .catch(() => toast("Не удалось убрать материал на сервере."));
+  }
+  wizard.resources.splice(at, 1);
   refresh();
 }

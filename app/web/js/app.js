@@ -1,4 +1,4 @@
-import { approveJoin, getHistory, getLesson, getNotices, getProgress, getSession, getStudentWorks, openSession, openTicket, readNotice, renameMe, setCsrf } from "./api.js?v=6";
+import { approveJoin, getHistory, getLesson, getNotices, getProgress, getSession, getStudentWorks, openSession, openTicket, readNotice, renameMe, setCsrf } from "./api.js?v=7";
 import { previewRole, studentPreview, teacherPreview } from "./preview.js?v=10";
 import { applyTheme, setThemePref, themePref } from "./theme.js?v=1";
 import {
@@ -22,9 +22,9 @@ import {
   submitAnswer,
   submitQuestion,
   takePhoto,
-} from "./student.js?v=15";
-import { go, refresh, store, subscribe } from "./store.js?v=4";
-import { clearChatPhoto, loadChats, newChat, openChat, takeChatPhoto } from "./chat.js?v=3";
+} from "./student.js?v=16";
+import { go, refresh, store, subscribe } from "./store.js?v=5";
+import { clearChatPhoto, loadChats, newChat, openChat, takeChatPhoto } from "./chat.js?v=4";
 import {
   addMaterial,
   autosaveDraft,
@@ -34,12 +34,24 @@ import {
   focusTopic,
   loadDraft,
   loadMaterials,
+  loadProgram,
+  programCancel,
+  programNewSubject,
+  programNewTopic,
+  programSaveSubject,
+  programSaveTopic,
+  programSubject,
   regenItem,
   reloadQuiet,
   reloadTeacher,
   removeMaterial,
   renderTeacher,
   openResult,
+  resourceFilePicked,
+  resourceLinkAdd,
+  resourceLinkCancel,
+  resourceLinkToggle,
+  resourceRemove,
   reviewDraft,
   saveDraft,
   selectAllStudents,
@@ -50,6 +62,7 @@ import {
   setCount,
   setDifficulty,
   setFilter,
+  setWizardSubject,
   showClassInfo,
   startCompose,
   studentRowsHTML,
@@ -57,12 +70,13 @@ import {
   toggleMaterial,
   toggleStudent,
   wizardBack,
+  wizardExit,
   wizardGoto,
   wizardNext,
   writeOwn,
-} from "./teacher.js?v=16";
-import { acceptOne, appoint, changePerson, loadManage, rejectOne } from "./manage.js?v=11";
-import { brand, confirmDialog, esc, icon, mark, skeleton, toast } from "./ui.js?v=4";
+} from "./teacher.js?v=17";
+import { acceptOne, appoint, changePerson, loadManage, rejectOne } from "./manage.js?v=12";
+import { brand, confirmDialog, esc, icon, mark, skeleton, toast } from "./ui.js?v=5";
 
 const TITLES = {
   home: "Главная",
@@ -82,6 +96,53 @@ const TITLES = {
 let bootId = 0;
 let focused = "";
 let backFn = null;
+let fabMounted = false;
+
+function mountSplash() {
+  if (document.getElementById("splash") || document.getElementById("app")?.dataset.splashOff === "1") return;
+  const el = document.createElement("div");
+  el.id = "splash";
+  el.setAttribute("aria-hidden", "true");
+  el.innerHTML = `<div class="splash__stage">
+    <div class="splash__logo">${mark(true)}</div>
+    <div class="splash__word"><strong>Стимул</strong><span>помощник по учёбе</span></div>
+  </div>`;
+  document.body.appendChild(el);
+  document.body.classList.add("boot-anim");
+  window.setTimeout(() => el.classList.add("is-done"), 1150);
+  window.setTimeout(() => {
+    el.remove();
+    window.setTimeout(() => document.body.classList.remove("boot-anim"), 900);
+  }, 1650);
+}
+
+function ensureAssistant() {
+  if (fabMounted || !store.role || store.gate || store.booting) return;
+  fabMounted = true;
+  const el = document.createElement("button");
+  el.type = "button";
+  el.className = "ai-fab";
+  el.dataset.act = "nav";
+  el.dataset.screen = "stimul";
+  el.setAttribute("aria-label", "Открыть Стимула");
+  const teacher = store.role === "teacher";
+  const tip = teacher
+    ? "Спросите Стимула — соберёт проверку или расскажет про класс"
+    : "Задайте вопрос — объясню тему и дам практику";
+  let seen = false;
+  try {
+    seen = sessionStorage.getItem("stimul_ai_tip") === "1";
+  } catch { /* приватный режим — подсказка просто не запомнится */ }
+  el.innerHTML = `${mark()}${seen ? "" : `<span class="ai-fab__tip">${esc(tip)}</span>`}`;
+  if (!seen) {
+    try {
+      sessionStorage.setItem("stimul_ai_tip", "1");
+    } catch { /* ignore */ }
+    window.setTimeout(() => el.classList.remove("has-tip"), 8000);
+    el.classList.add("has-tip");
+  }
+  document.body.appendChild(el);
+}
 
 function screenFromHash() {
   const raw = location.hash.startsWith("#/") ? location.hash.slice(2).split(/[?#]/)[0] : "";
@@ -546,6 +607,7 @@ function syncBack() {
   const nested = store.screen === "lesson" || store.screen === "compose";
   backFn = () => {
     if (store.screen === "compose" && store.wizard && store.wizard.step > 1) wizardBack();
+    else if (store.screen === "compose" && store.wizard) wizardExit();
     else if (store.screen === "lesson") exitLesson();
     else go(store.role === "teacher" ? "overview" : "home");
   };
@@ -582,6 +644,17 @@ function paint() {
     return;
   }
   app.innerHTML = frame(pageInner());
+  ensureAssistant();
+  if (
+    store.role === "teacher" &&
+    store.screen === "profile" &&
+    store.program === null &&
+    !store.programLoading &&
+    !store.programError &&
+    !store.loading
+  ) {
+    loadProgram();
+  }
   if (store.screen === "stimul" && store.chatView === "thread") {
     document.querySelector(".chat-scroll-end")?.scrollIntoView({ block: "end" });
   }
@@ -596,6 +669,7 @@ async function onAction(act, button) {
     const screen = button.dataset.screen;
     go(screen);
     if (screen === "manage") await loadManage();
+    if (screen === "profile" && store.role === "teacher" && !store.program && !store.programError) loadProgram();
     if (screen === "stimul") {
       if (store.role === "teacher" && store.materials === null) loadMaterials();
       if (store.chats === null) loadChats();
@@ -660,6 +734,54 @@ async function onAction(act, button) {
     wizardGoto(button.dataset.step);
     return;
   }
+  if (act === "wizard-exit") {
+    wizardExit();
+    return;
+  }
+  if (act === "program-subject") {
+    programSubject(button.dataset.id);
+    return;
+  }
+  if (act === "program-new-subject") {
+    programNewSubject();
+    return;
+  }
+  if (act === "program-new-topic") {
+    programNewTopic();
+    return;
+  }
+  if (act === "program-cancel") {
+    programCancel();
+    return;
+  }
+  if (act === "program-save-subject") {
+    await programSaveSubject();
+    return;
+  }
+  if (act === "program-save-topic") {
+    await programSaveTopic();
+    return;
+  }
+  if (act === "program-retry") {
+    await loadProgram();
+    return;
+  }
+  if (act === "resource-link-toggle") {
+    resourceLinkToggle();
+    return;
+  }
+  if (act === "resource-link-cancel") {
+    resourceLinkCancel();
+    return;
+  }
+  if (act === "resource-link-add") {
+    resourceLinkAdd();
+    return;
+  }
+  if (act === "resource-remove") {
+    resourceRemove(button.dataset.index);
+    return;
+  }
   if (act === "select-all-students") {
     selectAllStudents();
     return;
@@ -701,6 +823,8 @@ async function onAction(act, button) {
   if (act === "pick-class") {
     store.classId = Number(button.dataset.id);
     store.materials = null;
+    store.program = null;
+    store.subjectId = null;
     document.querySelector("#dialog")?.close();
     await reloadTeacher();
     return;
@@ -926,6 +1050,10 @@ function bind() {
       addMaterial(target.files && target.files[0]);
       target.value = "";
     }
+    if (target.id === "resource-file") {
+      resourceFilePicked(target.files && target.files[0]);
+      target.value = "";
+    }
     if (target.id === "use-material") {
       toggleMaterial(target.checked);
     }
@@ -934,7 +1062,13 @@ function bind() {
       refresh();
     }
     if (target.id === "topic" && store.wizard) store.wizard.topic = target.value;
+    if (target.id === "new-subject-title") store.newSubjectTitle = target.value;
+    if (target.id === "new-topic-title") store.newTopicTitle = target.value;
+    if (target.id === "new-topic-blurb") store.newTopicBlurb = target.value;
+    if (target.id === "resource-link-url") store.resourceLinkUrl = target.value;
+    if (target.id === "resource-link-title") store.resourceLinkTitle = target.value;
     if (target.id === "material") toggleMaterial(target.checked);
+    if (target.id === "wiz-subject") setWizardSubject(target.value);
     if (target.dataset.studentId != null) {
       toggleStudent(target.dataset.studentId, target.dataset.name || "");
     }
@@ -965,4 +1099,5 @@ subscribe(() => {
 
 bind();
 window.addEventListener("resize", syncChatInset);
+mountSplash();
 boot();

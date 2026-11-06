@@ -1,6 +1,6 @@
-import { acceptClaim, appointTeacher, getCatalog, getClaims, getPeople, rejectClaim, savePerson } from "./api.js?v=5";
-import { refresh, store } from "./store.js?v=3";
-import { emptyBlock, errorBlock, esc } from "./ui.js";
+import { acceptClaim, appointTeacher, getCatalog, getClaims, getPeople, rejectClaim, savePerson } from "./api.js?v=7";
+import { refresh, store } from "./store.js?v=5";
+import { emptyBlock, errorBlock, esc } from "./ui.js?v=5";
 
 function when(value) {
   const text = String(value || "");

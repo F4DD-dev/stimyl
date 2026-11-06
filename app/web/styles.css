@@ -242,7 +242,8 @@ body.is-flow .page { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
 .dist i[data-status="mastered"], .meter i[data-status="mastered"], .bar[data-status="mastered"] i, .track[data-status="mastered"] span { background: var(--known); }
 .dist i[data-status="needs_practice"], .meter i[data-status="needs_practice"], .bar[data-status="needs_practice"] i, .track[data-status="needs_practice"] span { background: var(--practice); }
 .dist i[data-status="repeat"], .meter i[data-status="repeat"], .bar[data-status="repeat"] i, .track[data-status="repeat"] span { background: var(--gap); }
-.dist i[data-status="none"], .meter i[data-status="none"] { background: #d5d8de; }
+.dist i[data-status="none"], .meter i[data-status="none"] { background: var(--line-strong); }
+.meter { display: flex; height: 6px; border-radius: 99px; overflow: hidden; background: var(--sunken); }
 .legend {
   display: flex;
   flex-wrap: wrap;
@@ -483,7 +484,7 @@ th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); v
   max-width: 480px;
 }
 .skeleton { display: flex; flex-direction: column; gap: 10px; }
-.skeleton span { display: block; height: 12px; border-radius: 6px; background: #e6e8ec; }
+.skeleton span { display: block; height: 12px; border-radius: 6px; background: var(--sunken); }
 .toast {
   position: fixed;
   z-index: 8;
@@ -503,6 +504,7 @@ dialog.sheet {
   border: 0;
   padding: 8px 16px calc(16px + env(safe-area-inset-bottom));
   border-radius: 16px 16px 0 0;
+  background: var(--card);
   color: var(--ink);
   overflow: auto;
 }
@@ -1445,11 +1447,11 @@ button.brand { border: 0; padding: 0; text-align: left; }
   font-weight: 750;
 }
 .student-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
-.student-stats article { min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 19px; background: #fff; }
+.student-stats article { min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 19px; background: var(--card); }
 .student-stats span, .student-stats small { display: block; color: var(--muted); font-size: 11px; }
 .student-stats span { margin-bottom: 9px; font-weight: 750; }
 .student-stats strong { display: block; margin-bottom: 4px; letter-spacing: -0.05em; font-size: 32px; line-height: 1; font-variant-numeric: tabular-nums; }
-.student-focus { padding: 22px; border: 1px solid var(--line); border-radius: 22px; background: #fff; }
+.student-focus { padding: 22px; border: 1px solid var(--line); border-radius: 22px; background: var(--card); }
 .student-focus__heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
 .student-focus h2 { letter-spacing: -0.04em; font-size: 23px; line-height: 1.12; }
 .student-focus__score {
@@ -1768,3 +1770,299 @@ body.is-chat .toast { bottom: calc(88px + env(safe-area-inset-bottom) + var(--ch
 @media (max-width: 360px) {
   .theme-segment button { padding: 0 8px; font-size: 12px; }
 }
+
+/* ===== Сплэш: логотип падает, раскладка собирается ===== */
+#splash {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  transition: opacity 420ms var(--ease);
+}
+#splash.is-done { opacity: 0; pointer-events: none; }
+.splash__stage { display: flex; flex-direction: column; align-items: center; gap: 22px; }
+.splash__logo { animation: splash-fall 1.05s cubic-bezier(0.5, 0, 0.75, 0.4) both; }
+.splash__word { display: flex; flex-direction: column; align-items: center; gap: 2px; opacity: 0; animation: splash-word 480ms var(--ease) 0.95s forwards; }
+.splash__word strong { font-size: 30px; font-weight: 800; letter-spacing: -0.04em; }
+.splash__word span { color: var(--muted); font-size: 13px; font-weight: 650; }
+@keyframes splash-fall {
+  0% { opacity: 0; transform: translateY(-42vh) rotate(-5deg) scale(0.9); }
+  10% { opacity: 1; }
+  52% { transform: translateY(7vh) rotate(2.5deg) scale(1.03); }
+  68% { transform: translateY(-8vh) rotate(-1.5deg) scale(1); }
+  80% { transform: translateY(3vh) rotate(0.5deg) scale(1.005); }
+  90%, 100% { opacity: 1; transform: translateY(0) rotate(0) scale(1); }
+}
+@keyframes splash-word {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Сборка интерфейса после сплэша: кусочки встают на место со смещением */
+.boot-anim .fig > *, .boot-anim .fig-page > *:nth-child(-n+10), .boot-anim .page-inner > * {
+  animation: piece-in 460ms var(--ease) both;
+}
+.boot-anim .fig-page > *:nth-child(2) { animation-delay: 60ms; }
+.boot-anim .fig-page > *:nth-child(3) { animation-delay: 120ms; }
+.boot-anim .fig-page > *:nth-child(4) { animation-delay: 180ms; }
+.boot-anim .fig-page > *:nth-child(5) { animation-delay: 240ms; }
+.boot-anim .fig-page > *:nth-child(6) { animation-delay: 300ms; }
+.boot-anim .fig-page > *:nth-child(7) { animation-delay: 360ms; }
+.boot-anim .fig-page > *:nth-child(n+8) { animation-delay: 420ms; }
+@keyframes piece-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ===== Плавающий помощник ===== */
+.ai-fab {
+  position: fixed;
+  z-index: 7;
+  right: 16px;
+  bottom: calc(92px + env(safe-area-inset-bottom));
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: linear-gradient(145deg, var(--accent), var(--accent-strong));
+  color: var(--on-accent);
+  box-shadow: 0 10px 26px color-mix(in srgb, var(--accent-strong) 38%, transparent), 0 0 0 1px color-mix(in srgb, var(--accent-strong) 30%, transparent);
+  cursor: pointer;
+  animation: fab-pop 700ms cubic-bezier(0.34, 1.56, 0.64, 1) 1.7s both;
+}
+.ai-fab .logo { width: 26px; height: 26px; border: 0; box-shadow: none; background: transparent; }
+.ai-fab .logo__dot { width: 6px; height: 6px; }
+.ai-fab__tip {
+  position: absolute;
+  right: calc(100% + 10px);
+  bottom: 6px;
+  width: max-content;
+  max-width: 230px;
+  padding: 9px 12px;
+  border-radius: 13px;
+  border-bottom-right-radius: 4px;
+  background: var(--ink);
+  color: var(--on-ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  box-shadow: 0 8px 22px rgba(10, 10, 20, 0.28);
+  opacity: 0;
+  transform: translateX(8px) scale(0.9);
+  transform-origin: bottom right;
+  transition: opacity 260ms var(--ease), transform 320ms cubic-bezier(0.34, 1.4, 0.64, 1);
+  pointer-events: none;
+}
+.ai-fab.has-tip .ai-fab__tip { opacity: 1; transform: none; }
+.ai-fab:active { transform: scale(0.94); }
+@keyframes fab-pop {
+  0% { opacity: 0; transform: translateY(26px) scale(0.4); }
+  55% { opacity: 1; transform: translateY(-5px) scale(1.08); }
+  75% { transform: translateY(2px) scale(0.97); }
+  100% { opacity: 1; transform: none; }
+}
+@media (min-width: 840px) {
+  .ai-fab { right: 28px; bottom: 28px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-fab, .ai-fab__tip, .splash__logo, .splash__word, .boot-anim .fig-page > *, .boot-anim .fig > *, .boot-anim .page-inner > * {
+    animation: none !important;
+    transition: none !important;
+  }
+  #splash { transition: none; }
+}
+
+/* ===== Мастер: стрелка назад ===== */
+.flow-head__top { display: flex; align-items: center; gap: 12px; }
+.flow-back {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+  transition: transform 180ms var(--ease), border-color 180ms var(--ease), background 180ms var(--ease);
+}
+.flow-back:hover { border-color: var(--accent-strong); background: var(--accent-soft); }
+.flow-back:active { transform: scale(0.92); }
+.flow-back .icon { width: 18px; height: 18px; transform: rotate(180deg); }
+
+/* Стрелки шагов: заметнее на тёмном фоне */
+.steps li { background: var(--line-strong); }
+.steps .is-done .steps__btn { background: var(--accent); }
+.steps .is-now .steps__btn { background: var(--accent-strong); box-shadow: 0 0 0 3px var(--accent-soft); }
+.steps__btn:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
+
+/* ===== Материалы работы ===== */
+.resources { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.resources__add { display: flex; gap: 8px; margin-top: 8px; }
+.resources__add .btn { display: inline-flex; align-items: center; gap: 7px; width: auto; min-height: 42px; padding: 0 14px; font-size: 13px; }
+.resources__add .icon { width: 16px; height: 16px; }
+.resource-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  margin-top: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 13px;
+  background: var(--card);
+}
+.resource-row__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.resource-row__icon .icon { width: 17px; height: 17px; }
+.resource-row__text { flex: 1; min-width: 0; }
+.resource-row__text strong, .resource-row__text small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.resource-row__text strong { font-size: 14px; }
+.resource-row__text small { margin-top: 2px; color: var(--muted); font-size: 12px; }
+
+.resource-list { display: flex; flex-direction: column; gap: 9px; margin: 4px 0 16px; }
+.resource-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 15px;
+  border: 1px solid var(--line-strong);
+  border-radius: 15px;
+  background: var(--card);
+  color: var(--text);
+  text-decoration: none;
+  transition: border-color 180ms var(--ease), transform 180ms var(--ease);
+}
+.resource-card:hover { border-color: var(--accent-strong); }
+.resource-card:active { transform: scale(0.985); }
+.resource-card__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.resource-card__icon .icon { width: 19px; height: 19px; }
+.resource-card__text { flex: 1; min-width: 0; }
+.resource-card__text strong, .resource-card__text small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.resource-card__text strong { font-size: 14.5px; }
+.resource-card__text small { margin-top: 2px; color: var(--muted); font-size: 12px; }
+.resource-card__go { flex: none; color: var(--faint); }
+.resource-card__go .icon { width: 18px; height: 18px; }
+
+/* ===== Конструктор предметов и тем ===== */
+.program__subjects { margin-bottom: 10px; }
+.program__topics { display: flex; flex-direction: column; gap: 2px; }
+.program-topic {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 4px;
+  border-top: 1px solid var(--line);
+}
+.program-topic:first-child { border-top: 0; }
+.program-topic strong { font-size: 14.5px; }
+.program-topic small { color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+.program-form { display: flex; flex-direction: column; gap: 2px; margin: 10px 0; }
+.program-form .field, .program-form .area { margin-top: 4px; }
+.program-form__actions { display: flex; gap: 8px; margin-top: 10px; }
+.program-form__actions .btn { width: auto; min-height: 42px; padding: 0 16px; font-size: 13.5px; }
+
+/* ===== Кнопки: disabled и фокус ===== */
+.btn[disabled], .primary-button[disabled], .chat-composer__send:disabled, .flow-back:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn[disabled]:hover, .primary-button[disabled]:hover, .btn-primary[disabled]:hover {
+  transform: none;
+  box-shadow: none;
+}
+.btn:focus-visible, .primary-button:focus-visible, .chip:focus-visible, .choice:focus-visible,
+.segment button:focus-visible, .filter-chip:focus-visible, .chat-quick button:focus-visible,
+.chat-suggest button:focus-visible, .audience-tile:focus-visible, .resource-card:focus-visible,
+.flow-back:focus-visible, .ai-fab:focus-visible, .setting-row:focus-visible, .study-row:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+/* ===== Тёмная тема: контраст границ и состояний ===== */
+[data-theme="dark"] .btn-ghost {
+  background: var(--sunken);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+[data-theme="dark"] .btn-ghost:hover {
+  box-shadow: inset 0 0 0 1px var(--accent);
+  border-color: transparent;
+}
+[data-theme="dark"] .chip,
+[data-theme="dark"] .choice,
+[data-theme="dark"] .segment button,
+[data-theme="dark"] .filter-chip,
+[data-theme="dark"] .chat-quick button,
+[data-theme="dark"] .chat-suggest button,
+[data-theme="dark"] .chat-tool,
+[data-theme="dark"] .audience-tile,
+[data-theme="dark"] .draft-item,
+[data-theme="dark"] .chat-card,
+[data-theme="dark"] .chat-photo-chip,
+[data-theme="dark"] .chat-composer,
+[data-theme="dark"] .ask-card,
+[data-theme="dark"] .work-sheet section,
+[data-theme="dark"] .topic-preview,
+[data-theme="dark"] .topic-list,
+[data-theme="dark"] .settings-card,
+[data-theme="dark"] .empty-task-card,
+[data-theme="dark"] .student-stats article,
+[data-theme="dark"] .student-focus,
+[data-theme="dark"] .privacy-card,
+[data-theme="dark"] .resource-row,
+[data-theme="dark"] .resource-card,
+[data-theme="dark"] .flow-back {
+  border-color: var(--line-strong);
+}
+[data-theme="dark"] .field,
+[data-theme="dark"] .area,
+[data-theme="dark"] select.field {
+  border-color: var(--line-strong);
+}
+[data-theme="dark"] .audience-tile.is-on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+[data-theme="dark"] .chip.is-on,
+[data-theme="dark"] .choice.is-on,
+[data-theme="dark"] .segment .is-on,
+[data-theme="dark"] .filter-chip--active {
+  border-color: var(--accent-strong);
+}
+[data-theme="dark"] .stat-card--accent {
+  border-color: var(--line-strong);
+}
+[data-theme="dark"] .faces span {
+  background: var(--accent-soft);
+  border-color: var(--line-strong);
+}
+[data-theme="dark"] .faces span:nth-child(2) { background: var(--tone-green-bg); }
+[data-theme="dark"] .faces span:nth-child(3) { background: var(--tone-yellow-bg); }
+[data-theme="dark"] .faces span:nth-child(4) { background: var(--tone-red-bg); }
+[data-theme="dark"] .chat-composer__attach { background: var(--sunken); }
+[data-theme="dark"] .chat-composer__send { background: var(--accent-strong); }
+[data-theme="dark"] .steps li { background: var(--line-strong); }
+[data-theme="dark"] .steps .is-now .steps__btn { box-shadow: 0 0 0 3px var(--accent-soft); }
