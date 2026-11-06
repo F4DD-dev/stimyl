@@ -59,11 +59,13 @@ async def create_chat(
 
 
 async def messages_of(session: AsyncSession, chat_id: int) -> list[AssistantMessage]:
-    rows = await session.scalars(
-        select(AssistantMessage)
-        .where(AssistantMessage.chat_id == chat_id)
-        .order_by(AssistantMessage.id.desc())
-        .limit(MAX_MESSAGES)
+    rows = list(
+        await session.scalars(
+            select(AssistantMessage)
+            .where(AssistantMessage.chat_id == chat_id)
+            .order_by(AssistantMessage.id.desc())
+            .limit(MAX_MESSAGES)
+        )
     )
     return list(reversed(rows))
 
