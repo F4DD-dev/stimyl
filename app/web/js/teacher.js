@@ -1343,6 +1343,7 @@ export function regenItem(index) {
     audience: resolved.audience,
     students: resolved.students,
     use_material: Boolean(wizard.useMaterial),
+    subject_id: wizard.subjectId || store.subjectId || null,
     class_id: store.classId || null,
   })
     .then((draft) => {

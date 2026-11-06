@@ -43,6 +43,7 @@ async def compose_draft(
     audience: str,
     students: list[str],
     use_material: bool,
+    subject: str = "",
 ) -> Composed:
     fragments: list[str] = []
     if use_material:
@@ -52,7 +53,9 @@ async def compose_draft(
         if not fragments:
             return Composed(None, MATERIAL_NO_MATCH, 409)
     if tutor.enabled:
-        drafted = await tutor.draft_work(topic, goal, count, difficulty, fragments)
+        drafted = await tutor.draft_work(
+            topic, goal, count, difficulty, fragments, subject
+        )
         if drafted:
             return Composed(_ai_draft(topic, goal, count, difficulty, audience, students, drafted, fragments))
     if use_material:

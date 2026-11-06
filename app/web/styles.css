@@ -2097,3 +2097,16 @@ body.is-chat .toast { bottom: calc(88px + env(safe-area-inset-bottom) + var(--ch
 @media (prefers-reduced-motion: reduce) {
   .resource-card, .flow-back, .ai-fab { transition: none; }
 }
+
+/* ===== Широкий экран: контент не растягивается в полосу ===== */
+.who, .who > * { min-width: 0; }
+.who span { overflow-wrap: break-word; }
+@media (min-width: 900px) {
+  .fig-page { width: min(100% - 64px, 860px); }
+  .overview-grid { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); align-items: stretch; }
+  .stats-column { display: flex; flex-direction: column; gap: 16px; }
+  .stats-column .stat-card { flex: 1; }
+  .flow { max-width: 620px; margin-inline: auto; width: 100%; }
+  .topic-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; align-items: start; }
+  .topic-row { margin-bottom: 0; }
+}

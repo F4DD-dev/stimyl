@@ -73,13 +73,17 @@ class NullExplainer:
     async def make_task(self, topic: str, level: str, fragments: list[str]) -> TaskDraft | None:
         return None
 
-    async def draft_work(self, topic, goal, count, difficulty, fragments):
+    async def draft_work(self, topic, goal, count, difficulty, fragments, subject=""):
         return None
 
-    async def read_teacher(self, text: str, topics: list[str]) -> TeacherAsk | None:
+    async def read_teacher(
+        self, text: str, topics: list[str], history: list[dict] | None = None
+    ) -> TeacherAsk | None:
         return None
 
-    async def teacher_reply(self, text: str) -> str | None:
+    async def teacher_reply(
+        self, text: str, history: list[dict] | None = None
+    ) -> str | None:
         return None
 
     async def topic_from_fragments(self, fragments: list[str]) -> str | None:
@@ -281,22 +285,45 @@ class LlmTutor:
         return None
 
     async def draft_work(
-        self, topic: str, goal: str, count: int, difficulty: str, fragments: list[str]
+        self,
+        topic: str,
+        goal: str,
+        count: int,
+        difficulty: str,
+        fragments: list[str],
+        subject: str = "",
     ) -> list[tuple[TaskDraft, bool]] | None:
-        items = await self._draft(topic, goal, count, difficulty, fragments)
+        items = await self._draft(topic, goal, count, difficulty, fragments, subject)
         if not items:
             return None
         items = items[:count]
         if not self._verify:
             return [(task, task_confirmed(task, task.answer)) for task in items]
         solved = await self.solve_many([task.prompt for task in items])
-        return [(task, task_confirmed(task, answer)) for task, answer in zip(items, solved, strict=True)]
+        return [
+            (
+                task,
+                task_confirmed(task, answer)
+                if answer is not None
+                else task_confirmed(task, task.answer),
+            )
+            for task, answer in zip(items, solved, strict=True)
+        ]
 
     async def _draft(
-        self, topic: str, goal: str, count: int, difficulty: str, fragments: list[str]
+        self,
+        topic: str,
+        goal: str,
+        count: int,
+        difficulty: str,
+        fragments: list[str],
+        subject: str = "",
     ) -> list[TaskDraft] | None:
         level = {"easy": "проще среднего", "hard": "сложнее среднего"}.get(difficulty, "средней сложности")
-        context = [
+        context = []
+        if subject.strip():
+            context.append(f"Предмет: {subject.strip()[:200]}")
+        context += [
             f"Тема: {topic[:200]}",
             f"Что проверить: {goal[:300]}",
             f"Сколько заданий: {count}. Сложность: {level}.",
@@ -322,16 +349,24 @@ class LlmTutor:
         items = [task for task in (_task(row) for row in rows) if task is not None]
         return items or None
 
-    async def read_teacher(self, text: str, topics: list[str]) -> TeacherAsk | None:
+    async def read_teacher(
+        self, text: str, topics: list[str], history: list[dict] | None = None
+    ) -> TeacherAsk | None:
+        messages = [{"role": "system", "content": prompts.TEACHER_SYSTEM}]
+        for item in (history or [])[-8:]:
+            role = item.get("role")
+            content = str(item.get("content") or "")[:500]
+            if role in {"user", "assistant"} and content.strip():
+                messages.append({"role": role, "content": content})
+        messages.append(
+            {
+                "role": "user",
+                "content": f"{prompts.topics_block(topics)}\n\nПросьба учителя:\n{text[:1500]}\n\n"
+                f"{prompts.TEACHER_FORMAT}",
+            }
+        )
         raw = await self._chat.chat(
-            [
-                {"role": "system", "content": prompts.TEACHER_SYSTEM},
-                {
-                    "role": "user",
-                    "content": f"{prompts.topics_block(topics)}\n\nПросьба учителя:\n{text[:1500]}\n\n"
-                    f"{prompts.TEACHER_FORMAT}",
-                },
-            ],
+            messages,
             json_mode=True,
             max_tokens=300,
             temperature=0,
@@ -358,12 +393,18 @@ class LlmTutor:
             reply=plain(str(data.get("reply") or ""), 600),
         )
 
-    async def teacher_reply(self, text: str) -> str | None:
+    async def teacher_reply(
+        self, text: str, history: list[dict] | None = None
+    ) -> str | None:
+        messages = [{"role": "system", "content": prompts.TEACHER_CHAT_SYSTEM}]
+        for item in (history or [])[-8:]:
+            role = item.get("role")
+            content = str(item.get("content") or "")[:500]
+            if role in {"user", "assistant"} and content.strip():
+                messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": text[:1000]})
         raw = await self._chat.chat(
-            [
-                {"role": "system", "content": prompts.TEACHER_CHAT_SYSTEM},
-                {"role": "user", "content": text[:1000]},
-            ],
+            messages,
             max_tokens=300,
             temperature=0.5,
             purpose="teacher_chat",

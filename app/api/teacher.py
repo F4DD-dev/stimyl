@@ -89,6 +89,7 @@ async def _prepare(request: Request, session: AsyncSession, report, body: DraftB
         raise HTTPException(status_code=404, detail="Сборка проверок выключена")
     teacher = await user_from_cookie(request, session, "teacher")
     current = await owned_class(session, teacher, body.class_id)
+    subject_title = ""
     if body.subject_id is not None:
         appointed = await session.scalar(
             select(ClassSubjectTeacher.subject_id).where(
@@ -99,6 +100,8 @@ async def _prepare(request: Request, session: AsyncSession, report, body: DraftB
         )
         if appointed is None:
             raise HTTPException(status_code=403, detail="Нет назначения на этот предмет")
+        found = await session.get(Subject, body.subject_id)
+        subject_title = found.title if found else ""
     composed = await compose_draft(
         session,
         request.app.state.explainer,
@@ -110,6 +113,7 @@ async def _prepare(request: Request, session: AsyncSession, report, body: DraftB
         audience=body.audience,
         students=_students(report, body),
         use_material=body.use_material,
+        subject=subject_title,
     )
     if composed.error or composed.draft is None:
         raise HTTPException(status_code=composed.status, detail=composed.error or NO_BANK)
@@ -316,6 +320,7 @@ async def _assistant_answer(
     teacher: User,
     text: str,
     class_id: int | None,
+    history: list[dict] | None = None,
 ) -> dict:
     """Ответ помощника на просьбу учителя. Работу не отправляет: черновик на проверку."""
     parsed = _parse_topic_add(text)
@@ -325,13 +330,15 @@ async def _assistant_answer(
     if not tutor.enabled:
         raise HTTPException(status_code=503, detail=ASSISTANT_OFF)
     titles = [topic.title for topic in report.topics]
-    ask = await tutor.read_teacher(text, titles)
+    ask = await tutor.read_teacher(text, titles, history)
     if ask is None:
         raise HTTPException(status_code=503, detail=ASSISTANT_OFF)
     if ask.intent == "summary":
         return {"kind": "summary", "text": class_summary(report)}
     if ask.intent in {"chat", "other"}:
-        reply = ask.reply or (await tutor.teacher_reply(text) if tutor.enabled else "")
+        reply = ask.reply or (
+            await tutor.teacher_reply(text, history) if tutor.enabled else ""
+        )
         return {
             "kind": "chat",
             "text": reply
@@ -350,6 +357,13 @@ async def _assistant_answer(
     roster = [(student.user_id, student.display_name) for student in report.students]
     ids, names, unknown = match_students(list(ask.students), roster)
     audience = "selected" if ids else "class"
+    topic_subject = next(
+        (item.subject_id for item in report.topics if item.title == topic), None
+    )
+    subject_title = ""
+    if topic_subject is not None:
+        found = await session.get(Subject, topic_subject)
+        subject_title = found.title if found else ""
     composed = await compose_draft(
         session,
         tutor,
@@ -361,6 +375,7 @@ async def _assistant_answer(
         audience=audience,
         students=names if ids else [name for _id, name in roster],
         use_material=ask.use_material,
+        subject=subject_title,
     )
     if composed.error or composed.draft is None:
         raise HTTPException(status_code=composed.status, detail=composed.error or NO_BANK)
@@ -723,8 +738,12 @@ async def chat_message(
     await chat_store.add_message(session, chat, role="user", text=text)
     try:
         report = await _report(request, session, body.class_id)
+        history = [
+            {"role": getattr(item, "role", ""), "content": getattr(item, "text", "")}
+            for item in (await chat_store.messages_of(session, chat.id))[:-1]
+        ]
         reply = await _assistant_answer(
-            request, session, report, teacher, text, body.class_id
+            request, session, report, teacher, text, body.class_id, history=history
         )
         await chat_store.add_message(
             session,
@@ -800,8 +819,12 @@ async def chat_message_photo(
             }
         else:
             report = await _report(request, session, class_id)
+            history = [
+                {"role": getattr(item, "role", ""), "content": getattr(item, "text", "")}
+                for item in (await chat_store.messages_of(session, chat.id))[:-1]
+            ]
             reply = await _assistant_answer(
-                request, session, report, teacher, combined, class_id
+                request, session, report, teacher, combined, class_id, history=history
             )
         await chat_store.add_message(
             session,
