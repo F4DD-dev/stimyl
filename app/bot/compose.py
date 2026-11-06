@@ -156,6 +156,17 @@ async def pick_topic(
     return titles[0] if titles else ""
 
 
+def class_context(report: ClassReport) -> str:
+    """Факты о классе для промпта: модель отвечает только по ним, ничего не выдумывая."""
+    subjects = sorted({topic.subject_title for topic in report.topics if topic.subject_title})
+    return (
+        f"Класс: {report.class_title or 'не указан'}. "
+        f"Учеников в классе: {len(report.students)}. "
+        f"Предметы: {', '.join(subjects) if subjects else 'не назначены'}. "
+        f"Тем в программе: {len(report.topics)}."
+    )
+
+
 def class_summary(report: ClassReport) -> str:
     """Сводка по статусам, посчитанная кодом. Без текстов учеников."""
     ranked = _weak_ranking(report)

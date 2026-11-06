@@ -6,13 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.compose import (
     ASSISTANT_OFF,
+    class_context,
     class_summary,
     compose_draft,
     pick_topic,
 )
 from app.bot.gate import GateReply
 from app.core.config import Settings
-from app.db.models import User, Work, WorkItem, WorkRecipient
+from app.db.models import Subject, User, Work, WorkItem, WorkRecipient
 from app.domain.assist import match_students
 from app.domain.schoolwork import owned_class, publish_work, save_work
 from app.llm.explainer import Explainer
@@ -50,13 +51,18 @@ async def teacher_turn(
     report = await class_report(session, teacher, settings)
     if report is None:
         return [GateReply("Класс к вам ещё не привязан. Откройте кабинет, чтобы выбрать класс.")]
-    ask = await tutor.read_teacher(text, [topic.title for topic in report.topics])
+    context = class_context(report)
+    ask = await tutor.read_teacher(
+        text, [topic.title for topic in report.topics], context=context
+    )
     if ask is None:
         return [GateReply(ASSISTANT_OFF, (("Открыть кабинет", "open_cabinet"),))]
     if ask.intent == "summary":
         return [GateReply(class_summary(report), (("Собрать работу", "open_cabinet"),))]
     if ask.intent in {"chat", "other"}:
-        reply = ask.reply or (await tutor.teacher_reply(text) if tutor.enabled else "")
+        reply = ask.reply or (
+            await tutor.teacher_reply(text, context=context) if tutor.enabled else ""
+        )
         return [GateReply(reply or HELP)]
     class_id = await owned_class(session, teacher, None)
     topic = await pick_topic(session, tutor, report, ask, class_id=class_id)
@@ -148,6 +154,10 @@ async def _again(
     ids = list(
         await session.scalars(select(WorkRecipient.user_id).where(WorkRecipient.work_id == work.id))
     )
+    subject_title = ""
+    if work.subject_id is not None:
+        found = await session.get(Subject, work.subject_id)
+        subject_title = found.title if found else ""
     composed = await compose_draft(
         session,
         tutor,
@@ -159,6 +169,7 @@ async def _again(
         audience=work.audience,
         students=[],
         use_material=False,
+        subject=subject_title,
     )
     if composed.error or composed.draft is None:
         return [GateReply(composed.error or ASSISTANT_OFF)]

@@ -9,7 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import db_session, user_from_cookie
 from app.bot.assist import clean_photo
-from app.bot.compose import ASSISTANT_OFF, NO_BANK, class_summary, compose_draft, pick_topic
+from app.bot.compose import (
+    ASSISTANT_OFF,
+    NO_BANK,
+    class_context,
+    class_summary,
+    compose_draft,
+    pick_topic,
+)
 from app.bot.service import class_report
 from app.db.models import (
     ClassSubjectTeacher,
@@ -330,14 +337,15 @@ async def _assistant_answer(
     if not tutor.enabled:
         raise HTTPException(status_code=503, detail=ASSISTANT_OFF)
     titles = [topic.title for topic in report.topics]
-    ask = await tutor.read_teacher(text, titles, history)
+    context = class_context(report)
+    ask = await tutor.read_teacher(text, titles, history, context)
     if ask is None:
         raise HTTPException(status_code=503, detail=ASSISTANT_OFF)
     if ask.intent == "summary":
         return {"kind": "summary", "text": class_summary(report)}
     if ask.intent in {"chat", "other"}:
         reply = ask.reply or (
-            await tutor.teacher_reply(text, history) if tutor.enabled else ""
+            await tutor.teacher_reply(text, history, context) if tutor.enabled else ""
         )
         return {
             "kind": "chat",

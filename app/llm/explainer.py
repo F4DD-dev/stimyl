@@ -77,12 +77,19 @@ class NullExplainer:
         return None
 
     async def read_teacher(
-        self, text: str, topics: list[str], history: list[dict] | None = None
+        self,
+        text: str,
+        topics: list[str],
+        history: list[dict] | None = None,
+        context: str = "",
     ) -> TeacherAsk | None:
         return None
 
     async def teacher_reply(
-        self, text: str, history: list[dict] | None = None
+        self,
+        text: str,
+        history: list[dict] | None = None,
+        context: str = "",
     ) -> str | None:
         return None
 
@@ -350,9 +357,19 @@ class LlmTutor:
         return items or None
 
     async def read_teacher(
-        self, text: str, topics: list[str], history: list[dict] | None = None
+        self,
+        text: str,
+        topics: list[str],
+        history: list[dict] | None = None,
+        context: str = "",
     ) -> TeacherAsk | None:
-        messages = [{"role": "system", "content": prompts.TEACHER_SYSTEM}]
+        system = prompts.TEACHER_SYSTEM
+        if context.strip():
+            system += (
+                "\n\nДанные класса — единственный источник фактов, ничего не выдумывай:"
+                f"\n{context.strip()}"
+            )
+        messages = [{"role": "system", "content": system}]
         for item in (history or [])[-8:]:
             role = item.get("role")
             content = str(item.get("content") or "")[:500]
@@ -394,9 +411,18 @@ class LlmTutor:
         )
 
     async def teacher_reply(
-        self, text: str, history: list[dict] | None = None
+        self,
+        text: str,
+        history: list[dict] | None = None,
+        context: str = "",
     ) -> str | None:
-        messages = [{"role": "system", "content": prompts.TEACHER_CHAT_SYSTEM}]
+        system = prompts.TEACHER_CHAT_SYSTEM
+        if context.strip():
+            system += (
+                "\n\nДанные класса — единственный источник фактов, ничего не выдумывай:"
+                f"\n{context.strip()}"
+            )
+        messages = [{"role": "system", "content": system}]
         for item in (history or [])[-8:]:
             role = item.get("role")
             content = str(item.get("content") or "")[:500]
