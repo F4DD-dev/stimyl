@@ -320,6 +320,25 @@ def _progress_question(text: str) -> bool:
     return bool(_PROGRESS_WORDS.search(text)) and not _WORK_VERBS.search(text)
 
 
+async def _summary_answer(
+    tutor,
+    report,
+    text: str,
+    history: list[dict] | None,
+    context: str,
+) -> dict:
+    """Вопросы об успеваемости: модель отвечает по данным класса.
+    Кодовая сводка идёт как факты в контекст, а не как готовый шаблон."""
+    if tutor.enabled:
+        grounded = (
+            f"{context}\n\nСводка по темам (посчитана кодом):\n{class_summary(report)}"
+        )
+        reply = await tutor.teacher_reply(text, history, grounded)
+        if reply:
+            return {"kind": "summary", "text": reply}
+    return {"kind": "summary", "text": class_summary(report)}
+
+
 async def _assistant_answer(
     request: Request,
     session: AsyncSession,
@@ -342,7 +361,7 @@ async def _assistant_answer(
     if ask is None:
         raise HTTPException(status_code=503, detail=ASSISTANT_OFF)
     if ask.intent == "summary":
-        return {"kind": "summary", "text": class_summary(report)}
+        return await _summary_answer(tutor, report, text, history, context)
     if ask.intent in {"chat", "other"}:
         reply = ask.reply or (
             await tutor.teacher_reply(text, history, context) if tutor.enabled else ""
@@ -354,7 +373,7 @@ async def _assistant_answer(
             "или ответить на вопрос о работе.",
         }
     if ask.intent == "work" and _progress_question(text):
-        return {"kind": "summary", "text": class_summary(report)}
+        return await _summary_answer(tutor, report, text, history, context)
     class_id = await owned_class(session, teacher, class_id)
     topic = await pick_topic(session, tutor, report, ask, class_id=class_id)
     if ask.intent != "work" or not topic:
@@ -725,6 +744,20 @@ async def chat_messages(
     teacher = await user_from_cookie(request, session, "teacher")
     chat = await _teacher_chat(session, teacher, chat_id)
     return chat_store.chat_view(chat, await chat_store.messages_of(session, chat.id))
+
+
+@router.delete("/api/teacher/chats/{chat_id}")
+async def chat_clear(
+    chat_id: int,
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Полный сброс истории чата — для тестов и нового диалога."""
+    teacher = await user_from_cookie(request, session, "teacher")
+    chat = await _teacher_chat(session, teacher, chat_id)
+    await chat_store.clear_messages(session, chat.id)
+    await session.commit()
+    return {"ok": True}
 
 
 @router.post("/api/teacher/chats/{chat_id}/messages")

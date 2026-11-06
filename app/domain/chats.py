@@ -3,7 +3,7 @@
 import json
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -68,6 +68,13 @@ async def messages_of(session: AsyncSession, chat_id: int) -> list[AssistantMess
         )
     )
     return list(reversed(rows))
+
+
+async def clear_messages(session: AsyncSession, chat_id: int) -> None:
+    """Полный сброс истории чата — для тестов и нового диалога."""
+    await session.execute(
+        delete(AssistantMessage).where(AssistantMessage.chat_id == chat_id)
+    )
 
 
 async def add_message(

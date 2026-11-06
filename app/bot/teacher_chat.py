@@ -58,6 +58,13 @@ async def teacher_turn(
     if ask is None:
         return [GateReply(ASSISTANT_OFF, (("Открыть кабинет", "open_cabinet"),))]
     if ask.intent == "summary":
+        if tutor.enabled:
+            grounded = (
+                f"{context}\n\nСводка по темам (посчитана кодом):\n{class_summary(report)}"
+            )
+            reply = await tutor.teacher_reply(text, context=grounded)
+            if reply:
+                return [GateReply(reply, (("Собрать работу", "open_cabinet"),))]
         return [GateReply(class_summary(report), (("Собрать работу", "open_cabinet"),))]
     if ask.intent in {"chat", "other"}:
         reply = ask.reply or (
