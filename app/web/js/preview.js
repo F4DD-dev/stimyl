@@ -105,7 +105,8 @@ export function teacherPreview() {
     report: {
       class_title: "8Б",
       topics: TOPICS.map((title) => ({ title })),
-      students: names.map((name) => ({
+      students: names.map((name, index) => ({
+        user_id: index + 1,
         display_name: name,
         activity: {
           Алексей: "Сейчас разбирает «Дроби»",
@@ -139,7 +140,36 @@ export function teacherPreview() {
       ],
     },
     assignments: {
-      items: [],
+      items: [
+        {
+          id: 11,
+          title: "Дроби",
+          subject: "Математика",
+          status: "published",
+          audience: "class",
+          recipients: 4,
+          done: 2,
+          handed: ["Алексей", "Аня"],
+          started: [],
+          created_at: "2026-11-02T09:00:00+10:00",
+          published_at: "2026-11-02T09:05:00+10:00",
+          due_at: "2026-11-10T18:00:00+10:00",
+        },
+        {
+          id: 12,
+          title: "Квадратные уравнения",
+          subject: "Математика",
+          status: "draft",
+          audience: "selected",
+          recipients: 0,
+          done: 0,
+          handed: [],
+          started: [],
+          created_at: "2026-11-05T15:30:00+10:00",
+          published_at: null,
+          due_at: null,
+        },
+      ],
       delivery: "sample",
       detail: "Демонстрационный список. Это не работы класса и не ответ сервера.",
     },

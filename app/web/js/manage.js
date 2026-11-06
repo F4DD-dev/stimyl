@@ -69,7 +69,7 @@ export function renderManage() {
       <div class="rows">
         <div class="line"><span><b>Класс</b><small>${esc(store.report?.class_title || "8Б")}</small></span></div>
         <div class="line"><span><b>Код входа</b><small>${esc(joinCode || "не задан")}</small></span></div>
-        <div class="line"><span><b>Заявки проверяет</b><small>${esc(reviewer || "ответственный не назначен")}</small></span></div>
+        <div class="line"><span><b>Кто проверяет работы</b><small>${esc(reviewer || "ответственный не назначен")}</small></span></div>
       </div>
     </section>
   </div>`;

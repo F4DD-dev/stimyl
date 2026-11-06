@@ -1,5 +1,31 @@
-import { createChat, getAssistantStatus, getChat, getChats, sendChatMessage, sendChatPhoto } from "./api.js?v=5";
-import { refresh, store } from "./store.js?v=3";
+import { createChat, getAssistantStatus, getChat, getChats, sendChatMessage, sendChatPhoto } from "./api.js?v=6";
+import { refresh, store } from "./store.js?v=4";
+
+export function takeChatPhoto(file) {
+  if (!file) return;
+  if (file.size > 8 * 1024 * 1024) {
+    store.chatError = "Фото больше 8 МБ. Выбери снимок поменьше.";
+    refresh();
+    return;
+  }
+  if (file.type && !file.type.startsWith("image/")) {
+    store.chatError = "Нужен файл изображения.";
+    refresh();
+    return;
+  }
+  if (store.chatPhotoURL) URL.revokeObjectURL(store.chatPhotoURL);
+  store.chatPhotoFile = file;
+  store.chatPhotoURL = URL.createObjectURL(file);
+  store.chatError = "";
+  refresh();
+}
+
+export function clearChatPhoto() {
+  if (store.chatPhotoURL) URL.revokeObjectURL(store.chatPhotoURL);
+  store.chatPhotoFile = null;
+  store.chatPhotoURL = "";
+  refresh();
+}
 
 export function chatKind() {
   return store.role === "teacher" ? "teacher" : "student";
@@ -115,7 +141,7 @@ export async function sendChat(text, { classId = null, photo = null, onReply = n
   try {
     const id = await ensureChat(trimmed);
     const result = photo
-      ? await sendChatPhoto(kind, id, photo, trimmed)
+      ? await sendChatPhoto(kind, id, photo, trimmed, kind === "teacher" ? classId : null)
       : await sendChatMessage(kind, id, trimmed, kind === "teacher" ? classId : null);
     store.chatId = result.chat_id || id;
     store.chatMessages = result.messages || store.chatMessages;

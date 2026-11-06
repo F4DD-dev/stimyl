@@ -66,11 +66,10 @@ export function brand({ home = false } = {}) {
   return `<button class="brand" type="button" data-act="nav" data-screen="stimul" aria-label="Стимул">${inner}</button>`;
 }
 
-export function classbar({ title, subject, letter, unread, pickClass = false }) {
-  const subjectLine = subject ? `<span>${esc(subject)}</span>` : "";
+export function classbar({ title, letter, unread, pickClass = false }) {
   const klass = pickClass
-    ? `<button class="classbar__class" type="button" data-act="class-sheet"><strong>${esc(title || "Класс")}</strong>${subjectLine}</button>`
-    : `<div class="classbar__class"><strong>${esc(title || "Класс")}</strong>${subjectLine}</div>`;
+    ? `<button class="classbar__class" type="button" data-act="class-sheet"><strong>${esc(title || "Класс")}</strong></button>`
+    : `<div class="classbar__class"><strong>${esc(title || "Класс")}</strong></div>`;
   return `<header class="classbar">
     ${brand({ home: true })}
     ${klass}
@@ -79,6 +78,20 @@ export function classbar({ title, subject, letter, unread, pickClass = false }) 
       <button class="avatar-button" type="button" data-act="nav" data-screen="profile" aria-label="Профиль">${esc(letter || "•")}</button>
     </div>
   </header>`;
+}
+
+export function themeSwitch(pref) {
+  const items = [
+    ["auto", "Авто"],
+    ["light", "Светлая"],
+    ["dark", "Тёмная"],
+  ];
+  return `<div class="segment theme-segment" role="tablist" aria-label="Тема оформления">${items
+    .map(
+      ([id, label]) =>
+        `<button type="button" role="tab" data-act="theme" data-value="${id}" aria-selected="${(pref || "auto") === id}" class="${(pref || "auto") === id ? "is-on" : ""}">${label}</button>`,
+    )
+    .join("")}</div>`;
 }
 
 export function pill(status) {

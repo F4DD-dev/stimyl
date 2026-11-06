@@ -1,7 +1,8 @@
 import { answerWork, getHistory, getProgress, getStudentWorks, practice, sendPhoto } from "./api.js?v=5";
-import { chatTitle, loadChats, newChat, openChat, sendChat, showChatList } from "./chat.js?v=2";
+import { chatTitle, clearChatPhoto, loadChats, newChat, openChat, sendChat, showChatList } from "./chat.js?v=3";
 import { sampleLesson } from "./preview.js";
-import { go, refresh, store } from "./store.js?v=3";
+import { go, refresh, store } from "./store.js?v=4";
+import { themePref } from "./theme.js?v=1";
 import {
   classbar,
   confirmDialog,
@@ -14,10 +15,10 @@ import {
   mark,
   nl,
   pill,
-} from "./ui.js";
+  themeSwitch,
+} from "./ui.js?v=4";
 
 let photoFile = null;
-let chatPhotoFile = null;
 
 function disabled() {
   return store.busy ? "disabled" : "";
@@ -458,6 +459,13 @@ export function renderProfile() {
         </div>
       </div>
       <button class="text-button" type="button" data-act="nav" data-screen="history">История занятий</button>
+      <div class="settings-card" style="margin-top:14px">
+        <div class="settings-card__heading">
+          <span class="eyebrow">Оформление</span>
+          <h2>Тема</h2>
+        </div>
+        <div class="setting-row"><span>Режим</span>${themeSwitch(themePref())}</div>
+      </div>
     </div>
   </div>`;
 }
@@ -552,16 +560,28 @@ function chatMessageRow(message) {
 
 function chatEmpty() {
   const samples = [
-    "Объясни, как сложить дроби с разными знаменателями",
-    "Что такое дискриминант?",
-    "Как решить квадратное уравнение?",
+    ["Объясни тему", "Объясни простыми словами тему из моей программы"],
+    ["Дай пример", "Приведи пример и похожее задание по теме"],
+    ["Что повторить", "Что мне сейчас стоит повторить?"],
   ];
   return `<div class="chat-empty">
     <div class="chat-empty__mark">${mark(true)}</div>
     <h2>С чем помочь?</h2>
     <p>Объясню способ и дам похожее задание. Готовый ответ для списывания не выдаю.</p>
-    <div class="chat-suggest">${samples.map((text) => `<button type="button" data-act="chat-sample" data-text="${esc(text)}">${esc(text)}</button>`).join("")}</div>
+    <div class="chat-suggest">${samples.map(([label, text]) => `<button type="button" data-act="chat-sample" data-text="${esc(text)}">${esc(label)}</button>`).join("")}</div>
   </div>`;
+}
+
+function chatQuickActions() {
+  if (!store.chatPhotoURL) return "";
+  const items = [
+    ["Объясни это", "Объясни, что на фото, и дай похожее задание"],
+    ["Пример", "Приведи пример по материалу с фото"],
+    ["Проверь решение", "Проверь моё решение по материалу с фото"],
+  ];
+  return `<div class="chat-quick">${items
+    .map(([label, text]) => `<button type="button" data-act="chat-sample" data-text="${esc(text)}">${esc(label)}</button>`)
+    .join("")}</div>`;
 }
 
 function chatThread() {
@@ -576,6 +596,7 @@ function chatThread() {
   return `<div class="chat-scroll"><div class="chat-thread">${rows}</div><div class="chat-scroll-end"></div></div>
     <div class="chat-bottom">
       ${photo}
+      ${chatQuickActions()}
       ${store.chatRateNote ? `<p class="chat-status" role="status">${esc(store.chatRateNote)}</p>` : ""}
       ${store.chatError && store.chatError !== store.chatRateNote ? `<p class="chat-error" role="alert">${esc(store.chatError)}</p>` : ""}
       ${store.chatStatus ? `<p class="chat-status" role="status">${esc(store.chatStatus)}</p>` : ""}
@@ -630,32 +651,6 @@ export function renderStimul() {
   </div>`;
 }
 
-export function takeChatPhoto(file) {
-  if (!file) return;
-  if (file.size > 8 * 1024 * 1024) {
-    store.chatError = "Фото больше 8 МБ. Выбери снимок поменьше.";
-    refresh();
-    return;
-  }
-  if (file.type && !file.type.startsWith("image/")) {
-    store.chatError = "Нужен файл изображения.";
-    refresh();
-    return;
-  }
-  if (store.chatPhotoURL) URL.revokeObjectURL(store.chatPhotoURL);
-  chatPhotoFile = file;
-  store.chatPhotoURL = URL.createObjectURL(file);
-  store.chatError = "";
-  refresh();
-}
-
-export function clearChatPhoto() {
-  if (store.chatPhotoURL) URL.revokeObjectURL(store.chatPhotoURL);
-  chatPhotoFile = null;
-  store.chatPhotoURL = "";
-  refresh();
-}
-
 export async function openStudentChat(id) {
   await openChat(id);
 }
@@ -671,7 +666,7 @@ export function showStudentChats() {
 
 export async function submitChat() {
   const text = (store.chatDraft || "").trim();
-  const photo = chatPhotoFile;
+  const photo = store.chatPhotoFile || null;
   await sendChat(text, {
     photo,
     onReply: (reply) => {

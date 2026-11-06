@@ -1,8 +1,8 @@
-import { approveJoin, getHistory, getLesson, getNotices, getProgress, getSession, getStudentWorks, openSession, openTicket, readNotice, renameMe, setCsrf } from "./api.js?v=5";
-import { previewRole, studentPreview, teacherPreview } from "./preview.js?v=9";
+import { approveJoin, getHistory, getLesson, getNotices, getProgress, getSession, getStudentWorks, openSession, openTicket, readNotice, renameMe, setCsrf } from "./api.js?v=6";
+import { previewRole, studentPreview, teacherPreview } from "./preview.js?v=10";
+import { applyTheme, setThemePref, themePref } from "./theme.js?v=1";
 import {
   checkSubmission,
-  clearChatPhoto,
   clearPhoto,
   exitLesson,
   flush,
@@ -21,24 +21,30 @@ import {
   setMode,
   submitAnswer,
   submitQuestion,
-  takeChatPhoto,
   takePhoto,
-} from "./student.js?v=14";
-import { go, refresh, store, subscribe } from "./store.js?v=3";
-import { loadChats, newChat, openChat } from "./chat.js?v=2";
+} from "./student.js?v=15";
+import { go, refresh, store, subscribe } from "./store.js?v=4";
+import { clearChatPhoto, loadChats, newChat, openChat, takeChatPhoto } from "./chat.js?v=3";
 import {
   addMaterial,
+  autosaveDraft,
+  clearStudents,
+  delItem,
   focusStudent,
   focusTopic,
   loadDraft,
   loadMaterials,
+  regenItem,
   reloadQuiet,
   reloadTeacher,
   removeMaterial,
   renderTeacher,
   openResult,
+  reviewDraft,
   saveDraft,
+  selectAllStudents,
   sendAssignment,
+  sendDraftNow,
   sendStimul,
   setAudience,
   setCount,
@@ -46,14 +52,17 @@ import {
   setFilter,
   showClassInfo,
   startCompose,
+  studentRowsHTML,
+  scheduleAutosave,
   toggleMaterial,
   toggleStudent,
   wizardBack,
+  wizardGoto,
   wizardNext,
   writeOwn,
-} from "./teacher.js?v=15";
-import { acceptOne, appoint, changePerson, loadManage, rejectOne } from "./manage.js?v=10";
-import { brand, confirmDialog, esc, icon, mark, skeleton, toast } from "./ui.js?v=3";
+} from "./teacher.js?v=16";
+import { acceptOne, appoint, changePerson, loadManage, rejectOne } from "./manage.js?v=11";
+import { brand, confirmDialog, esc, icon, mark, skeleton, toast } from "./ui.js?v=4";
 
 const TITLES = {
   home: "Главная",
@@ -546,7 +555,17 @@ function syncBack() {
   } else if (typeof back.hide === "function") back.hide();
 }
 
+function syncChatInset() {
+  const bottom = document.querySelector(".chat-bottom");
+  if (!bottom) {
+    document.documentElement.style.removeProperty("--chat-bottom-h");
+    return;
+  }
+  document.documentElement.style.setProperty("--chat-bottom-h", `${Math.ceil(bottom.offsetHeight)}px`);
+}
+
 function paint() {
+  store.themePref = themePref();
   document.body.classList.toggle("role-teacher", store.role === "teacher");
   document.body.classList.toggle("role-student", store.role === "student");
   document.body.classList.toggle("is-flow", store.screen === "compose" || store.screen === "lesson");
@@ -566,6 +585,7 @@ function paint() {
   if (store.screen === "stimul" && store.chatView === "thread") {
     document.querySelector(".chat-scroll-end")?.scrollIntoView({ block: "end" });
   }
+  syncChatInset();
   syncBack();
   focusTitle();
   document.title = `Стимул — ${TITLES[store.screen] || "Стимул"}`;
@@ -614,6 +634,47 @@ async function onAction(act, button) {
     store.chatDraft = text;
     if (store.role === "teacher") await sendStimul(text);
     else await submitChat();
+    return;
+  }
+  if (act === "pick-chat-photo") {
+    document.querySelector("#chat-photo")?.click();
+    return;
+  }
+  if (act === "draft-review") {
+    await reviewDraft(button.dataset.mid);
+    return;
+  }
+  if (act === "draft-send") {
+    await sendDraftNow(button.dataset.mid);
+    return;
+  }
+  if (act === "theme") {
+    const value = button.dataset.value || "auto";
+    store.themePref = value;
+    setThemePref(value);
+    applyTheme(value);
+    refresh();
+    return;
+  }
+  if (act === "wizard-step") {
+    wizardGoto(button.dataset.step);
+    return;
+  }
+  if (act === "select-all-students") {
+    selectAllStudents();
+    return;
+  }
+  if (act === "clear-students") {
+    clearStudents();
+    return;
+  }
+  if (act === "regen-item") {
+    regenItem(button.dataset.index);
+    return;
+  }
+  if (act === "del-item") {
+    delItem(button.dataset.index);
+    refresh();
     return;
   }
   if (act === "clear-chat-photo") {
@@ -827,9 +888,26 @@ function bind() {
     if (target.id === "stimul-input") store.stimulDraft = target.value;
     if (target.id === "chat-input") store.chatDraft = target.value;
     if (target.id === "people-q") store.peopleQuery = target.value;
+    if (target.id === "student-q" && store.wizard) {
+      store.wizard.studentQuery = target.value;
+      const list = document.querySelector("#student-list");
+      if (list) list.innerHTML = studentRowsHTML();
+      return;
+    }
+    if (target.id === "due-at" && store.wizard) {
+      store.wizard.dueAt = target.value;
+      scheduleAutosave();
+      return;
+    }
     if (target.dataset.prompt != null && store.wizard?.draft?.items) {
       const item = store.wizard.draft.items[Number(target.dataset.prompt)];
       if (item) item.prompt = target.value;
+      scheduleAutosave();
+    }
+    if (target.dataset.reference != null && store.wizard?.draft?.items) {
+      const item = store.wizard.draft.items[Number(target.dataset.reference)];
+      if (item) item.reference = target.value;
+      scheduleAutosave();
     }
   });
   document.addEventListener("change", (event) => {
@@ -857,6 +935,9 @@ function bind() {
     }
     if (target.id === "topic" && store.wizard) store.wizard.topic = target.value;
     if (target.id === "material") toggleMaterial(target.checked);
+    if (target.dataset.studentId != null) {
+      toggleStudent(target.dataset.studentId, target.dataset.name || "");
+    }
     if (target.id === "people-q") {
       store.peopleQuery = target.value;
       loadManage();
@@ -883,4 +964,5 @@ subscribe(() => {
 });
 
 bind();
+window.addEventListener("resize", syncChatInset);
 boot();

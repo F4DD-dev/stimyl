@@ -22,6 +22,8 @@ from app.domain.schoolwork import classes_of, list_teacher_works, owned_class
 
 router = APIRouter()
 
+MAX_PHOTO_BYTES = 8 * 1024 * 1024
+
 DELIVERY_MISSING = (
     "Отправка работ в MAX ещё не подключена. Черновик не сохранён и ученикам не ушёл."
 )
@@ -483,6 +485,83 @@ async def chat_message(
         reply = await _assistant_answer(
             request, session, report, teacher, text, body.class_id
         )
+        await chat_store.add_message(
+            session,
+            chat,
+            role="assistant",
+            kind=reply.get("kind") or "text",
+            text=_reply_text(reply),
+            payload=reply,
+        )
+        await session.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        await session.rollback()
+        raise HTTPException(status_code=500, detail="Не получилось сохранить ответ") from None
+    return {
+        "ok": True,
+        "chat_id": chat.id,
+        "reply": reply,
+        "messages": chat_store.chat_view(
+            chat, await chat_store.messages_of(session, chat.id)
+        )["messages"],
+    }
+
+
+@router.post("/api/teacher/chats/{chat_id}/messages/photo")
+async def chat_message_photo(
+    chat_id: int,
+    request: Request,
+    photo: UploadFile = File(),
+    text: str = Form(""),
+    class_id: int | None = Form(None),
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    teacher = await user_from_cookie(request, session, "teacher")
+    chat = await _teacher_chat(session, teacher, chat_id)
+    settings = request.app.state.settings
+    allowed, detail = await chat_store.rate_status(session, teacher.id, settings)
+    if not allowed:
+        return JSONResponse({"detail": detail, "code": "rate_limited"}, status_code=429)
+    if len(text) > 1500:
+        await photo.close()
+        raise HTTPException(status_code=422, detail="Слишком длинный вопрос")
+    blob = await photo.read(MAX_PHOTO_BYTES + 1)
+    await photo.close()
+    if len(blob) > MAX_PHOTO_BYTES:
+        raise HTTPException(status_code=413, detail="Фото больше 8 МБ")
+    if image_kind(blob) is None:
+        raise HTTPException(
+            status_code=415,
+            detail="Нужен файл изображения: JPEG, PNG, WebP или GIF",
+        )
+    cleaned = text.strip()
+    await chat_store.add_message(session, chat, role="user", text=cleaned or "[фото]")
+    try:
+        tutor = request.app.state.explainer
+        combined = cleaned
+        if tutor.enabled:
+            image = clean_photo(blob)
+            seen = await tutor.read_photo(*image) if image is not None else None
+            if seen:
+                page = normalize(seen)[:1200]
+                combined = (
+                    f"{cleaned}\n\nТекст со страницы на фото:\n{page}"
+                    if cleaned
+                    else f"Страница на фото:\n{page}"
+                )
+        if not combined.strip():
+            reply = {
+                "kind": "chat",
+                "text": "Фото получил, но текст на нём не читается. "
+                "Пришлите снимок ровнее или напишите, что на странице.",
+            }
+        else:
+            report = await _report(request, session, class_id)
+            reply = await _assistant_answer(
+                request, session, report, teacher, combined, class_id
+            )
         await chat_store.add_message(
             session,
             chat,

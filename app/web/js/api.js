@@ -243,10 +243,11 @@ export const sendChatMessage = (kind, id, text, classId) =>
     timeout: LLM_WAIT,
   });
 
-export function sendChatPhoto(kind, id, file, text) {
+export function sendChatPhoto(kind, id, file, text, classId) {
   const body = new FormData();
   body.append("photo", file);
   body.append("text", text || "");
+  if (classId) body.append("class_id", String(classId));
   return request(`${chatBase(kind)}/${id}/messages/photo`, {
     method: "POST",
     body,

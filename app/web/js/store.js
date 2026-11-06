@@ -57,6 +57,8 @@ export const store = {
   chatBusy: false,
   chatError: "",
   chatPhotoURL: "",
+  chatPhotoFile: null,
+  themePref: "auto",
   chatRateNote: "",
   chatStatus: "",
   materials: null,

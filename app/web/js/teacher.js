@@ -1,7 +1,8 @@
-import { deleteMaterial, getAssignments, getClass, getMaterials, getNotices, getWorkResult, postDraft, publishWork, saveWork, uploadMaterial } from "./api.js?v=5";
-import { chatTitle, loadChats, newChat, openChat, sendChat, showChatList } from "./chat.js?v=2";
-import { renderManage } from "./manage.js";
-import { go, refresh, store } from "./store.js?v=3";
+import { deleteMaterial, getAssignments, getClass, getMaterials, getNotices, getWorkResult, postDraft, publishWork, saveWork, uploadMaterial } from "./api.js?v=6";
+import { chatTitle, clearChatPhoto, loadChats, newChat, openChat, sendChat, showChatList } from "./chat.js?v=3";
+import { renderManage } from "./manage.js?v=11";
+import { go, refresh, store } from "./store.js?v=4";
+import { themePref } from "./theme.js?v=1";
 import {
   classbar,
   confirmDialog,
@@ -14,7 +15,9 @@ import {
   initials,
   nl,
   pill,
-} from "./ui.js";
+  plural,
+  themeSwitch,
+} from "./ui.js?v=4";
 
 const DIFFICULTIES = [
   ["easy", "Проще"],
@@ -102,7 +105,6 @@ function topbar() {
   const name = store.displayName || store.report?.display_name || "";
   return classbar({
     title: classTitle(),
-    subject: subjectTitle(),
     letter: initials(name),
     unread,
     pickClass: true,
@@ -120,11 +122,17 @@ function topicTone(row, index) {
 }
 
 function topicDetail(row, index, checks) {
-  if (!checks) return index === 0 ? "Начните с короткой проверки" : "Материал ещё не проверен";
-  if (row.repeat) return `Повторить: ${row.repeat}`;
-  if (row.practice) return `Нужна практика: ${row.practice}`;
+  if (!checks) return index === 0 ? "Начните с короткой проверки" : "Нет заданий по теме";
+  if (row.repeat) {
+    const n = row.repeat;
+    return `${n} ${plural(n, "ученик", "ученика", "учеников")} повторяют`;
+  }
+  if (row.practice) {
+    const n = row.practice;
+    return `${n} ${plural(n, "ученик", "ученика", "учеников")} с ошибками`;
+  }
   if (row.mastered && !row.none) return "Усвоено";
-  return "Материал ещё не проверен";
+  return "Нет заданий по теме";
 }
 
 function publishedCount() {
@@ -235,7 +243,7 @@ export function renderOverview() {
           <article class="stat-card stat-card--accent">
             <span class="stat-card__label">Проверки</span>
             <strong>${checks}</strong>
-            <small>${checks ? "уже проводились" : "пока не проводились"}</small>
+            <small>${checks ? `Проведено ${checks} ${plural(checks, "проверка", "проверки", "проверок")}` : "Ещё не проводились"}</small>
           </article>
         </div>
       </div>
@@ -340,17 +348,28 @@ function studentSheet(report) {
   </article>`;
 }
 
+function workDay(iso) {
+  const date = new Date(iso || "");
+  if (!iso || Number.isNaN(date.getTime())) return "";
+  const opts = { day: "numeric", month: "short" };
+  if (date.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+  return new Intl.DateTimeFormat("ru-RU", opts).format(date);
+}
+
 function workLine(item) {
   const published = item.status === "published";
   const handed = item.handed || [];
   const started = item.started || [];
   const finished = published && item.recipients && item.done >= item.recipients;
-  let label = "черновик";
+  let label = published ? "" : "черновик";
   if (published && finished) label = handed.length ? `сдали ${handed.join(", ")}` : "все сдали";
   else if (published && handed.length) label = `сдали ${handed.join(", ")} · ещё ${(item.recipients || 0) - (item.done || 0)}`;
   else if (published && started.length) label = `начали ${started.join(", ")}`;
   else if (published) label = `сдали 0 из ${item.recipients || 0}`;
-  return `<button class="line" type="button" data-act="open-result" data-id="${item.id}"><span><b>${esc(item.title)}</b><small>${esc(item.subject || "")} · ${esc(label)}</small></span></button>`;
+  const when = workDay(item.published_at || item.created_at);
+  const meta = [item.subject, when, label].filter(Boolean).join(" · ");
+  const badge = published ? "" : `<span class="work-badge">Черновик</span>`;
+  return `<button class="line" type="button" data-act="open-result" data-id="${item.id}"><span><b>${esc(item.title)}</b><small>${esc(meta)}</small></span>${badge}</button>`;
 }
 
 export function renderTasks() {
@@ -408,6 +427,15 @@ function renderResult(work) {
   </div>`;
 }
 
+function draftCardActions(message) {
+  const payload = message.payload || {};
+  if (payload.draft?.sent) return `<p class="chat-status">Работа отправлена ученикам.</p>`;
+  return `<div class="chat-card__actions">
+    <button class="btn btn-ghost" type="button" data-act="draft-review" data-mid="${message.id}">Проверить</button>
+    <button class="btn btn-primary" type="button" data-act="draft-send" data-mid="${message.id}">Отправить</button>
+  </div>`;
+}
+
 function chatRow(message) {
   if (message.role === "user") {
     return `<div class="chat-msg chat-msg--me"><div class="chat-msg__bubble">${nl(message.text)}</div></div>`;
@@ -418,24 +446,41 @@ function chatRow(message) {
     const draft = payload.draft;
     body = `<div class="chat-card"><strong>Черновик готов</strong>
       <p>${esc(draft.topic || "")} · ${esc(draft.count || "")} заданий · ${esc((draft.audience === "selected" ? (draft.students || []).join(", ") : "весь класс") || "")}</p>
-      <p class="hint">Открыл мастер проверки — вопросы можно поправить перед публикацией.</p></div>`;
+      ${draftCardActions(message)}</div>`;
   } else {
     body = `<p>${nl(message.text || payload.text || "")}</p>`;
   }
   return `<div class="chat-msg"><span class="chat-msg__avatar">${mark()}</span><div class="chat-msg__body">${body}</div></div>`;
 }
 
+function chatPhotoChip() {
+  if (!store.chatPhotoURL) return "";
+  return `<div class="chat-photo-chip"><img alt="" src="${esc(store.chatPhotoURL)}"><span>Фото прикреплено</span><button class="text-btn" type="button" data-act="clear-chat-photo">Убрать</button></div>`;
+}
+
+function chatQuickActions() {
+  if (!store.chatPhotoURL) return "";
+  const items = [
+    ["Создать тест", "Собери проверку по этому материалу"],
+    ["Конспект", "Сделай конспект по этому материалу"],
+    ["Объяснение", "Объясни этот материал простыми словами"],
+  ];
+  return `<div class="chat-quick">${items
+    .map(([label, text]) => `<button type="button" data-act="chat-sample" data-text="${esc(text)}">${esc(label)}</button>`)
+    .join("")}</div>`;
+}
+
 function chatEmpty() {
+  const pick = `<button type="button" data-act="pick-chat-photo">Тест по фото</button>`;
   const samples = [
-    "Собери проверку по дробям на 4 задания",
-    "Как дела у класса?",
-    "Проверка по уравнениям для Ани",
+    ["Список тем", "Покажи темы класса и где больше всего ошибок"],
+    ["Разбор ошибок класса", "Разбери ошибки класса по темам"],
   ];
   return `<div class="chat-empty">
     <div class="chat-empty__mark">${mark(true)}</div>
     <h2>С чем помочь?</h2>
     <p>Соберу проверку по теме или по материалу урока и покажу слабые места класса.</p>
-    <div class="chat-suggest">${samples.map((text) => `<button type="button" data-act="chat-sample" data-text="${esc(text)}">${esc(text)}</button>`).join("")}</div>
+    <div class="chat-suggest">${pick}${samples.map(([label, text]) => `<button type="button" data-act="chat-sample" data-text="${esc(text)}">${esc(label)}</button>`).join("")}</div>
   </div>`;
 }
 
@@ -450,10 +495,13 @@ function chatThread() {
     ${materialsBlock()}
     <div class="chat-scroll-end"></div></div>
     <div class="chat-bottom">
+      ${chatPhotoChip()}
+      ${chatQuickActions()}
       ${store.chatRateNote ? `<p class="chat-status" role="status">${esc(store.chatRateNote)}</p>` : ""}
       ${store.chatError && store.chatError !== store.chatRateNote ? `<p class="chat-error" role="alert">${esc(store.chatError)}</p>` : ""}
       ${store.chatStatus ? `<p class="chat-status" role="status">${esc(store.chatStatus)}</p>` : ""}
       <form id="chat-form" class="chat-composer">
+        <label class="chat-composer__attach" aria-label="Фото страницы">${icon("image")}<input id="chat-photo" type="file" accept="image/*"></label>
         <input id="chat-input" value="${esc(store.chatDraft)}" placeholder="Спросить Стимула" autocomplete="off" aria-label="Запрос помощнику" ${store.chatBusy ? "disabled" : ""}>
         <button class="chat-composer__send" type="submit" aria-label="Отправить" ${store.chatBusy ? "disabled" : ""}>${icon("send")}</button>
       </form>
@@ -524,15 +572,93 @@ function kindLabel(kind) {
 
 export async function sendStimul(text) {
   const question = (text ?? store.chatDraft ?? store.stimulDraft ?? "").trim();
-  if (!question) return;
+  const photo = store.chatPhotoFile || null;
+  if (!question && !photo) return;
   await sendChat(question, {
     classId: store.classId || null,
+    photo,
     onReply: (reply) => {
       if (reply && reply.kind === "draft" && reply.draft) {
-        openAssistantWizard(reply);
+        store.lastDraftReply = reply;
       }
     },
   });
+  if (!store.chatError) clearChatPhoto();
+}
+
+function draftReplyById(mid) {
+  const message = (store.chatMessages || []).find((item) => String(item.id) === String(mid));
+  const payload = message?.payload;
+  return payload && payload.draft ? payload : store.lastDraftReply;
+}
+
+export async function reviewDraft(mid) {
+  const reply = draftReplyById(mid);
+  if (!reply?.draft) return;
+  openAssistantWizard(reply);
+}
+
+export async function sendDraftNow(mid) {
+  const reply = draftReplyById(mid);
+  const draft = reply?.draft;
+  if (!draft || store.busy) return;
+  const plan = reply.wizard || {};
+  const audience = draft.audience === "selected" ? "selected" : "class";
+  const names = audience === "selected" ? draft.students || [] : [];
+  const ids = audience === "selected" ? plan.student_ids || [] : [];
+  const items = (draft.items || [])
+    .map((item) => ({ prompt: String(item.prompt || "").trim(), reference: String(item.reference || "").trim() }))
+    .filter((item) => item.prompt && item.reference);
+  if (!items.length) {
+    store.chatError = "В черновике нет ни одного полного задания.";
+    refresh();
+    return;
+  }
+  const ok = await confirmDialog({
+    title: "Отправить работу",
+    text: `«${draft.topic || "Работа"}»: ${items.length} заданий, ${audience === "class" ? "весь класс" : names.join(", ") || "выбранные ученики"}. Вопросы не открывались в редакторе.`,
+    confirm: "Отправить",
+    cancel: "Отмена",
+  });
+  if (!ok) return;
+  store.busy = true;
+  store.chatError = "";
+  refresh();
+  try {
+    const saved = await saveWork({
+      topic: draft.topic || plan.topic || "",
+      goal: draft.goal || plan.goal || "",
+      count: items.length,
+      difficulty: plan.difficulty || "normal",
+      audience,
+      students: names,
+      student_ids: ids,
+      prompts: items.map((item) => item.prompt),
+      items,
+      blurb: "",
+      due_at: null,
+      class_id: store.classId || null,
+      work_id: null,
+    });
+    if (!saved?.persisted || !saved.id) {
+      store.chatError = "Сервер не сохранил работу. Ученикам ничего не ушло.";
+      return;
+    }
+    const published = await publishWork(saved.id);
+    if (!published?.persisted) {
+      store.chatError = "Черновик записан, публикация не подтверждена.";
+      return;
+    }
+    draft.sent = true;
+    store.lastDraftReply = null;
+    toast(`Работа «${draft.topic || ""}» отправлена: ${published.recipients || ""} учеников.`);
+    reloadQuiet();
+  } catch (error) {
+    store.chatError = error.message || "Не получилось отправить.";
+  } finally {
+    store.busy = false;
+    refresh();
+  }
 }
 
 function openAssistantWizard(reply) {
@@ -551,8 +677,11 @@ function openAssistantWizard(reply) {
     audience: reply.draft.audience === "selected" ? "selected" : "class",
     students,
     studentIds: plan.student_ids || [],
+    studentQuery: "",
     own: [],
     useMaterial: Boolean(plan.use_material),
+    dueAt: "",
+    autosave: "idle",
     draft: reply.draft,
     draftError: null,
     sendError: null,
@@ -618,6 +747,107 @@ export async function removeMaterial(id) {
   }
 }
 
+function neededStudentIds(wizard) {
+  const topic = String(wizard?.topic || "").trim();
+  if (!topic) return [];
+  const ids = [];
+  for (const student of store.report?.students || []) {
+    const hit = (student.topics || []).some(
+      (item) => item.title === topic && (item.status === "needs_practice" || item.status === "repeat"),
+    );
+    if (hit && student.user_id) ids.push(student.user_id);
+  }
+  return ids;
+}
+
+function neededNames(ids) {
+  const roster = store.report?.students || [];
+  return ids
+    .map((id) => roster.find((student) => student.user_id === id)?.display_name || "")
+    .filter(Boolean);
+}
+
+function resolvedAudience(wizard) {
+  if (wizard.audience === "needed") {
+    const ids = neededStudentIds(wizard);
+    return { audience: "selected", students: neededNames(ids), student_ids: ids };
+  }
+  if (wizard.audience === "selected") {
+    return { audience: "selected", students: wizard.students || [], student_ids: wizard.studentIds || [] };
+  }
+  return { audience: "class", students: [], student_ids: [] };
+}
+
+function audienceTiles(wizard, students) {
+  const needed = neededStudentIds(wizard).length;
+  const tile = (value, title, hint) => `<button class="audience-tile ${wizard.audience === value ? "is-on" : ""}" type="button" data-act="audience" data-value="${value}" aria-pressed="${wizard.audience === value}">
+    <strong>${title}</strong><small>${hint}</small></button>`;
+  return `<div class="audience-tiles">
+    ${tile("class", "Весь класс", `${students.length} ${plural(students.length, "ученик", "ученика", "учеников")}`)}
+    ${tile("selected", "Выбрать учеников", `${(wizard.studentIds || []).length} выбрано`)}
+    ${tile("needed", "Кому нужна практика", needed ? `${needed} по теме` : "по этой теме")}
+  </div>`;
+}
+
+export function studentRowsHTML() {
+  const wizard = store.wizard;
+  if (!wizard) return "";
+  const students = store.report?.students || [];
+  const query = String(wizard.studentQuery || "").trim().toLowerCase();
+  const visible = students.filter(
+    (student) => !query || String(student.display_name || "").toLowerCase().includes(query),
+  );
+  const ids = wizard.studentIds || [];
+  if (!visible.length) return `<p class="quiet">Таких учеников нет.</p>`;
+  return `<div class="student-list">${visible
+    .map((student) => {
+      const on = ids.includes(student.user_id);
+      return `<label class="student-check ${on ? "is-on" : ""}">
+        <input type="checkbox" data-student-id="${student.user_id}" data-name="${esc(student.display_name)}" ${on ? "checked" : ""}>
+        <span>${esc(student.display_name)}</span></label>`;
+    })
+    .join("")}</div>`;
+}
+
+function neededPanel(wizard) {
+  const ids = neededStudentIds(wizard);
+  if (!String(wizard.topic || "").trim()) {
+    return `<p class="hint">Сначала укажите тему на первом шаге.</p>`;
+  }
+  if (!ids.length) {
+    return `<p class="hint">По теме «${esc(wizard.topic)}» пока никто не помечен «нужна практика» или «повторить». Выберите учеников вручную или отправьте всему классу.</p>`;
+  }
+  return `<div class="student-list">${neededNames(ids)
+    .map((name) => `<div class="student-check is-on"><span>${esc(name)}</span></div>`)
+    .join("")}</div>
+    <p class="hint">Отметка берётся с карты класса: «нужна практика» и «повторить» по этой теме.</p>`;
+}
+
+function audienceCount(wizard, students) {
+  const total = students.length;
+  const get =
+    wizard.audience === "class"
+      ? total
+      : wizard.audience === "needed"
+        ? neededStudentIds(wizard).length
+        : (wizard.studentIds || []).length;
+  return `<p class="audience-count">Получат: ${get} из ${total}</p>`;
+}
+
+function cleanDraftNote(note) {
+  return String(note || "")
+    .replace(/[^.!?]*(?:не сош[а-яё]*|Проверьте (?:его|их|ответ))[^.!?]*[.!?]?/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function autosaveLine(wizard) {
+  if (wizard.autosave === "saving") return `<p class="hint autosave-note">Сохраняю черновик…</p>`;
+  if (wizard.autosave === "saved") return `<p class="hint autosave-note">Черновик сохранён автоматически.</p>`;
+  if (wizard.autosave === "error") return `<p class="field-error">Автосохранение не удалось — нажмите «Черновик».</p>`;
+  return "";
+}
+
 function wizardBody() {
   const wizard = store.wizard;
   const topics = (store.report?.topics || []).map((topic) => topic.title);
@@ -629,16 +859,17 @@ function wizardBody() {
       <button class="btn btn-primary" type="button" data-act="nav" data-screen="tasks">Закрыть</button>
     </section>`;
   }
-  const titles = wizard.mode === "stimul"
-    ? ["Тема", "Сколько заданий", "Кому отправить", "Просмотр"]
-    : ["Тема", "Вопросы", "Кому отправить", "Просмотр"];
+  const titles =
+    wizard.mode === "stimul"
+      ? ["Тема", "Задания", "Кому", "Просмотр и отправка"]
+      : ["Тема", "Вопросы", "Кому", "Просмотр и отправка"];
   const students = store.report?.students || [];
   let body = "";
   if (wizard.step === 1) {
     body = `<label class="field-label" for="topic">Тема</label>
       <input id="topic" class="field" list="topic-list" value="${esc(wizard.topic)}" placeholder="Например: проценты" autocomplete="off">
       <datalist id="topic-list">${topics.map((title) => `<option value="${esc(title)}"></option>`).join("")}</datalist>
-      <label class="field-label" for="goal">Что проверить</label>
+      <label class="field-label" for="goal">Что проверить <span class="hint-inline">необязательно</span></label>
       <textarea id="goal" class="area" placeholder="Например: найти процент от числа">${esc(wizard.goal)}</textarea>
       <label class="field-label" for="blurb">Коротко для учеников</label>
       <textarea id="blurb" class="area" placeholder="Два предложения перед заданиями. Можно оставить пустым.">${esc(wizard.blurb || "")}</textarea>
@@ -661,32 +892,52 @@ function wizardBody() {
       ${(store.materials?.items || []).length ? `<label class="check"><input id="use-material" type="checkbox" ${wizard.useMaterial ? "checked" : ""}> Собрать по загруженным материалам</label>` : ""}
       <button class="text-btn" type="button" data-act="compose-own">Лучше напишите вопросы сами</button>`;
   } else if (wizard.step === 3) {
-    body = `<div class="segment">
-        <button type="button" class="${wizard.audience === "class" ? "is-on" : ""}" data-act="audience" data-value="class">Весь класс</button>
-        <button type="button" class="${wizard.audience === "selected" ? "is-on" : ""}" data-act="audience" data-value="selected">Выбранные</button>
-      </div>
-      ${wizard.audience === "selected" ? `<p class="hint">Отдельных групп на сервере нет. Отметьте учеников ${esc(classTitle())}.</p>
-        <div class="stack tight">${students.map((student) => {
-          const on = (wizard.studentIds || []).includes(student.user_id);
-          return `<button class="choice ${on ? "is-on" : ""}" type="button" data-act="toggle-student" data-id="${student.user_id}" data-name="${esc(student.display_name)}" aria-pressed="${on}">${esc(student.display_name)}</button>`;
-        }).join("")}</div>` : `<p class="hint">Работа уйдёт ученикам ${esc(classTitle())}.</p>`}`;
+    body = `<p class="field-label">Кому отправить</p>
+      ${audienceTiles(wizard, students)}
+      ${wizard.audience === "selected" ? `<label class="field-label" for="student-q">Поиск по имени</label>
+        <input id="student-q" class="field" placeholder="Начните вводить имя" value="${esc(wizard.studentQuery || "")}" autocomplete="off">
+        <div id="student-list">${studentRowsHTML()}</div>
+        <div class="student-list__foot">
+          <button class="text-btn" type="button" data-act="select-all-students">Выбрать всех</button>
+          ${(wizard.studentIds || []).length ? `<button class="text-btn" type="button" data-act="clear-students">Снять выбор</button>` : ""}
+        </div>` : ""}
+      ${wizard.audience === "needed" ? neededPanel(wizard) : ""}
+      ${audienceCount(wizard, students)}`;
   } else {
     const draft = wizard.draft;
+    const issues = (draft?.items || []).filter((item) => item.checked === false).length;
+    const note = cleanDraftNote(draft?.note || "");
+    const resolved = resolvedAudience(wizard);
+    const audienceText =
+      resolved.audience === "class"
+        ? `Весь класс: ${students.length} ${plural(students.length, "ученик", "ученика", "учеников")}`
+        : `Выбранные: ${resolved.students.join(", ") || "никто"}`;
     body = `${wizard.draftError ? `<div class="banner banner-bad"><p>${esc(wizard.draftError.message)}</p><button class="text-btn" type="button" data-act="compose-own">Написать вопросы самому</button></div>` : ""}
       ${store.busy ? `<p class="statusline" role="status">Собираю черновик…</p>` : ""}
       ${draft ? `<p class="hint">${draft.source === "own" ? "Это ваши вопросы." : "Проверьте вопросы перед отправкой."} Ученики увидят их только после «Опубликовать». Верный ответ виден только вам.</p>
-        ${draft.note ? `<div class="banner banner-warn"><p>${esc(draft.note)}</p></div>` : ""}
+        ${note ? `<div class="banner banner-warn"><p>${esc(note)}</p></div>` : ""}
+        ${issues ? `<p class="issues-flag" role="status">⚠ ${issues} ${plural(issues, "проблема", "проблемы", "проблем")}</p>` : ""}
         <p><strong>${esc(draft.topic)}</strong></p>
         <p>${esc(draft.goal)}</p>
-        <p class="hint">${draft.audience === "class" ? "Весь класс" : "Выбранные"}: ${esc((draft.students || []).join(", ") || "никто")}</p>
-        <div class="stack tight">${(draft.items || []).map((item, index) => `<article class="card card-flat">
-          <h2>Задание ${item.number}</h2>
-          <label class="field-label" for="prompt-${index}">Формулировка</label>
-          <textarea id="prompt-${index}" class="area" data-prompt="${index}">${esc(item.prompt)}</textarea>
-          <label class="field-label" for="reference-${index}">Верный ответ</label>
-          <input id="reference-${index}" class="field" data-reference="${index}" value="${esc(item.reference || "")}" autocomplete="off">
-        </article>`).join("")}</div>
-        <p class="hint">Пока вы не нажали кнопку, правки остаются на этом экране.</p>` : ""}
+        <p class="hint">${esc(audienceText)}</p>
+        <label class="field-label" for="due-at">Срок сдачи <span class="hint-inline">необязательно</span></label>
+        <input id="due-at" class="field" type="datetime-local" value="${esc(wizard.dueAt || "")}">
+        <div class="stack tight">${(draft.items || []).map((item, index) => {
+          const bad = item.checked === false;
+          return `<article class="card card-flat draft-item ${bad ? "draft-item--issue" : ""}">
+            <div class="draft-item__head"><h2>Задание ${item.number}</h2>${bad ? `<span class="issue-mark" title="Ответ не сошёлся при проверке" aria-label="Ответ не сошёлся">⚠</span>` : ""}</div>
+            ${bad ? `<p class="issue-text">Ответ не сошёлся при проверке — перепроверьте его.</p>` : ""}
+            <label class="field-label" for="prompt-${index}">Формулировка</label>
+            <textarea id="prompt-${index}" class="area" data-prompt="${index}">${esc(item.prompt)}</textarea>
+            <label class="field-label" for="reference-${index}">Верный ответ</label>
+            <input id="reference-${index}" class="field" data-reference="${index}" value="${esc(item.reference || "")}" autocomplete="off">
+            <div class="draft-item__actions">
+              ${draft.source === "own" ? "" : `<button class="text-btn" type="button" data-act="regen-item" data-index="${index}" ${store.busy || wizard.autosave === "saving" ? "disabled" : ""}>Перегенерировать</button>`}
+              <button class="text-btn draft-item__del" type="button" data-act="del-item" data-index="${index}" ${store.busy ? "disabled" : ""}>Удалить</button>
+            </div>
+          </article>`;
+        }).join("")}</div>
+        ${autosaveLine(wizard)}` : ""}
       ${wizard.sendError ? `<div class="banner banner-warn" role="status"><strong>Отправка не выполнена</strong><p>${esc(wizard.sendError)}</p></div>` : ""}
       ${wizard.mode === "own" ? "" : `<button class="text-btn" type="button" data-act="redraft" ${store.busy ? "disabled" : ""}>Собрать заново</button>`}`;
   }
@@ -698,7 +949,11 @@ function wizardBody() {
   return `<div class="stack flow">
     <header class="flow-head">
       <div class="who"><b>${titles[wizard.step - 1]}</b><span>Шаг ${wizard.step} из 4</span></div>
-      <ol class="steps" aria-label="Этапы">${titles.map((title, index) => `<li class="${index + 1 < wizard.step ? "is-done" : index + 1 === wizard.step ? "is-now" : ""}" title="${esc(title)}"></li>`).join("")}</ol>
+      <ol class="steps" aria-label="Этапы">${titles.map((title, index) => {
+        const n = index + 1;
+        const cls = n < wizard.step ? "is-done" : n === wizard.step ? "is-now" : "";
+        return `<li class="${cls}"><button type="button" class="steps__btn" data-act="wizard-step" data-step="${n}" ${n === wizard.step ? "disabled" : ""} aria-label="Шаг ${n}: ${esc(title)}"></button></li>`;
+      }).join("")}</ol>
     </header>
     ${wizard.fieldError ? `<p class="field-error">${esc(wizard.fieldError)}</p>` : ""}
     ${body}
@@ -767,7 +1022,14 @@ export function renderProfile() {
         </div>
         <button class="setting-row" type="button" data-act="class-sheet"><span>Класс</span><strong>${esc(classTitle())}</strong>${icon("arrow")}</button>
         <button class="setting-row" type="button" data-act="class-sheet"><span>Предмет</span><strong>${esc(subject || "не указан")}</strong>${icon("arrow")}</button>
-        <button class="setting-row" type="button" ${claimsAct}><span>Заявки проверяет</span><strong>${esc(reviewer || "Ответственный не назначен")}</strong>${icon("arrow")}</button>
+        <button class="setting-row" type="button" ${claimsAct}><span>Кто проверяет работы</span><strong>${esc(reviewer || "Ответственный не назначен")}</strong>${icon("arrow")}</button>
+      </div>
+      <div class="settings-card" style="margin-top:14px">
+        <div class="settings-card__heading">
+          <span class="eyebrow">Оформление</span>
+          <h2>Тема</h2>
+        </div>
+        <div class="setting-row"><span>Режим</span>${themeSwitch(themePref())}</div>
       </div>
     </div>
   </div>`;
@@ -808,8 +1070,11 @@ export function startCompose(topic = "", mode = "own") {
     audience: "class",
     students: [],
     studentIds: [],
+    studentQuery: "",
     own: [],
     useMaterial: false,
+    dueAt: "",
+    autosave: "idle",
     draft: null,
     draftError: null,
     sendError: null,
@@ -828,6 +1093,8 @@ function readWizardFields() {
   if (topic) wizard.topic = topic.value;
   if (goal) wizard.goal = goal.value;
   if (blurb) wizard.blurb = blurb.value;
+  const due = document.querySelector("#due-at");
+  if (due) wizard.dueAt = due.value;
   const own = [...(wizard.own || [])];
   document.querySelectorAll("[data-own-prompt]").forEach((node) => {
     const index = Number(node.dataset.ownPrompt);
@@ -848,21 +1115,13 @@ function readWizardFields() {
   });
 }
 
-export function wizardNext() {
+function validateStep() {
   const wizard = store.wizard;
-  if (!wizard) return;
-  readWizardFields();
   wizard.fieldError = "";
   if (wizard.step === 1) {
     if (wizard.topic.trim().length < 2) {
       wizard.fieldError = "Напишите тему.";
-      refresh();
-      return;
-    }
-    if (wizard.goal.trim().length < 3) {
-      wizard.fieldError = "Напишите цель проверки.";
-      refresh();
-      return;
+      return false;
     }
   }
   if (wizard.step === 2 && wizard.mode === "own") {
@@ -870,17 +1129,31 @@ export function wizardNext() {
     const short = (wizard.own || []).length < wizard.count;
     if (missing || short) {
       wizard.fieldError = "У каждого задания нужны текст и верный ответ.";
-      refresh();
-      return;
+      return false;
     }
   }
-  if (wizard.step === 3 && !(store.report?.students || []).length) {
-    wizard.fieldError = "В классе нет учеников, отправлять некому.";
-    refresh();
-    return;
+  if (wizard.step === 3) {
+    if (!(store.report?.students || []).length) {
+      wizard.fieldError = "В классе нет учеников, отправлять некому.";
+      return false;
+    }
+    if (wizard.audience === "selected" && !(wizard.studentIds || []).length) {
+      wizard.fieldError = "Отметьте хотя бы одного ученика.";
+      return false;
+    }
+    if (wizard.audience === "needed" && !neededStudentIds(wizard).length) {
+      wizard.fieldError = "По этой теме пока никому не нужна практика. Выберите учеников вручную или отправьте всему классу.";
+      return false;
+    }
   }
-  if (wizard.step === 3 && wizard.audience === "selected" && !(wizard.studentIds || []).length) {
-    wizard.fieldError = "Отметьте хотя бы одного ученика.";
+  return true;
+}
+
+export function wizardNext() {
+  const wizard = store.wizard;
+  if (!wizard) return;
+  readWizardFields();
+  if (!validateStep()) {
     refresh();
     return;
   }
@@ -888,6 +1161,30 @@ export function wizardNext() {
   if (wizard.step === 4 && wizard.mode === "own") sealOwnDraft();
   refresh();
   if (wizard.step === 4 && wizard.mode !== "own") loadDraft();
+}
+
+export function wizardGoto(step) {
+  const wizard = store.wizard;
+  const target = Math.max(1, Math.min(4, Number(step) || 1));
+  if (!wizard || target === wizard.step) return;
+  readWizardFields();
+  if (target < wizard.step) {
+    wizard.fieldError = "";
+    wizard.step = target;
+    refresh();
+    if (target === 4 && wizard.mode !== "own" && !wizard.draft && !wizard.draftError && !store.busy) loadDraft();
+    return;
+  }
+  while (wizard.step < target) {
+    if (!validateStep()) {
+      refresh();
+      return;
+    }
+    wizard.step += 1;
+    if (wizard.step === 4 && wizard.mode === "own") sealOwnDraft();
+  }
+  refresh();
+  if (target === 4 && wizard.mode !== "own" && !wizard.draft && !wizard.draftError && !store.busy) loadDraft();
 }
 
 export function wizardBack() {
@@ -915,7 +1212,124 @@ export function setDifficulty(value) {
 
 export function setAudience(value) {
   if (!store.wizard) return;
-  store.wizard.audience = value === "selected" ? "selected" : "class";
+  store.wizard.audience = ["class", "selected", "needed"].includes(value) ? value : "class";
+  refresh();
+}
+
+export function selectAllStudents() {
+  const wizard = store.wizard;
+  if (!wizard) return;
+  const query = String(wizard.studentQuery || "").trim().toLowerCase();
+  const ids = (store.report?.students || [])
+    .filter((student) => !query || String(student.display_name || "").toLowerCase().includes(query))
+    .map((student) => student.user_id)
+    .filter(Boolean);
+  wizard.studentIds = [...new Set([...(wizard.studentIds || []), ...ids])];
+  const roster = store.report?.students || [];
+  wizard.students = wizard.studentIds
+    .map((item) => roster.find((student) => student.user_id === item)?.display_name || "")
+    .filter(Boolean);
+  refresh();
+}
+
+export function clearStudents() {
+  const wizard = store.wizard;
+  if (!wizard) return;
+  wizard.studentIds = [];
+  wizard.students = [];
+  refresh();
+}
+
+export function regenItem(index) {
+  const wizard = store.wizard;
+  const item = wizard?.draft?.items?.[Number(index)];
+  if (!item || wizard.mode === "own" || store.busy || wizard.autosave === "saving") return;
+  readWizardFields();
+  const resolved = resolvedAudience(wizard);
+  store.busy = true;
+  wizard.sendError = null;
+  refresh();
+  postDraft({
+    topic: wizard.topic.trim(),
+    goal: (wizard.goal || "").trim() || wizard.topic.trim(),
+    count: 1,
+    difficulty: wizard.difficulty,
+    audience: resolved.audience,
+    students: resolved.students,
+    use_material: Boolean(wizard.useMaterial),
+    class_id: store.classId || null,
+  })
+    .then((draft) => {
+      const fresh = draft?.items?.[0];
+      if (fresh) {
+        item.prompt = fresh.prompt;
+        item.reference = fresh.reference;
+        item.choices = fresh.choices || [];
+        item.checked = fresh.checked !== false;
+        item.hint = fresh.hint || item.hint;
+        wizard.autosave = "idle";
+        scheduleAutosave();
+      } else {
+        wizard.sendError = "Новое задание не собралось. Попробуйте ещё раз.";
+      }
+    })
+    .catch((error) => {
+      wizard.sendError = error.message || "Не получилось перегенерировать задание.";
+    })
+    .finally(() => {
+      store.busy = false;
+      refresh();
+    });
+}
+
+export function delItem(index) {
+  const wizard = store.wizard;
+  const items = wizard?.draft?.items;
+  const at = Number(index);
+  if (!items || !Number.isInteger(at) || at < 0 || at >= items.length || items.length <= 1) return;
+  readWizardFields();
+  items.splice(at, 1);
+  items.forEach((item, position) => {
+    item.number = position + 1;
+  });
+  wizard.autosave = "idle";
+  scheduleAutosave();
+  refresh();
+}
+
+let autosaveTimer = 0;
+
+export function scheduleAutosave() {
+  const wizard = store.wizard;
+  if (!wizard || wizard.step !== 4 || !wizard.draft || store.preview) return;
+  window.clearTimeout(autosaveTimer);
+  autosaveTimer = window.setTimeout(() => autosaveDraft(), 1200);
+}
+
+export async function autosaveDraft() {
+  const wizard = store.wizard;
+  if (!wizard?.draft || wizard.step !== 4 || store.busy || store.preview) return;
+  if (wizard.autosave === "saving") return;
+  readWizardFields();
+  const items = (wizard.draft.items || []).map((item) => ({
+    prompt: String(item.prompt || "").trim(),
+    reference: String(item.reference || "").trim(),
+  }));
+  if (!items.length || items.some((item) => !item.prompt || !item.reference)) return;
+  wizard.autosave = "saving";
+  refresh();
+  try {
+    const saved = await saveWork(workBody());
+    if (saved?.persisted && saved.id) {
+      wizard.workId = saved.id;
+      wizard.draft.persisted = true;
+      wizard.autosave = "saved";
+    } else {
+      wizard.autosave = "error";
+    }
+  } catch {
+    wizard.autosave = "error";
+  }
   refresh();
 }
 
@@ -940,14 +1354,16 @@ export function toggleMaterial(checked) {
 
 function draftPayload() {
   const wizard = store.wizard;
+  const resolved = resolvedAudience(wizard);
+  const goal = wizard.goal.trim() || wizard.topic.trim();
   return {
     topic: wizard.topic.trim(),
-    goal: wizard.goal.trim(),
+    goal,
     count: wizard.count,
     difficulty: wizard.difficulty,
-    audience: wizard.audience,
-    students: wizard.audience === "selected" ? wizard.students : [],
-    student_ids: wizard.audience === "selected" ? wizard.studentIds || [] : [],
+    audience: resolved.audience,
+    students: resolved.students,
+    student_ids: resolved.student_ids,
     use_material: Boolean(wizard.useMaterial),
     class_id: store.classId || null,
   };
@@ -962,13 +1378,14 @@ function sealOwnDraft() {
     reference: String(item?.reference || "").trim(),
     choices: [],
   }));
-  const names = wizard.audience === "selected"
-    ? wizard.students
+  const names = resolvedAudience(wizard).students.length
+    ? resolvedAudience(wizard).students
     : (store.report?.students || []).map((student) => student.display_name);
+  const resolved = resolvedAudience(wizard);
   wizard.draft = {
     topic: wizard.topic.trim(),
-    goal: wizard.goal.trim(),
-    audience: wizard.audience,
+    goal: wizard.goal.trim() || wizard.topic.trim(),
+    audience: resolved.audience,
     students: names,
     source: "own",
     items,
@@ -1007,11 +1424,13 @@ function workBody() {
     prompt: String(item.prompt || "").trim(),
     reference: String(item.reference || "").trim(),
   }));
+  const due = (store.wizard.dueAt || "").trim();
   return {
     ...payload,
     prompts: items.map((item) => item.prompt),
     items,
     blurb: (store.wizard.blurb || "").trim(),
+    due_at: due ? new Date(due).toISOString() : null,
     work_id: store.wizard.workId || null,
     class_id: store.classId || null,
   };
@@ -1036,6 +1455,7 @@ export async function saveDraft() {
       return;
     }
     wizard.workId = saved.id;
+    wizard.autosave = "saved";
     wizard.sendError = null;
     await confirmDialog({ title: "Черновик сохранён", text: "Ученикам работа ещё не отправлена.", confirm: "Хорошо" });
   } catch (error) {
@@ -1050,7 +1470,7 @@ export async function sendAssignment() {
   const wizard = store.wizard;
   if (!wizard?.draft || store.busy) return;
   readWizardFields();
-    const empty = wizard.draft.items.some((item) => !String(item.prompt || "").trim() || !String(item.reference || "").trim());
+    const empty = !wizard.draft.items.length || wizard.draft.items.some((item) => !String(item.prompt || "").trim() || !String(item.reference || "").trim());
   if (empty) {
     wizard.sendError = "У каждого задания нужны текст и верный ответ.";
     refresh();
