@@ -1003,7 +1003,7 @@ async function onAction(act, button) {
   if (act === "open-work") {
     const work = (store.works?.items || []).find((item) => String(item.id) === button.dataset.id);
     store.openWork = work || null;
-    refresh();
+    go("tasks");
     return;
   }
   if (act === "close-work") {
