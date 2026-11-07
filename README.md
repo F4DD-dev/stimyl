@@ -36,7 +36,6 @@
 
 - Личный помощник с историей чата и лимитами запросов к модели
 - Материалы урока (PDF, DOCX, PPTX, TXT, фото) — генерация «по загруженному» идёт только по сохранённым фрагментам
-- Групповой чат MAX: Стимул отвечает по упоминанию и без личных данных
 - Вход по коду класса или через MAX
 
 ## Как устроено
@@ -45,7 +44,7 @@
 | --- | --- |
 | API и бот | Python 3.12, async FastAPI; вход из MAX — webhook `POST /webhook` или long polling |
 | База | PostgreSQL 16, миграции Alembic |
-| Модель | Интерфейс `app/llm` — GigaChat / OpenRouter, провайдер заменяется |
+| Модель | Интерфейс `app/llm` — GigaChat (от qwen отказались, так как openrouter отдаёт модели через cloudflare) |
 | Фронт | Мини-приложение MAX (vanilla JS), статика в `app/web` |
 | Деплой | Timeweb App Platform + PostgreSQL, Docker-образ из `Dockerfile` |
 
