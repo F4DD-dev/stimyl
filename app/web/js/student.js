@@ -82,6 +82,7 @@ function mast(name, klass) {
     subject: store.progress?.subject_title || "",
     letter: initials(name),
     unread,
+    who: name || "",
   });
 }
 
@@ -451,14 +452,14 @@ export function renderProfile() {
         <p>${stats.known ? `Усвоено ${stats.mastered}. Нужна практика ${stats.practice}. Повторить ${stats.repeat}.` : "После первой работы здесь появятся темы, которые уже получаются, и подсказки для повторения."}</p>
         <button class="student-focus__action" type="button" data-act="nav" data-screen="map">Открыть карту знаний ${icon("arrow")}</button>
       </div>
-      <div class="student-tip">
+      <button class="student-tip" type="button" data-act="nav" data-screen="history">
         <div class="student-tip__icon">${icon("spark")}</div>
         <div>
           <strong>Личный помощник</strong>
-          <p>Можно задать вопрос по теме — учитель не увидит личный диалог.</p>
+          <p>Можно задать вопрос по теме — учитель не увидит личный диалог. История занятий — внутри.</p>
         </div>
-      </div>
-      <button class="text-button" type="button" data-act="nav" data-screen="history">История занятий</button>
+        ${icon("chevron")}
+      </button>
       <div class="settings-card" style="margin-top:14px">
         <div class="settings-card__heading">
           <span class="eyebrow">Оформление</span>

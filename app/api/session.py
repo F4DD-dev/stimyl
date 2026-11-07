@@ -14,6 +14,7 @@ from app.domain.accounts import (
     WEBAPP_PROVIDER,
     claim_webapp_ticket,
     ensure_webapp_identity,
+    join_class_by_invite,
     open_browser_session,
     rename_once,
     user_by_provider,
@@ -33,6 +34,10 @@ class SessionBody(BaseModel):
 
 class RenameBody(BaseModel):
     display_name: str = ""
+
+
+class JoinBody(BaseModel):
+    code: str = ""
 
 
 def launch_param(signed: str, hinted: str) -> str:
@@ -147,6 +152,23 @@ async def current_session(
         "application_status": application_status,
         "class_has_teacher": class_has_teacher,
     }
+
+
+@router.post("/api/class/join")
+async def join_class(
+    body: JoinBody,
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Ученик вводит код класса из кабинета учителя. Код — прямое назначение."""
+    user = await user_from_cookie(request, session, allow_pending=True)
+    school_class, error = await join_class_by_invite(
+        session, user, body.code, request.app.state.settings
+    )
+    if error:
+        raise HTTPException(status_code=422, detail=error)
+    await session.commit()
+    return {"ok": True, "class_title": school_class.title if school_class else ""}
 
 
 @router.get("/api/assistant/status")

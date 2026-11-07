@@ -48,6 +48,10 @@ class Explainer(Protocol):
 
     async def topic_from_fragments(self, fragments: list[str]) -> str | None: ...
 
+    async def group_reply(self, text: str, context: str = "") -> str | None: ...
+
+    async def suggest_next(self, stats: list[dict]) -> str | None: ...
+
 
 class NullExplainer:
     enabled = False
@@ -94,6 +98,12 @@ class NullExplainer:
         return None
 
     async def topic_from_fragments(self, fragments: list[str]) -> str | None:
+        return None
+
+    async def group_reply(self, text: str, context: str = "") -> str | None:
+        return None
+
+    async def suggest_next(self, stats: list[dict]) -> str | None:
         return None
 
 
@@ -451,6 +461,42 @@ class LlmTutor:
             purpose="topic",
         )
         return plain(raw, 120) or None
+
+    async def group_reply(self, text: str, context: str = "") -> str | None:
+        system = prompts.GROUP_SYSTEM
+        if context.strip():
+            system += f"\n\n{context.strip()}"
+        raw = await self._chat.chat(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": text[:1500]},
+            ],
+            max_tokens=600,
+            temperature=0.5,
+            purpose="group",
+        )
+        return plain(raw, 1200) or None
+
+    async def suggest_next(self, stats: list[dict]) -> str | None:
+        """Модель предлагает следующую тему по статусам. Проверка — кодом."""
+        if not stats:
+            return None
+        lines = [
+            f"{item.get('title', '')}: {item.get('status') or 'нет попыток'}"
+            + (f", верных {item['correct_percent']}%" if item.get("correct_percent") is not None else "")
+            for item in stats
+        ]
+        raw = await self._chat.chat(
+            [
+                {"role": "system", "content": prompts.NEXT_SYSTEM},
+                {"role": "user", "content": "\n".join(lines)},
+            ],
+            max_tokens=40,
+            temperature=0,
+            purpose="next",
+        )
+        title = plain(raw, 200)
+        return title or None
 
 
 def build_explainer(settings: Settings) -> Explainer:

@@ -119,7 +119,13 @@ class MaxClient:
     async def subscribe(self, url: str, secret: str | None) -> None:
         body: dict[str, object] = {
             "url": url,
-            "update_types": ["message_created", "message_callback", "bot_started"],
+            "update_types": [
+                "message_created",
+                "message_callback",
+                "bot_started",
+                "bot_added",
+                "bot_removed",
+            ],
         }
         if secret:
             body["secret"] = secret
@@ -151,11 +157,37 @@ class MaxClient:
         username, _contact = await self.my_profile()
         return username
 
+    async def chat_info(self, chat_id: int) -> dict:
+        """Название и тип чата. Для привязки группового чата класса."""
+        response = await self._client.get(f"/chats/{chat_id}")
+        _raise_for_status(response)
+        payload = response.json()
+        return payload if isinstance(payload, dict) else {}
+
+    async def chat_members(self, chat_id: int, count: int = 100) -> list[str]:
+        """user_id участников чата. Нужен, чтобы найти класс по учителю в чате."""
+        response = await self._client.get(
+            f"/chats/{chat_id}/members", params={"count": min(count, 100)}
+        )
+        _raise_for_status(response)
+        payload = response.json()
+        members = payload.get("members") if isinstance(payload, dict) else payload
+        if not isinstance(members, list):
+            return []
+        found = []
+        for item in members:
+            if isinstance(item, dict):
+                user = item.get("user") or item
+                raw = user.get("user_id") if isinstance(user, dict) else None
+                if raw is not None:
+                    found.append(str(raw))
+        return found
+
     async def get_updates(self, marker: int | None, timeout: int = 30) -> dict:
         params: dict[str, object] = {
             "limit": 50,
             "timeout": timeout,
-            "types": "message_created,message_callback,bot_started",
+            "types": "message_created,message_callback,bot_started,bot_added,bot_removed",
         }
         if marker is not None:
             params["marker"] = marker

@@ -97,16 +97,30 @@ async def guide(
         return None
     if draft.unreadable:
         return guided_notice(state, "photo_unreadable")
-    if draft.off_topic:
+    has_lesson = bool(draft.explanation.strip() or draft.example.strip())
+    if draft.off_topic and not has_lesson:
         return guided_notice(state, "off_topic")
     title = match_topic(draft.topic, titles)
     if title is None and state.topic_title:
         title = match_topic(state.topic_title, titles) or state.topic_title
     if title is None:
-        return guided_notice(state, "unknown_topic", topics=True)
+        title = _custom_title(draft.topic)
+    if title is None:
+        if has_lesson:
+            title = state.topic_title or "Вопрос"
+        else:
+            return guided_notice(state, "unknown_topic", topics=True)
     explanation, example = _safe_text(draft, title)
     task = await _pick_task(tutor, draft, title, state.level, rng)
     return guided_lesson(state, title, explanation, example, task)
+
+
+def _custom_title(raw: str | None) -> str | None:
+    """Тема вне банка тем: короткая формулировка от модели, без мусора."""
+    text = " ".join((raw or "").split()).strip(" .«»\"'")
+    if not text or len(text) > 80 or text.casefold() in {"null", "none", "нет"}:
+        return None
+    return text[:80]
 
 
 def _safe_text(draft: LessonDraft, title: str) -> tuple[str, str]:

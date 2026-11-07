@@ -1,4 +1,4 @@
-import { approveJoin, deleteChat, getHistory, getLesson, getNotices, getProgress, getSession, getStudentWorks, openSession, openTicket, pinChat, readNotice, renameMe, setCsrf } from "./api.js?v=7";
+import { approveJoin, deleteChat, getHistory, getLesson, getNotices, getProgress, getSession, getStudentWorks, joinClass, openSession, openTicket, pinChat, readNotice, renameMe, setCsrf } from "./api.js?v=7";
 import { previewRole, studentPreview, teacherPreview } from "./preview.js?v=10";
 import { applyTheme, setThemePref, themePref } from "./theme.js?v=1";
 import {
@@ -29,6 +29,7 @@ import {
   addMaterial,
   autosaveDraft,
   clearStudents,
+  copyInvite,
   delItem,
   focusStudent,
   focusTopic,
@@ -47,6 +48,7 @@ import {
   removeMaterial,
   renderTeacher,
   openResult,
+  resetNextTopic,
   resourceFilePicked,
   resourceLinkAdd,
   resourceLinkCancel,
@@ -54,6 +56,7 @@ import {
   resourceRemove,
   reviewDraft,
   saveDraft,
+  saveNextTopic,
   selectAllStudents,
   sendAssignment,
   sendDraftNow,
@@ -67,6 +70,7 @@ import {
   startCompose,
   studentRowsHTML,
   scheduleAutosave,
+  toggleGroupChat,
   toggleMaterial,
   toggleStudent,
   wizardBack,
@@ -324,6 +328,15 @@ async function boot() {
       await loadStudent();
       store.loading = false;
       refresh();
+      if (
+        !store.preview &&
+        store.progress &&
+        !store.progress.class_title &&
+        me.status === "active"
+      ) {
+        store.gate = "invite";
+        refresh();
+      }
     }
     if (id !== bootId) return;
   } catch (error) {
@@ -486,13 +499,80 @@ function classSheet() {
 
 async function noticesSheet() {
   const items = store.notices?.items || [];
-  openSheet(`<h2>Уведомления</h2>${items.length ? `<section class="sheet-block">${items.map((item) => `<article class="line"><span><b>${esc(item.title)}</b><small>${esc(item.body)}</small></span></article>`).join("")}</section>` : `<p class="quiet">Уведомлений нет.</p>`}`);
-  if (store.preview) return;
-  const unread = items.filter((item) => !item.read);
-  for (const item of unread) {
-    try { await readNotice(item.id); } catch { /* остаётся непрочитанным, если сервер не ответил */ }
+  const rows = items.length
+    ? items
+        .map(
+          (item) => `<button class="line notice-line${item.read ? "" : " is-unread"}" type="button" data-act="notice-open" data-id="${item.id}" data-kind="${esc(item.kind || "")}" data-ref="${item.ref_id || ""}">
+            <span class="notice-dot${item.read ? " is-read" : ""}" aria-hidden="true"></span>
+            <span><b>${esc(item.title)}</b><small>${esc(item.body)}</small></span>
+            ${icon("chevron")}
+          </button>`,
+        )
+        .join("")
+    : `<p class="quiet">Уведомлений нет.</p>`;
+  openSheet(`<h2>Уведомления</h2><div class="notices-scroll"><section class="sheet-block">${rows}</section></div>`);
+}
+
+async function submitJoinClass() {
+  const input = document.querySelector("#join-code");
+  const code = (input?.value || "").trim();
+  if (!code) {
+    store.gateMessage = "Введите код класса.";
+    refresh();
+    return;
   }
-  if (unread.length) store.notices = { ...store.notices, unread: 0, items: items.map((item) => ({ ...item, read: true })) };
+  store.busy = true;
+  store.gateMessage = "";
+  refresh();
+  try {
+    const saved = await joinClass(code);
+    store.gate = null;
+    store.classTitle = saved.class_title || store.classTitle;
+    toast(`Ты в классе ${saved.class_title || ""}.`);
+    await loadStudent();
+    store.loading = false;
+    refresh();
+  } catch (error) {
+    store.gateMessage = error.message || "Код не подошёл.";
+    refresh();
+  } finally {
+    store.busy = false;
+  }
+}
+
+async function openNotice(button) {
+  const id = Number(button.dataset.id);
+  const kind = button.dataset.kind || "";
+  const ref = button.dataset.ref || "";
+  const item = (store.notices?.items || []).find((row) => Number(row.id) === id);
+  if (item && !item.read) {
+    item.read = true;
+    try {
+      await readNotice(id);
+      const unread = (store.notices?.items || []).filter((row) => !row.read).length;
+      store.notices = { ...store.notices, unread, items: [...(store.notices?.items || [])] };
+      refresh();
+    } catch { /* остаётся непрочитанным, если сервер не ответил */ }
+  }
+  closeSheet();
+  if (kind === "work" && ref) {
+    if (store.role === "teacher") {
+      go("tasks");
+      await reloadQuiet();
+      return;
+    }
+    go("tasks");
+    try {
+      const fresh = await getStudentWorks();
+      store.works = fresh;
+      const work = (fresh?.items || []).find((row) => String(row.id) === String(ref));
+      store.openWork = work || null;
+      refresh();
+    } catch { /* список работ уже был загружен при входе */ }
+  } else if (kind === "join_request") {
+    go("manage");
+    await loadManage();
+  }
 }
 
 function frame(inner) {
@@ -559,6 +639,17 @@ function renderGate() {
       <h1>Сюда не попасть</h1>
       <p>${esc(store.gateMessage || "Этот раздел сейчас закрыт.")}</p>
       <button class="btn btn-primary" type="button" data-act="return-chat">Вернуться в чат</button>
+    </div>`;
+  }
+  if (store.gate === "invite") {
+    return `<div class="gate">${brand()}
+      <h1>Код класса</h1>
+      <p>Введите код класса для входа. Его выдаёт учитель в своём кабинете.</p>
+      ${store.gateMessage ? `<p class="gate-error">${esc(store.gateMessage)}</p>` : ""}
+      <form id="join-form" class="gate-form">
+        <input id="join-code" class="field" maxlength="16" placeholder="Например, 8BDEMO" autocomplete="off" autocapitalize="characters">
+        <button class="btn btn-primary" type="submit" ${store.busy ? "disabled" : ""}>Войти в класс</button>
+      </form>
     </div>`;
   }
   if (store.gate === "browser") {
@@ -868,6 +959,30 @@ async function onAction(act, button) {
     await noticesSheet();
     return;
   }
+  if (act === "notice-open") {
+    await openNotice(button);
+    return;
+  }
+  if (act === "join-class") {
+    await submitJoinClass();
+    return;
+  }
+  if (act === "copy-invite") {
+    await copyInvite();
+    return;
+  }
+  if (act === "next-topic-save") {
+    await saveNextTopic();
+    return;
+  }
+  if (act === "next-topic-reset") {
+    await resetNextTopic();
+    return;
+  }
+  if (act === "group-chat-toggle") {
+    await toggleGroupChat();
+    return;
+  }
   if (act === "class-sheet") {
     classSheet();
     return;
@@ -1035,6 +1150,10 @@ function bind() {
   document.addEventListener("submit", (event) => {
     event.preventDefault();
     if (event.target.id === "answer-form") submitAnswer();
+    if (event.target.id === "join-form") {
+      event.preventDefault();
+      submitJoinClass();
+    }
     if (event.target.id === "chat-form") {
       const value = document.querySelector("#chat-input")?.value.trim() || "";
       store.chatDraft = value;

@@ -196,15 +196,16 @@ async def publish_work(session: AsyncSession, teacher: User, work_id: int) -> tu
     now = datetime.now(UTC)
     work.status = "published"
     work.published_at = now
-    subject = await session.get(Subject, work.subject_id)
-    subject_title = subject.title if subject is not None else ""
     for user_id in recipients:
         await enqueue_notice(
             session,
             user_id,
             kind="work",
-            title=work.title,
-            body=f"Новое задание: {work.title}. {subject_title}. {work.goal}"[:500],
+            title=f"Практика: {work.title}",
+            body=(
+                f"Учитель открыл для тебя практику по теме {work.title}. "
+                f"{work.goal}"
+            )[:500],
             button_text="Открыть задание",
             button_payload=f"open_work:{work.id}",
             ref_id=work.id,

@@ -573,6 +573,23 @@ class AssistantMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class ClassChat(Base):
+    """Групповой чат MAX, привязанный к классу. Бот отвечает только упомянутый."""
+
+    __tablename__ = "class_chats"
+    __table_args__ = (
+        UniqueConstraint("max_chat_id", name="uq_class_chats_max_chat"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    class_id: Mapped[int | None] = mapped_column(ForeignKey("classes.id"), nullable=True, index=True)
+    max_chat_id: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(200), default="")
+    ai_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class OutboundNotice(Base):
     """Сообщение в MAX. В тексте нет билета: кнопка только просит свежий."""
 

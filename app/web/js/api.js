@@ -176,6 +176,12 @@ export const answerWork = (id, answers) =>
   });
 export const getNotices = () => request("/api/notices");
 export const readNotice = (id) => request(`/api/notices/${id}/read`, { method: "POST" });
+export const joinClass = (code) =>
+  request("/api/class/join", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ code }),
+  });
 export const saveWork = (body) =>
   request("/api/teacher/works", {
     method: "POST",
@@ -183,6 +189,24 @@ export const saveWork = (body) =>
     body: JSON.stringify(body),
   });
 export const publishWork = (id) => request(`/api/teacher/works/${id}/publish`, { method: "POST" });
+export const setNextTopic = (topic, classId) =>
+  request(
+    `/api/teacher/class/next-topic${classId ? `?class_id=${encodeURIComponent(classId)}` : ""}`,
+    {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ topic: topic || "" }),
+    },
+  );
+export const setGroupChat = (action, classId) =>
+  request(
+    `/api/teacher/class/chat${classId ? `?class_id=${encodeURIComponent(classId)}` : ""}`,
+    {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ action }),
+    },
+  );
 export const getWorkResult = (id) => request(`/api/teacher/works/${id}`);
 export const getClaims = () => request("/api/manage/claims");
 export const acceptClaim = (id) => request(`/api/manage/claims/${id}/accept`, { method: "POST" });

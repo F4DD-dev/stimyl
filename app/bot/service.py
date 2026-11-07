@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bot import assist
 from app.bot.assist import wants_guide, wants_practice
 from app.bot.gate import GateReply, open_gate
+from app.bot.group import process_group_update
 from app.bot.teacher_chat import is_teacher_action, teacher_turn
 from app.bot.updates import Incoming, parse_update
 from app.core.config import Settings
@@ -17,6 +18,7 @@ from app.db.models import (
     InboundEvent,
     LearningSession,
     Message,
+    RuntimeFlag,
     SchoolClass,
     Subject,
     Topic,
@@ -28,8 +30,8 @@ from app.db.models import (
 from app.domain.account_copy import PHOTO_OFF
 from app.domain.assist import mentions
 from app.domain.curriculum import topic_by_title
-from app.domain.messages_ru import LINES, SUBMISSION_UNAVAILABLE
-from app.domain.progress import STATUS_LABEL, TopicProgress, choose_next, streak
+from app.domain.messages_ru import DISCLAIMER, LINES, SUBMISSION_UNAVAILABLE
+from app.domain.progress import STATUS_LABEL, NextStep, TopicProgress, choose_next, streak
 from app.domain.report import StateFact, TopicColumn, activity_line, build_report
 from app.domain.status import Thresholds, TopicStatus, decide_status, mark_of, show_percent
 from app.domain.training import (
@@ -66,6 +68,10 @@ async def process_update(
     if incoming.dedup_key:
         session.add(InboundEvent(dedup_key=incoming.dedup_key))
         await session.flush()
+
+    if incoming.kind in {"bot_added", "bot_removed", "group_text"}:
+        await process_group_update(session, incoming, sender, explainer, settings)
+        return
 
     outcome = await open_gate(session, incoming, settings)
     acked = False
@@ -164,6 +170,7 @@ async def process_update(
                     ButtonSpec("Разобрать с ботом", "review", review_title),
                 )
     if incoming.kind == "start" and turn.replies:
+        turn.replies[0].lead = f"{DISCLAIMER}\n\n{turn.replies[0].lead}"
         _offer_app(turn.replies[0], user.role)
     for reply in turn.replies:
         _add_message(session, row, "bot", reply.text, visibility)
@@ -706,7 +713,12 @@ async def class_report(
     )
 
 
-async def student_progress(session: AsyncSession, user: User, settings: Settings) -> dict:
+async def student_progress(
+    session: AsyncSession,
+    user: User,
+    settings: Settings,
+    explainer: Explainer | None = None,
+) -> dict:
     topics = await _topics(session)
     stored = {
         row.topic_id: row
@@ -744,14 +756,18 @@ async def student_progress(session: AsyncSession, user: User, settings: Settings
             payload_topics.append(
                 {"title": topic.title, "status": status.value, "correct_percent": share}
             )
-    step = choose_next(rows)
+    class_row = await session.execute(
+        select(SchoolClass.id, SchoolClass.title)
+        .join(Enrollment, Enrollment.class_id == SchoolClass.id)
+        .where(Enrollment.user_id == user.id, Enrollment.status == "active")
+        .order_by(Enrollment.class_id)
+    )
+    enrolled = class_row.first()
+    class_id = enrolled[0] if enrolled else None
+    class_title = enrolled[1] if enrolled else None
+    step = await _next_step(session, user, rows, topics, class_id, explainer)
     completed = await session.scalar(
         select(func.count()).select_from(Attempt).where(Attempt.user_id == user.id)
-    )
-    class_title = await session.scalar(
-        select(SchoolClass.title)
-        .join(Enrollment, Enrollment.class_id == SchoolClass.id)
-        .where(Enrollment.user_id == user.id)
     )
     return {
         "display_name": user.display_name,
@@ -762,6 +778,70 @@ async def student_progress(session: AsyncSession, user: User, settings: Settings
         "next_step": step.label if step else None,
         "next_topic": step.topic_title if step else None,
     }
+
+
+async def _next_step(
+    session: AsyncSession,
+    user: User,
+    rows: list[TopicProgress],
+    topics,
+    class_id: int | None,
+    explainer: Explainer | None,
+) -> NextStep | None:
+    """Следующий шаг: тема, выбранная учителем, затем совет модели, затем код."""
+    titles = {topic.title for topic in topics}
+    if class_id is not None:
+        override = await session.scalar(
+            select(RuntimeFlag.value).where(RuntimeFlag.key == f"class_next:{class_id}")
+        )
+        if override and override.strip() in titles:
+            title = override.strip()
+            return NextStep(title, f"Текущая тема класса — «{title}»")
+    suggestion = await _ai_next(session, user, rows, explainer)
+    if suggestion and suggestion in titles:
+        return NextStep(suggestion, f"Разобрать тему «{suggestion}»")
+    return choose_next(rows)
+
+
+async def _ai_next(
+    session: AsyncSession,
+    user: User,
+    rows: list[TopicProgress],
+    explainer: Explainer | None,
+) -> str | None:
+    """Совет модели по прогрессу. Кэш в RuntimeFlag: считаем только при смене статусов."""
+    if explainer is None or not getattr(explainer, "enabled", False):
+        return None
+    signature = ",".join(
+        f"{row.title}:{row.status.value if row.status else '-'}:"
+        f"{row.correct_percent if row.correct_percent is not None else '-'}"
+        for row in rows
+    )
+    key = f"ai_next:{user.id}"[:64]
+    flag = await session.get(RuntimeFlag, key)
+    if flag is not None:
+        cached_sig, _, cached_title = flag.value.partition("|")
+        if cached_sig == signature and cached_title:
+            return cached_title
+    stats = [
+        {
+            "title": row.title,
+            "status": row.status.value if row.status else None,
+            "correct_percent": row.correct_percent,
+        }
+        for row in rows
+    ]
+    try:
+        title = await explainer.suggest_next(stats)
+    except Exception:
+        title = None
+    if title:
+        await session.merge(
+            RuntimeFlag(key=key, value=f"{signature}|{title[:200]}")
+        )
+    elif flag is not None:
+        flag.value = f"{signature}|"
+    return title
 
 
 def _iso(moment: datetime) -> str:

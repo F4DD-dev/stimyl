@@ -16,6 +16,7 @@ from app.db.models import (
     Attempt,
     AuditLog,
     AuthIdentity,
+    ClassChat,
     ClassSubjectTeacher,
     ClassTeacher,
     Consent,
@@ -26,6 +27,7 @@ from app.db.models import (
     Message,
     Notice,
     OutboundNotice,
+    RuntimeFlag,
     School,
     SchoolClass,
     SignupHint,
@@ -1006,3 +1008,128 @@ async def set_class_join(session: AsyncSession, teacher_id: int, class_id: int, 
     school_class.join_open = opened
     await write_audit(session, teacher_id, "join_open" if opened else "join_close", None, None, str(class_id))
     return True
+
+
+async def _owned_class_id(session: AsyncSession, teacher_id: int, class_id: int | None) -> int | None:
+    query = select(ClassTeacher.class_id).where(ClassTeacher.user_id == teacher_id)
+    if class_id is not None:
+        query = query.where(ClassTeacher.class_id == class_id)
+    return await session.scalar(query.order_by(ClassTeacher.class_id))
+
+
+async def class_next_topic(session: AsyncSession, teacher_id: int, class_id: int | None) -> str:
+    current = await _owned_class_id(session, teacher_id, class_id)
+    if current is None:
+        return ""
+    value = await session.scalar(
+        select(RuntimeFlag.value).where(RuntimeFlag.key == f"class_next:{current}")
+    )
+    return (value or "").strip()
+
+
+async def set_class_next_topic(
+    session: AsyncSession, teacher_id: int, class_id: int | None, topic_title: str
+) -> bool:
+    """Тема, которую учитель ставит следующей для всего класса. Пусто — сброс."""
+    current = await _owned_class_id(session, teacher_id, class_id)
+    if current is None:
+        return False
+    key = f"class_next:{current}"
+    cleaned = topic_title.strip()[:200]
+    row = await session.get(RuntimeFlag, key)
+    if cleaned:
+        if row is None:
+            session.add(RuntimeFlag(key=key, value=cleaned))
+        else:
+            row.value = cleaned
+    elif row is not None:
+        await session.delete(row)
+    await write_audit(session, teacher_id, "class_next", None, None, cleaned or "reset")
+    return True
+
+
+async def class_group_chat(session: AsyncSession, teacher_id: int, class_id: int | None) -> dict | None:
+    current = await _owned_class_id(session, teacher_id, class_id)
+    if current is None:
+        return None
+    row = await session.scalar(
+        select(ClassChat).where(ClassChat.class_id == current, ClassChat.active.is_(True))
+    )
+    if row is None:
+        return {"linked": False, "ai_enabled": False, "title": ""}
+    return {"linked": True, "ai_enabled": bool(row.ai_enabled), "title": row.title}
+
+
+async def set_class_group_ai(
+    session: AsyncSession, teacher_id: int, class_id: int | None, enabled: bool
+) -> bool:
+    """Учитель включает или выключает ответы Стимула в групповом чате класса."""
+    current = await _owned_class_id(session, teacher_id, class_id)
+    if current is None:
+        return False
+    row = await session.scalar(
+        select(ClassChat).where(ClassChat.class_id == current, ClassChat.active.is_(True))
+    )
+    if row is None:
+        return False
+    row.ai_enabled = enabled
+    await write_audit(session, teacher_id, "group_ai_on" if enabled else "group_ai_off", None, None, str(current))
+    return True
+
+
+async def join_class_by_invite(
+    session: AsyncSession,
+    user: User,
+    code: str,
+    settings: Settings,
+) -> tuple[SchoolClass | None, str | None]:
+    """Вход в класс по коду из мини-приложения. Код — прямое назначение учителя."""
+    if user.role == "teacher":
+        return None, "Код класса для учеников."
+    if user.deleted_at is not None or user.status == "blocked":
+        return None, "Аккаунт закрыт."
+    cleaned = "".join(ch for ch in (code or "") if ch.isalnum()).upper()[:16]
+    if not cleaned:
+        return None, "Введите код класса."
+    school_class = await session.scalar(
+        select(SchoolClass).where(func.upper(SchoolClass.join_code) == cleaned)
+    )
+    if school_class is None or not school_class.join_open:
+        return None, "Такого кода нет или он закрыт."
+    if user.role != "student":
+        user.role = "student"
+    found = await session.scalar(
+        select(Enrollment).where(
+            Enrollment.class_id == school_class.id,
+            Enrollment.user_id == user.id,
+        )
+    )
+    if found is None:
+        session.add(
+            Enrollment(class_id=school_class.id, user_id=user.id, status="active")
+        )
+    elif found.status != "active":
+        found.status = "active"
+    if user.status == "pending":
+        user.status = "active"
+    application = await session.get(JoinApplication, user.id)
+    if application is not None:
+        if application.status != "approved":
+            application.status = "approved"
+            application.reviewed_by = None
+            application.reviewed_at = _now()
+        application.class_id = school_class.id
+        application.school_id = school_class.school_id
+    else:
+        session.add(
+            JoinApplication(
+                user_id=user.id,
+                wanted_role="student",
+                status="approved",
+                school_id=school_class.school_id,
+                class_id=school_class.id,
+                created_at=_now(),
+            )
+        )
+    await write_audit(session, user.id, "join_invite", user.id, None, str(school_class.id))
+    return school_class, None

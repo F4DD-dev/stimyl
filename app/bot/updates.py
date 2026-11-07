@@ -26,7 +26,23 @@ def parse_update(update: dict) -> Incoming | None:
         return _callback(update)
     if kind == "message_created":
         return _message(update)
+    if kind in {"bot_added", "bot_removed"}:
+        return _membership(update, kind)
     return None
+
+
+def _membership(update: dict, kind: str) -> Incoming | None:
+    chat_id = _chat_id(update.get("chat_id"))
+    if chat_id is None or update.get("is_channel"):
+        return None
+    user = update.get("user") or {}
+    return Incoming(
+        kind=kind,
+        dedup_key=f"{kind}:{chat_id}:{update.get('timestamp')}",
+        max_user_id=str(user.get("user_id") or ""),
+        chat_id=chat_id,
+        name=_name(user) if user else "",
+    )
 
 
 def _started(update: dict) -> Incoming | None:
@@ -74,12 +90,18 @@ def _message(update: dict) -> Incoming | None:
     contact_vcf, contact_hash = _contact(attachments)
     recipient = message.get("recipient") or {}
     chat_type = recipient.get("chat_type")
-    if chat_type not in {None, "dialog"}:
+    if chat_type == "channel":
+        return None
+    if chat_type not in {None, "dialog", "chat"}:
         return None
     stripped = text.strip() if text else ""
     folded = stripped.casefold()
     start_payload = None
-    if contact_vcf is not None or contact_hash is not None:
+    if chat_type == "chat":
+        if not stripped:
+            return None
+        kind = "group_text"
+    elif contact_vcf is not None or contact_hash is not None:
         kind = "contact"
     elif folded in {"/start", "start"}:
         kind = "start"

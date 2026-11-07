@@ -54,7 +54,12 @@ async def progress(
     session: AsyncSession = Depends(db_session),
 ) -> dict:
     student = await user_from_cookie(request, session, "student")
-    return await student_progress(session, student, request.app.state.settings)
+    return await student_progress(
+        session,
+        student,
+        request.app.state.settings,
+        getattr(request.app.state, "explainer", None),
+    )
 
 
 @router.get("/api/student/history")

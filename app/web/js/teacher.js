@@ -1,4 +1,4 @@
-import { attachWorkResource, createSubject, createTopic, deleteMaterial, deleteWorkResource, getAssignments, getClass, getMaterials, getNotices, getProgram, getWorkResult, postDraft, publishWork, saveWork, uploadMaterial } from "./api.js?v=7";
+import { attachWorkResource, createSubject, createTopic, deleteMaterial, deleteWorkResource, getAssignments, getClass, getMaterials, getNotices, getProgram, getWorkResult, postDraft, publishWork, saveWork, setGroupChat, setNextTopic, uploadMaterial } from "./api.js?v=7";
 import { chatTitle, clearChatPhoto, loadChats, newChat, openChat, sendChat, showChatList } from "./chat.js?v=4";
 import { renderManage } from "./manage.js?v=12";
 import { go, refresh, store } from "./store.js?v=5";
@@ -1092,6 +1092,15 @@ export function renderProfile() {
       </div>
       <div class="settings-card" style="margin-top:14px">
         <div class="settings-card__heading">
+          <span class="eyebrow">Класс</span>
+          <h2>Приглашение и чат</h2>
+        </div>
+        ${inviteBlock()}
+        ${nextTopicBlock()}
+        ${groupChatBlock()}
+      </div>
+      <div class="settings-card" style="margin-top:14px">
+        <div class="settings-card__heading">
           <span class="eyebrow">Конструктор</span>
           <h2>Предметы и темы</h2>
         </div>
@@ -1106,6 +1115,105 @@ export function renderProfile() {
       </div>
     </div>
   </div>`;
+}
+
+function inviteBlock() {
+  const code = store.report?.join_code || "";
+  const link = store.report?.join_link || "";
+  const open = store.report?.join_open !== false;
+  if (!code) return `<p class="quiet" style="padding:0 23px 14px">Код появится, когда за классов назначат.</p>`;
+  return `<div class="setting-row" style="flex-direction:column;align-items:stretch">
+    <span>Код класса для учеников</span>
+    <div style="display:flex;align-items:center;gap:10px">
+      <strong style="font-size:22px;letter-spacing:.06em">${esc(code)}</strong>
+      <button class="btn btn-ghost" type="button" data-act="copy-invite" style="width:auto;min-height:36px;padding:0 12px;font-size:13px">Копировать</button>
+    </div>
+    ${link ? `<small class="quiet">${esc(link)}</small>` : `<small class="quiet">Ссылка появится, когда бот сообщит своё имя.</small>`}
+    <small class="quiet">${open ? "Вход по коду открыт." : "Вход по коду закрыт."}</small>
+  </div>`;
+}
+
+function nextTopicBlock() {
+  const topics = store.report?.topics || [];
+  const current = store.report?.next_topic_override || "";
+  const options = topics.map((topic) => `<option value="${esc(topic.title)}" ${topic.title === current ? "selected" : ""}>${esc(topic.title)}</option>`).join("");
+  return `<div class="setting-row" style="flex-direction:column;align-items:stretch">
+    <span>Следующий шаг класса</span>
+    <div style="display:flex;gap:8px;align-items:center">
+      <select id="next-topic" class="field" style="flex:1;min-height:40px">${options || `<option value="">Тем пока нет</option>`}</select>
+      <button class="btn btn-ghost" type="button" data-act="next-topic-save" style="width:auto;min-height:40px;padding:0 12px;font-size:13px">Сохранить</button>
+      ${current ? `<button class="btn btn-ghost" type="button" data-act="next-topic-reset" style="width:auto;min-height:40px;padding:0 12px;font-size:13px">Сбросить</button>` : ""}
+    </div>
+    <small class="quiet">${current ? `Сейчас для класса: «${esc(current)}».` : "Пусто — шаг выбирается по прогрессу каждого ученика."}</small>
+  </div>`;
+}
+
+function groupChatBlock() {
+  const chat = store.report?.group_chat || {};
+  if (!chat.linked) {
+    return `<div class="setting-row"><span>Групповой чат</span><strong>Не привязан</strong></div>
+      <p class="quiet" style="padding:0 23px 14px">Добавь Стимула в чат класса в MAX — он привяжется сам.</p>`;
+  }
+  return `<div class="setting-row">
+    <span>Групповой чат</span>
+    <strong>${chat.ai_enabled ? "Отвечает" : "Молчит"}</strong>
+    <button class="btn btn-ghost" type="button" data-act="group-chat-toggle" style="grid-column:1/-1;width:auto;min-height:38px;padding:0 12px;font-size:13px">
+      ${chat.ai_enabled ? "Выключить ответы в чате" : "Включить ответы в чате"}
+    </button>
+    <small class="quiet" style="grid-column:1/-1">${esc(chat.title || "Чат класса")}. Стимул отвечает только когда его упомянуть.</small>
+  </div>`;
+}
+
+export async function copyInvite() {
+  const link = store.report?.join_link || store.report?.join_code || "";
+  if (!link) return;
+  try {
+    await navigator.clipboard.writeText(link);
+    toast("Скопировано.");
+  } catch {
+    toast(link);
+  }
+}
+
+export async function saveNextTopic() {
+  const select = document.querySelector("#next-topic");
+  const topic = select?.value || "";
+  store.busy = true;
+  try {
+    await setNextTopic(topic, store.classId || undefined);
+    toast(topic ? `Следующий шаг: «${topic}».` : "Шаг снова по прогрессу.");
+    await reloadTeacher();
+  } catch (error) {
+    toast(error.message || "Не сохранилось.");
+  } finally {
+    store.busy = false;
+  }
+}
+
+export async function resetNextTopic() {
+  store.busy = true;
+  try {
+    await setNextTopic("", store.classId || undefined);
+    await reloadTeacher();
+  } catch (error) {
+    toast(error.message || "Не сохранилось.");
+  } finally {
+    store.busy = false;
+  }
+}
+
+export async function toggleGroupChat() {
+  const chat = store.report?.group_chat || {};
+  const action = chat.ai_enabled ? "disable" : "enable";
+  store.busy = true;
+  try {
+    await setGroupChat(action, store.classId || undefined);
+    await reloadTeacher();
+  } catch (error) {
+    toast(error.message || "Не получилось переключить.");
+  } finally {
+    store.busy = false;
+  }
 }
 
 export function renderTeacher() {

@@ -70,10 +70,10 @@ export function brand({ home = false } = {}) {
   return `<button class="brand" type="button" data-act="nav" data-screen="stimul" aria-label="Стимул">${inner}</button>`;
 }
 
-export function classbar({ title, letter, unread, pickClass = false }) {
+export function classbar({ title, letter, unread, pickClass = false, who = "" }) {
   const klass = pickClass
-    ? `<button class="classbar__class" type="button" data-act="class-sheet"><strong>${esc(title || "Класс")}</strong></button>`
-    : `<div class="classbar__class"><strong>${esc(title || "Класс")}</strong></div>`;
+    ? `<button class="classbar__class" type="button" data-act="class-sheet"><strong>${esc(title || "Класс")}</strong>${who ? `<small class="classbar__who">${esc(who)}</small>` : ""}</button>`
+    : `<div class="classbar__class"><strong>${esc(title || "Класс")}</strong>${who ? `<small class="classbar__who">${esc(who)}</small>` : ""}</div>`;
   return `<header class="classbar">
     ${brand({ home: true })}
     ${klass}

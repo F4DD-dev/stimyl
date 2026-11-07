@@ -72,7 +72,7 @@ async def run_available(
                     await fail(session, row, "retry", permanent=False)
                 await session.commit()
         except Exception as exc:
-            logger.error("job failed: %s", type(exc).__name__)
+            logger.error("job failed: %s", type(exc).__name__, exc_info=True)
             async with factory() as session:
                 row = await session.get(Job, job_id)
                 if row is not None:

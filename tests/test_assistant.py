@@ -60,15 +60,27 @@ class FakeTutor:
     async def make_task(self, topic, level, fragments):
         return None
 
-    async def draft_work(self, topic, goal, count, difficulty, fragments):
+    async def draft_work(self, topic, goal, count, difficulty, fragments, subject=""):
         self.draft_calls.append(
             {"topic": topic, "goal": goal, "count": count, "fragments": list(fragments)}
         )
         return self.work_items
 
-    async def read_teacher(self, text, topics):
+    async def read_teacher(self, text, topics, history=None, context=""):
         self.teacher_calls.append({"text": text, "topics": list(topics)})
         return self.teacher_ask
+
+    async def teacher_reply(self, text, history=None, context=""):
+        return None
+
+    async def topic_from_fragments(self, fragments):
+        return None
+
+    async def group_reply(self, text, context=""):
+        return None
+
+    async def suggest_next(self, stats):
+        return None
 
 
 @pytest.fixture

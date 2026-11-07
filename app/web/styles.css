@@ -2127,3 +2127,75 @@ body.is-chat .ai-fab { display: none; }
 .chat-row__main { flex: 1; min-width: 0; }
 .chat-row .icon-button { flex-shrink: 0; align-self: center; }
 .chat-row__pin.is-on { color: var(--accent-strong); }
+
+/* ===== Уведомления: прокрутка, точка непрочитанного, переход ===== */
+.notices-scroll { max-height: min(52dvh, 420px); overflow-y: auto; overscroll-behavior: contain; }
+.notices-scroll .sheet-block { padding-bottom: 8px; }
+.notice-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.notice-line:first-child { border-top: 0; }
+.notice-line > span:nth-child(2) { flex: 1; min-width: 0; }
+.notice-line .icon { flex-shrink: 0; align-self: center; color: var(--muted); }
+.notice-dot {
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--coral);
+}
+.notice-dot.is-read { background: transparent; }
+.notice-line.is-unread b { font-weight: 800; }
+
+/* ===== Карточка помощника — целиком кнопка ===== */
+button.student-tip {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 13px;
+  width: 100%;
+  margin-top: 14px;
+  padding: 18px;
+  border: 1px solid #ddd6ef;
+  border-radius: 19px;
+  background: #eee9fa;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+button.student-tip .icon { color: var(--muted); }
+
+/* ===== Гейт кода класса ===== */
+.gate-form { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.gate-form .field { text-align: center; letter-spacing: 0.08em; font-weight: 700; text-transform: uppercase; }
+.gate-error { color: #8d2d22; }
+
+/* ===== Тема на узком экране не обрезается ===== */
+@media (max-width: 400px) {
+  .setting-row { grid-template-columns: 1fr; }
+  .setting-row .theme-segment { grid-column: 1; }
+  .theme-segment { flex-wrap: wrap; }
+  .theme-segment button { flex: 1 1 30%; padding: 0 6px; }
+}
+
+/* ===== Имя ученика в шапке рядом с классом ===== */
+.classbar__who {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}

@@ -28,7 +28,15 @@ from app.db.models import (
     User,
 )
 from app.domain import chats as chat_store
-from app.domain.accounts import approve_enrollment, rotate_class_key, set_class_join
+from app.domain.accounts import (
+    approve_enrollment,
+    class_group_chat,
+    class_next_topic,
+    rotate_class_key,
+    set_class_group_ai,
+    set_class_join,
+    set_class_next_topic,
+)
 from app.domain.assist import match_students
 from app.domain.images import image_kind
 from app.domain.library import delete_material, list_materials, save_material
@@ -156,6 +164,18 @@ async def teacher_class(
     payload["join_open"] = bool(school_class.join_open) if school_class else False
     payload["join_key"] = school_class.join_key if school_class else ""
     payload["join_code"] = school_class.join_code if school_class else ""
+    bot_username = (getattr(request.app.state, "bot_username", "") or "").strip().lstrip("@")
+    payload["join_link"] = (
+        f"https://max.ru/{bot_username}?start={school_class.join_key}"
+        if school_class and bot_username
+        else ""
+    )
+    payload["next_topic_override"] = await class_next_topic(session, teacher.id, class_id)
+    payload["group_chat"] = await class_group_chat(session, teacher.id, class_id) or {
+        "linked": False,
+        "ai_enabled": False,
+        "title": "",
+    }
     payload["classes"] = await classes_of(session, teacher)
     payload["can_manage_school"] = bool(teacher.can_manage_school)
     payload["claims_reviewer"] = await reviewer_name(session)
@@ -671,6 +691,52 @@ async def class_key(
         raise HTTPException(status_code=403, detail="Нет доступа к классу")
     await session.commit()
     return {"join_open": body.action == "enable"}
+
+
+class NextTopicBody(BaseModel):
+    topic: str = Field(default="", max_length=200)
+
+
+@router.post("/api/teacher/class/next-topic")
+async def next_topic(
+    body: NextTopicBody,
+    request: Request,
+    class_id: int | None = None,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Тема, которую учитель ставит следующей у всего класса. Пусто — сброс."""
+    teacher = await user_from_cookie(request, session, "teacher")
+    if body.topic.strip():
+        known = await session.scalar(
+            select(Topic.id).where(Topic.title == body.topic.strip())
+        )
+        if known is None:
+            raise HTTPException(status_code=422, detail="Такой темы нет в программе")
+    ok = await set_class_next_topic(session, teacher.id, class_id, body.topic)
+    if not ok:
+        raise HTTPException(status_code=403, detail="Нет доступа к классу")
+    await session.commit()
+    return {"next_topic": body.topic.strip()}
+
+
+class GroupChatBody(BaseModel):
+    action: Literal["enable", "disable"]
+
+
+@router.post("/api/teacher/class/chat")
+async def group_chat_toggle(
+    body: GroupChatBody,
+    request: Request,
+    class_id: int | None = None,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Включить или выключить ответы Стимула в групповом чате класса."""
+    teacher = await user_from_cookie(request, session, "teacher")
+    ok = await set_class_group_ai(session, teacher.id, class_id, body.action == "enable")
+    if not ok:
+        raise HTTPException(status_code=404, detail="Групповой чат не привязан")
+    await session.commit()
+    return {"ai_enabled": body.action == "enable"}
 
 
 TEACHER_KIND = "teacher"

@@ -54,6 +54,7 @@ from app.domain.directory import (
     role_reply,
     school_reply,
 )
+from app.domain.messages_ru import DISCLAIMER
 from app.domain.onboarding import accept_claim, register_phone, reject_claim, reviewer_name
 from app.domain.phone import normalize_phone, phone_from_vcard, verify_contact_hash
 from app.domain.school_admin import bot_applications, bot_my_class, bot_students
@@ -257,6 +258,8 @@ async def _without_account(
     def greet(replies: list[GateReply]) -> GateOutcome:
         if welcome is not None:
             replies.insert(0, welcome)
+        if replies:
+            replies[0].text = f"{DISCLAIMER}\n\n{replies[0].text}"
         return GateOutcome(None, replies, True)
 
     if incoming.payload == CONSENT_YES:
