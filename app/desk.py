@@ -2,6 +2,7 @@
 
 import asyncio
 import getpass
+import os
 from pathlib import Path
 from urllib.parse import quote
 
@@ -35,7 +36,12 @@ from app.domain.school_admin import (
     transfer_school_manager,
 )
 
-TIMEWEB = "postgresql+asyncpg://stimul:{password}@193.188.23.51:5432/stimul?ssl=require"
+TIMEWEB_HOST = os.environ.get("TIMEWEB_DB_HOST", "")
+TIMEWEB = (
+    "postgresql+asyncpg://stimul:{password}@" + TIMEWEB_HOST + ":5432/stimul?ssl=require"
+    if TIMEWEB_HOST
+    else ""
+)
 PASSWORD_FILE = Path(".local/db-password.txt")
 MENU = """
 1 Люди
@@ -289,7 +295,7 @@ def _choose_url(settings: Settings) -> str | None:
         print(f"1 Адрес из окружения: {_target(current)}")
     else:
         print("1 В окружении DATABASE_URL пустой.")
-    print("2 База Timeweb: stimul @ 193.188.23.51")
+    print(f"2 База Timeweb: stimul @ {TIMEWEB_HOST or 'задайте TIMEWEB_DB_HOST'}")
     choice = _ask("Номер: ")
     if choice == "1":
         if not current:
@@ -297,6 +303,9 @@ def _choose_url(settings: Settings) -> str | None:
             return None
         return current
     if choice == "2":
+        if not TIMEWEB:
+            print("Задай TIMEWEB_DB_HOST в окружении.")
+            return None
         password = _password()
         if not password:
             print("Пароль пустой.")

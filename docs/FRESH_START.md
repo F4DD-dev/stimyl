@@ -1,6 +1,6 @@
 # Чистый старт тестового контура
 
-Очистка сделана 3 ноября 2026. Затронута только база `stimul` кластера Timeweb `4226125`. Приложение Timeweb не менялось, деплоя не было, `FIRST_TEACHER_BOOTSTRAP` не включался.
+Очистка сделана 3 ноября 2026. Затронута только база `stimul` боевого кластера Timeweb. Приложение Timeweb не менялось, деплоя не было, `FIRST_TEACHER_BOOTSTRAP` не включался.
 
 ## 1. Что очищено
 
@@ -22,17 +22,17 @@
 
 | | |
 | --- | --- |
-| Приложение | «Копия Stimyl», id `279257`, ветка `feature/accounts` |
+| Приложение | «Копия Stimyl», ветка `feature/accounts` |
 | Адреса | `stimyl.online`, `f4dd-dev-stimyl-1cea.twc1.net` |
 | Приложение `277859` | в аккаунте отсутствует, API отвечает `404` |
-| Кластер | PostgreSQL 16, id `4226125`, адрес `193.188.23.51:5432` |
+| Кластер | PostgreSQL 16, публичный адрес в панели Timeweb |
 | База приложения | `stimul` |
 
 На кластере есть ещё `default_db` и `postgres`. Пользователь `stimul` к ним подключиться не может. FastAPI и worker запускаются одним `docker/entrypoint.sh` и читают один `DATABASE_URL`. Отдельного Redis нет: очередь бота лежит в таблице `jobs`, она очищена.
 
 Локальный `.env` указывает на SQLite `.local/stimul.db`. Этот файл не цель и не изменялся.
 
-`ENV`, `SEED_DEMO` и `FIRST_TEACHER_BOOTSTRAP` в окружении `279257` не заданы. Код принимает это как `ENV=dev`, `SEED_DEMO=false`, `FIRST_TEACHER_BOOTSTRAP=false`. Это не `ENV=prod`.
+`ENV`, `SEED_DEMO` и `FIRST_TEACHER_BOOTSTRAP` в окружении приложения не заданы. Код принимает это как `ENV=dev`, `SEED_DEMO=false`, `FIRST_TEACHER_BOOTSTRAP=false`. Это не `ENV=prod`.
 
 Резервная копия до удаления: `.local/backups/stimul-20261103-093851.dump`, 110709 байт, формат `pg_dump -Fc`. Каталог `.local` не входит в git. У файла нет наследования прав, доступ есть только у текущей учётной записи Windows. `pg_restore --list` архив прочитал. В чат и в git его не класть.
 
@@ -96,7 +96,7 @@ SELECT value FROM runtime_flags WHERE key = 'prototype_bootstrap';
 
 ## 5. Как запустить FastAPI и worker
 
-На Timeweb процесс уже запущен приложением `279257`. Этот проход его не перезапускал. Воркер жив: `worker_heartbeat` обновляется, а `jobs` пуст, поэтому старые апдейты он разобрать не может.
+На Timeweb процесс уже запущен боевым приложением. Этот проход его не перезапускал. Воркер жив: `worker_heartbeat` обновляется, а `jobs` пуст, поэтому старые апдейты он разобрать не может.
 
 Локально, из корня репозитория, в окружении процесса, не в файле `.env`:
 
@@ -104,7 +104,7 @@ SELECT value FROM runtime_flags WHERE key = 'prototype_bootstrap';
 ENV=dev
 SEED_DEMO=false
 FIRST_TEACHER_BOOTSTRAP=true
-DATABASE_URL=postgresql+asyncpg://stimul:<пароль>@193.188.23.51:5432/stimul?ssl=require
+DATABASE_URL=postgresql+asyncpg://stimul:<пароль>@<публичный IP>:5432/stimul?ssl=require
 ```
 
 Пароль брать из панели Timeweb или из `.local/db-password.txt`. Затем:
@@ -116,13 +116,13 @@ python -m app.worker
 uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
-Локальный worker с тем же `MAX_TOKEN`, что у `stimyl.online`, перехватит вебхук. Для проверки живого бота достаточно уже работающего приложения `279257`. Второй процесс с `MAX_WEBHOOK_URL` не запускать.
+Локальный worker с тем же `MAX_TOKEN`, что у `stimyl.online`, перехватит вебхук. Для проверки живого бота достаточно уже работающего приложения. Второй процесс с `MAX_WEBHOOK_URL` не запускать.
 
 ## 6. Как включить тестовый bootstrap
 
 Сейчас флаг в базе `open`, но приложение его не применяет: `FIRST_TEACHER_BOOTSTRAP` не задан и по умолчанию `false`. Пока так, первый подтверждённый номер станет учеником с заявкой, а не учителем.
 
-Включить только на `279257`, до первого нажатия «Поделиться номером»:
+Включить только на боевом приложении, до первого нажатия «Поделиться номером»:
 
 ```text
 ENV=dev
@@ -132,7 +132,7 @@ SEED_DEMO=false
 
 `ENV` можно не писать, пустое значение уже считается `dev`. Нельзя ставить `ENV=prod`: при `prod` код игнорирует bootstrap. Нельзя включать это на будущем боевом приложении.
 
-`PATCH /api/v1/apps/279257` заменяет всю карту переменных и сразу деплоит. Этот проход Timeweb не трогал. Как собрать карту заново, написано в `docs/TIMEWEB.md`.
+`PATCH /api/v1/apps/{id}` заменяет всю карту переменных и сразу деплоит. Этот проход Timeweb не трогал. Как собрать карту заново, написано в `docs/TIMEWEB.md`.
 
 ## 7. Как зарегистрироваться первым
 

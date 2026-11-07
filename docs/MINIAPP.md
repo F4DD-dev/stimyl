@@ -2,7 +2,7 @@
 
 Как сейчас устроен вход. Это описание кода на ветке `feature/accounts`, не план новых фич. Продуктовые инварианты — в `AGENTS.md`. Учётные записи — в `docs/ACCOUNTS.md`.
 
-Живой контур: приложение Timeweb «Копия Stimyl», id `279257`, ветка `feature/accounts`, адрес `https://stimyl.online`. Бот `ideya_fiks_101_bot`, его `user_id` `387830563`. Токен только в `MAX_TOKEN`. Вебхук: `https://stimyl.online/webhook`. `GET` окружения Timeweb маскирует секреты, а `PATCH` заменяет всю карту: как собрать её заново, написано в `docs/TIMEWEB.md`.
+Живой контур: приложение Timeweb «Копия Stimyl», ветка `feature/accounts`, адрес `https://stimyl.online`. Бот `ideya_fiks_101_bot`. Токен только в `MAX_TOKEN`. Вебхук: `https://stimyl.online/webhook`. `GET` окружения Timeweb маскирует секреты, а `PATCH` заменяет всю карту: как собрать её заново, написано в `docs/TIMEWEB.md`.
 
 Документация MAX, с которой сверен этот путь:
 
@@ -37,7 +37,7 @@ Webhook только кладёт апдейт в очередь и отвеча
   "type": "open_app",
   "text": "Открыть кабинет",
   "web_app": "ideya_fiks_101_bot",
-  "contact_id": 387830563,
+  "contact_id": 123456789,
   "payload": "<билет>"
 }
 ```
@@ -120,7 +120,7 @@ Webhook только кладёт апдейт в очередь и отвеча
 
 ## Что проверять, если «кнопка снова не пускает»
 
-1. В логе воркера на эту отправку есть `open_app contact_id=387830563 payload=set`. Нет `contact_id` — кнопка выпущена старым процессом или `GET /me` не удался.
+1. В логе воркера на эту отправку есть `open_app contact_id=<id> payload=set`. Нет `contact_id` — кнопка выпущена старым процессом или `GET /me` не удался.
 2. На `POST /api/session` есть `miniapp start_param=signed` или `hint`. `absent` — в `WebAppData` параметра не было: шапка чата, старая кнопка или страница прочитала не тот hash.
 3. Этот POST вернул 200, а следующий GET — 401: билет дошёл, сессия не удержалась. Проверить, что страница шлёт `Authorization: Bearer`.
 4. POST 409 — привязки `max_webapp` нет и билет не подошёл (чужой, протух, уже использован).
