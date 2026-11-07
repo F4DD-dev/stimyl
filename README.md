@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="app/web/logo.jpg" width="140" alt="Стимул">
+  <img src="design/logo.png" width="140" alt="Стимул">
 </p>
 
 <h1 align="center">Стимул</h1>
