@@ -881,6 +881,16 @@ async def student_turn(
         event = PhotoOnly()
     else:
         return {"ok": False, "code": "empty", "detail": LINES["empty_practice"][0]}
+    if not state.topic_title and isinstance(event, (StudentText, PhotoOnly)):
+        recent_title = await session.scalar(
+            select(Topic.title)
+            .join(TopicState, TopicState.topic_id == Topic.id)
+            .where(TopicState.user_id == user.id)
+            .order_by(TopicState.last_attempt_on.desc())
+            .limit(1)
+        )
+        if recent_title:
+            state.topic_title = recent_title
     turn = await _guided(
         session,
         explainer,

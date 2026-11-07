@@ -519,6 +519,8 @@ function resourceKindHint(item) {
 
 function renderWork(work) {
   const due = formatDue(work.due_at);
+  const items = work.items || [];
+  const allAnswered = items.length > 0 && items.every((item) => item.answered);
   return `<div class="fig">
     ${mast(store.progress?.display_name || store.displayName, store.progress?.class_title)}
     <div class="fig-page">
@@ -545,7 +547,9 @@ function renderWork(work) {
         </section>`).join("")}
       </div>
       ${store.fieldError ? `<p class="field-error">${esc(store.fieldError)}</p>` : ""}
-      <button class="primary-button" type="button" data-act="submit-work" ${disabled()}>Проверить ответы</button>
+      ${allAnswered
+        ? `<button class="primary-button" type="button" data-act="close-work">К списку</button>`
+        : `<button class="primary-button" type="button" data-act="submit-work" ${disabled()}>Проверить ответы</button>`}
     </div>
   </div>`;
 }
@@ -710,6 +714,12 @@ export async function submitWork() {
     answer: input.value.trim(),
   })).filter((item) => item.answer);
   if (!answers.length) {
+    const items = work.items || [];
+    if (items.length && items.every((item) => item.answered)) {
+      store.openWork = null;
+      refresh();
+      return;
+    }
     store.fieldError = "Введите ответ.";
     refresh();
     return;

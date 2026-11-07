@@ -110,9 +110,17 @@ export async function loadAssistantStatus() {
   refresh();
 }
 
+function shortChatTitle(text) {
+  const first = String(text || "").split("\n")[0].trim();
+  const sentence = first.split(/[.!?…]/)[0].trim() || first;
+  const words = sentence.split(/\s+/).filter(Boolean).slice(0, 6).join(" ");
+  if (words.length <= 48) return words;
+  return `${words.slice(0, 48).replace(/\s+\S*$/, "")}…`;
+}
+
 async function ensureChat(text) {
   if (store.chatId) return store.chatId;
-  const created = await createChat(chatKind(), (text || "").slice(0, 60));
+  const created = await createChat(chatKind(), shortChatTitle(text));
   store.chatId = created.id;
   store.chatMessages = [];
   store.chats = { items: [{ id: created.id, title: created.title, updated_at: new Date().toISOString() }, ...(store.chats?.items || [])] };

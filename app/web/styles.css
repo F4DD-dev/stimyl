@@ -2110,3 +2110,14 @@ body.is-chat .toast { bottom: calc(88px + env(safe-area-inset-bottom) + var(--ch
   .topic-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; align-items: start; }
   .topic-row { margin-bottom: 0; }
 }
+
+/* ===== Студент: FAB не перекрывает поле ввода, заголовки чатов ===== */
+body.is-chat .ai-fab { display: none; }
+.chat-head__who > div { min-width: 0; flex: 1; }
+.chat-head__who h1 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.chat-tool, .chat-head__actions { flex-shrink: 0; }

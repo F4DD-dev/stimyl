@@ -100,6 +100,8 @@ async def guide(
     if draft.off_topic:
         return guided_notice(state, "off_topic")
     title = match_topic(draft.topic, titles)
+    if title is None and state.topic_title:
+        title = match_topic(state.topic_title, titles) or state.topic_title
     if title is None:
         return guided_notice(state, "unknown_topic", topics=True)
     explanation, example = _safe_text(draft, title)
