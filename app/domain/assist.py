@@ -25,6 +25,7 @@ class LessonDraft:
     original_answer: str = ""
     off_topic: bool = False
     unreadable: bool = False
+    direct_answer: str = ""
 
 
 @dataclass(frozen=True)

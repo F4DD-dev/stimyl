@@ -14,7 +14,14 @@ from app.domain.curriculum import topic_by_title
 from app.domain.images import MIME, image_kind, strip_metadata
 from app.domain.library import class_of_student, find_fragments
 from app.domain.tasks import GeneratedTask, generate_task
-from app.domain.training import TrainState, Turn, guided_lesson, guided_notice, guided_task
+from app.domain.training import (
+    TrainState,
+    Turn,
+    guided_direct,
+    guided_lesson,
+    guided_notice,
+    guided_task,
+)
 from app.llm.explainer import Explainer
 
 PRACTICE_ACTIONS = {"to_practice", "again", "skip"}
@@ -97,6 +104,9 @@ async def guide(
         return None
     if draft.unreadable:
         return guided_notice(state, "photo_unreadable")
+    direct = (draft.direct_answer or "").strip()
+    if direct:
+        return guided_direct(state, direct)
     has_lesson = bool(draft.explanation.strip() or draft.example.strip())
     if draft.off_topic and not has_lesson:
         return guided_notice(state, "off_topic")

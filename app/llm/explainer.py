@@ -256,6 +256,7 @@ class LlmTutor:
             original_answer=str(data.get("original_answer") or "").strip()[:64],
             off_topic=bool(data.get("off_topic")),
             unreadable=bool(data.get("unreadable")),
+            direct_answer=plain(str(data.get("direct_answer") or ""), 1200),
         )
 
     async def solve_many(self, tasks: list[str]) -> list[str | None]:

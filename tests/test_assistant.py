@@ -108,6 +108,20 @@ async def test_student_question_goes_to_model_and_stays_private(seeded, tutor):
     assert any("Сложи числители" in text for text in texts)
 
 
+async def test_direct_question_gets_plain_answer_without_lesson(seeded, tutor):
+    tutor.analyze_draft = LessonDraft(
+        topic=None,
+        explanation="",
+        example="",
+        task=None,
+        direct_answer="2 + 1680 = 1682",
+    )
+    await post_update(seeded, message(900002, "Алексей", "Сколько будет 2+1680", "q-direct"))
+    texts = [item["text"] for item in seeded.memory.sent]
+    assert any("1682" in text for text in texts)
+    assert not any("Задание" in text or "TASK" in text for text in texts)
+
+
 async def test_student_photo_is_downloaded_and_shown_to_model(seeded, tutor, monkeypatch):
     downloaded = []
 

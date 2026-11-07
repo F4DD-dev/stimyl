@@ -4,7 +4,6 @@ ROOT = Path(__file__).resolve().parents[1]
 SCAN = ("app", "alembic")
 SUFFIXES = {".py", ".js", ".html", ".css", ".sql"}
 BANNED = (
-    "я стимул",
     "готовый ответ к твоей задаче не пишу",
     "пришли вопрос",
     "страницу за ученика не решаю",

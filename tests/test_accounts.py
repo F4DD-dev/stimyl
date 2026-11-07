@@ -69,16 +69,14 @@ async def _count_users(api, external_id: str) -> int:
     return int(found or 0)
 
 
-async def test_consent_creates_one_user_and_does_not_enroll_without_a_class(seeded):
+async def test_role_pick_creates_user_and_enrolls_in_demo_class(seeded):
     api = seeded
     await post_update(api, _started(4242, "Ира"))
     assert await _count_users(api, "4242") == 0
-    assert "согласие" in api.memory.sent[-1]["text"].casefold()
+    assert "кто ты" in api.memory.sent[-1]["text"].casefold()
 
-    await post_update(api, _consent(4242, "Ира"))
-    again = _consent(4242, "Ира")
-    again["callback"]["callback_id"] = "consent-4242-again"
-    await post_update(api, again)
+    await post_update(api, callback(4242, "Ира", "role-4242", "pick:student"))
+    await post_update(api, callback(4242, "Ира", "role-4242-again", "pick:student"))
     assert await _count_users(api, "4242") == 1
 
     factory = api.app.state.session_factory
@@ -90,28 +88,26 @@ async def test_consent_creates_one_user_and_does_not_enroll_without_a_class(seed
         )
         from app.db.models import Enrollment
 
-        enrolled = await session.scalar(
-            select(func.count()).select_from(Enrollment).where(Enrollment.user_id == user.id)
+        row = await session.scalar(
+            select(Enrollment).where(Enrollment.user_id == user.id)
         )
+        klass = await session.get(SchoolClass, row.class_id) if row else None
     assert user.role == "student"
-    assert int(enrolled or 0) == 0
-    await auth_as(api, "900001")
-    report = await api.client.get("/api/teacher/class")
-    assert report.status_code == 200
-    assert "Ира" not in report.text
+    assert user.status == "active"
+    assert row is not None and row.status == "active"
+    assert klass is not None and klass.title == "8Б"
 
 
-async def test_start_payload_joins_only_after_consent(seeded):
+async def test_start_payload_still_lands_in_demo_class(seeded):
     api = seeded
     await auth_as(api, "900001")
     await post_update(api, _started(5151, "Петя", "8b-demo"))
-    await post_update(api, _consent(5151, "Петя"))
+    await post_update(api, callback(5151, "Петя", "role-5151", "pick:student"))
     report = await api.client.get("/api/teacher/class")
     assert report.status_code == 200
     body = report.json()
     names = [item["display_name"] for item in body["students"]]
-    assert "Петя" not in names
-    assert body["pending_students"][0]["display_name"] == "Петя"
+    assert "Петя" in names
 
 
 async def test_init_data_user_id_is_not_the_bot_user(seeded):

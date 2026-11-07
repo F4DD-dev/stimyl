@@ -221,6 +221,64 @@ async def _make_teacher(
     await session.flush()
 
 
+async def place_in_prototype(
+    session: AsyncSession, user: User, role: str
+) -> tuple[SchoolClass, Subject]:
+    """Роль из первых кнопок бота: сразу в классе 8Б, без школы, города и заявок.
+    Прототип — один класс, одобрение не нужно."""
+    school_class, subject = await ensure_prototype(session)
+    application = await session.get(JoinApplication, user.id)
+    if role == "teacher":
+        await _make_teacher(session, user, school_class, subject, application)
+    else:
+        await _make_student_active(session, user, school_class, application)
+    return school_class, subject
+
+
+async def _make_student_active(
+    session: AsyncSession,
+    user: User,
+    school_class: SchoolClass,
+    application: JoinApplication | None,
+) -> None:
+    now = datetime.now(UTC)
+    user.role = "student"
+    user.status = "active"
+    user.can_manage_school = False
+    user.test_signup = True
+    enrollment = await session.scalar(
+        select(Enrollment).where(
+            Enrollment.class_id == school_class.id,
+            Enrollment.user_id == user.id,
+        )
+    )
+    if enrollment is None:
+        session.add(Enrollment(class_id=school_class.id, user_id=user.id, status="active"))
+    else:
+        enrollment.status = "active"
+    if application is None:
+        session.add(
+            JoinApplication(
+                user_id=user.id,
+                wanted_role="student",
+                school_id=school_class.school_id,
+                class_id=school_class.id,
+                status="approved",
+                created_at=now,
+                reviewed_by=user.id,
+                reviewed_at=now,
+            )
+        )
+    else:
+        application.wanted_role = "student"
+        application.school_id = school_class.school_id
+        application.class_id = school_class.id
+        application.status = "approved"
+        application.reviewed_by = user.id
+        application.reviewed_at = now
+    await session.flush()
+
+
 async def _make_student(
     session: AsyncSession,
     user: User,

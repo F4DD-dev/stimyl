@@ -108,7 +108,6 @@ function topbar() {
     title: classTitle(),
     letter: initials(name),
     unread,
-    pickClass: true,
   });
 }
 

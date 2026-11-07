@@ -3,12 +3,11 @@
 import logging
 from dataclasses import dataclass
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.updates import Incoming
 from app.core.config import Settings
-from app.db.models import RuntimeFlag, User
+from app.db.models import User
 from app.domain.account_copy import (
     ALREADY,
     BLOCKED,
@@ -21,7 +20,6 @@ from app.domain.account_copy import (
     JOINED,
     UNLINKED,
     cabinet_text,
-    consent_text,
 )
 from app.domain.accounts import (
     BOT_PROVIDER,
@@ -37,10 +35,8 @@ from app.domain.accounts import (
     join_by_code,
     join_by_key,
     looks_like_token,
-    policy_url,
     remember_payload,
     start_application,
-    take_hint,
     touch,
 )
 from app.domain.directory import (
@@ -55,7 +51,13 @@ from app.domain.directory import (
     school_reply,
 )
 from app.domain.messages_ru import DISCLAIMER
-from app.domain.onboarding import accept_claim, register_phone, reject_claim, reviewer_name
+from app.domain.onboarding import (
+    accept_claim,
+    place_in_prototype,
+    register_phone,
+    reject_claim,
+    reviewer_name,
+)
 from app.domain.phone import normalize_phone, phone_from_vcard, verify_contact_hash
 from app.domain.school_admin import bot_applications, bot_my_class, bot_students
 
@@ -64,6 +66,18 @@ logger = logging.getLogger(__name__)
 CONSENT_YES = "consent_yes"
 CONSENT_NO_PAYLOAD = "consent_no"
 WEB_LOGIN = "web_login"
+PICK_TEACHER = "pick:teacher"
+PICK_STUDENT = "pick:student"
+
+ROLE_PROMPT = "Привет! Выбери, кто ты:"
+ROLE_BUTTONS = (("Я учитель", PICK_TEACHER), ("Я ученик", PICK_STUDENT))
+
+INTRO_TEXT = (
+    "Привет! Я Стимул — твой умный ИИ-помощник. Я помогаю учителям мгновенно "
+    "создавать тесты и следить за успеваемостью, а ученикам — практиковаться "
+    "и научиться щелкать сложные темы как орешки. Назначенные учителем задания "
+    "будут приходить прямо здесь!"
+)
 
 
 @dataclass
@@ -104,13 +118,6 @@ def bot_name(settings: Settings) -> str:
     if raw and all(ch.isalnum() or ch in "._-" for ch in raw):
         return raw
     return ""
-
-
-def _consent_reply(settings: Settings) -> GateReply:
-    return GateReply(
-        consent_text(policy_url(settings)),
-        (("Согласен", CONSENT_YES), ("Не сейчас", CONSENT_NO_PAYLOAD)),
-    )
 
 
 async def open_gate(
@@ -226,70 +233,43 @@ async def open_gate(
     return GateOutcome(user, replies, False)
 
 
-WELCOME_TEXT = (
-    "Привет! Я **Стимул** — твой интеллектуальный помощник по учёбе.\n\n"
-    "Напиши вопрос текстом или отправь фото страницы — объясню простыми словами, "
-    "покажу пример и дам короткую практику. Без готового ответа «на списать»: "
-    "сначала разбираем вместе, потом закрепляем.\n\n"
-    "А если ты учитель — соберу проверку по теме и покажу, кому нужна помощь, "
-    "не читая личные вопросы учеников.\n\n"
-    "Давай начнём?"
-)
-
-
-async def _welcome_once(session: AsyncSession, external: str) -> GateReply | None:
-    """Приветствие только при первом обращении. Флаг — чтобы не слать повторно."""
-    key = f"welcomed:{external}"[:64]
-    flag = await session.scalar(
-        select(RuntimeFlag).where(RuntimeFlag.key == key).with_for_update()
-    )
-    if flag is not None:
-        return None
-    session.add(RuntimeFlag(key=key, value="1"))
-    await session.flush()
-    return GateReply(WELCOME_TEXT)
-
-
 async def _without_account(
     session: AsyncSession, incoming: Incoming, settings: Settings
 ) -> GateOutcome:
-    welcome = await _welcome_once(session, incoming.max_user_id)
-
-    def greet(replies: list[GateReply]) -> GateOutcome:
-        if welcome is not None:
-            replies.insert(0, welcome)
-        if replies:
-            replies[0].text = f"{DISCLAIMER}\n\n{replies[0].text}"
-        return GateOutcome(None, replies, True)
-
+    """Первое касание бота: роль → класс 8Б → приветствие. Без школы и города."""
+    action = _named_action(incoming.payload)
+    if action in {PICK_TEACHER, PICK_STUDENT}:
+        return await _role_pick(session, incoming, settings, action == PICK_TEACHER)
     if incoming.payload == CONSENT_YES:
         user = await accept_consent(session, incoming.max_user_id, incoming.name, settings)
         replies = [
             GateReply(
                 "Стимул на связи. Сначала подтверди номер кнопкой ниже: так учитель увидит заявку."
-            )
+            ),
+            _ask_phone(),
         ]
-        payload = await take_hint(session, incoming.max_user_id)
-        if payload:
-            joined = await join_by_key(
-                session,
-                user,
-                payload,
-                needs_approval=settings.class_join_requires_approval,
-            )
-            reply = _join_reply(joined, unknown=True)
-            if reply:
-                replies.append(GateReply(reply))
-        if user.phone_hash is None or not await placed(session, user):
-            replies.append(_ask_phone())
-        else:
-            replies.append(GateReply("Можно заниматься."))
-        if welcome is not None:
-            replies.insert(0, welcome)
         return GateOutcome(user, replies, True)
     if incoming.payload == CONSENT_NO_PAYLOAD:
-        return greet([GateReply(CONSENT_NO)])
-    return greet([_consent_reply(settings)])
+        return GateOutcome(None, [GateReply(CONSENT_NO)], True)
+    return GateOutcome(None, [GateReply(ROLE_PROMPT, ROLE_BUTTONS)], True)
+
+
+async def _role_pick(
+    session: AsyncSession, incoming: Incoming, settings: Settings, teacher: bool
+) -> GateOutcome:
+    user = await accept_consent(session, incoming.max_user_id, incoming.name, settings)
+    await place_in_prototype(session, user, "teacher" if teacher else "student")
+    await touch(session, user)
+    replies = [GateReply(f"{INTRO_TEXT}\n\n{DISCLAIMER}")]
+    if user.phone_hash is None:
+        replies.append(_ask_phone())
+    elif teacher:
+        opened = await _send_code(session, user, settings)
+        replies.extend(opened.replies)
+    else:
+        opened = await _send_app(session, user, settings)
+        replies.extend(opened.replies)
+    return GateOutcome(user, replies, True)
 
 
 def _join_reply(joined, *, unknown: bool) -> str | None:

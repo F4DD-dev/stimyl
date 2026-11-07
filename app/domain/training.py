@@ -277,6 +277,13 @@ def guided_task(state: TrainState, task: GeneratedTask) -> Turn:
     return Turn(current, [reply])
 
 
+def guided_direct(state: TrainState, text: str) -> Turn:
+    """Прямой ответ на вопрос ученика: обычная реплика без урока и кнопок."""
+    current = TrainState(**asdict(state))
+    current.version += 1
+    return Turn(current, [Reply(text)])
+
+
 def guided_notice(state: TrainState, key: str, *, topics: bool = False) -> Turn:
     current = TrainState(**asdict(state))
     buttons = tuple(ButtonSpec(item.title, "pick", item.title) for item in TOPICS) if topics else ()
