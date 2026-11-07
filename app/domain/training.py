@@ -1,5 +1,5 @@
 import random
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 from app.domain.answers import answers_match, is_attempt, parse_answer
 from app.domain.curriculum import TOPICS, TopicMaterial, classify_topic, topic_by_title
@@ -37,6 +37,7 @@ class Reply:
     buttons: tuple[ButtonSpec, ...] = ()
     replaceable_lead: bool = False
     topic_title: str | None = None
+    kind: str = ""
 
     @property
     def text(self) -> str:
@@ -77,6 +78,16 @@ class TrainState:
     pending_step: str | None = None
     pending_prompt: str | None = None
     pending_text: str | None = None
+    # Условия, которые ученик уже решал по текущей теме. Заполняет вызывающий код из attempts.
+    seen_prompts: list[str] = field(default_factory=list)
+
+
+SEEN_LIMIT = 200
+
+
+def _remember_prompt(state: TrainState, prompt: str | None) -> None:
+    if prompt and prompt not in state.seen_prompts:
+        state.seen_prompts = [*state.seen_prompts, prompt][-SEEN_LIMIT:]
 
 
 @dataclass
@@ -202,6 +213,8 @@ def _open_topic(state: TrainState, title: str) -> Turn:
     material = topic_by_title(title)
     if material is None:
         return Turn(state, [Reply(say(state, "unknown_topic"))])
+    if state.topic_title != material.title:
+        state.seen_prompts = []
     state.topic_title = material.title
     state.step = "explain"
     state.example_index = 0
@@ -221,6 +234,8 @@ def _open_topic(state: TrainState, title: str) -> Turn:
 
 def _reset_topic(state: TrainState, title: str) -> None:
     state.mode = "training"
+    if state.topic_title != title:
+        state.seen_prompts = []
     state.topic_title = title
     state.example_index = 0
     state.task_index = 0
@@ -315,7 +330,7 @@ def _task_buttons() -> tuple[ButtonSpec, ...]:
 
 
 def _practice(state: TrainState, material: TopicMaterial, rng: random.Random) -> Turn:
-    task = generate_task(material.title, state.level, rng)
+    task = generate_task(material.title, state.level, rng, set(state.seen_prompts))
     state.step = "check"
     state.task_index += 1
     state.hint_step = 0
@@ -335,7 +350,7 @@ def _hint(state: TrainState) -> Turn:
     else:
         state.hint_step = 2
         text = state.pending_step or say(state, "step_fallback")
-    return Turn(state, [Reply(text, buttons=_task_buttons())])
+    return Turn(state, [Reply(text, buttons=_task_buttons(), kind="hint")])
 
 
 def _other_topic(state: TrainState) -> Turn:
@@ -407,6 +422,7 @@ def _grade(state: TrainState, answer: str, rng: random.Random, force: bool = Fal
         hint=hint,
         hinted=state.hint_step > 0,
     )
+    _remember_prompt(state, state.pending_prompt)
     if third and topic_by_title(state.topic_title or "") is not None:
         return _third_miss(state, rng, draft)
     if not correct:
@@ -427,18 +443,18 @@ def _grade(state: TrainState, answer: str, rng: random.Random, force: bool = Fal
 def _third_miss(state: TrainState, rng: random.Random, draft: AttemptDraft) -> Turn:
     material = topic_by_title(state.topic_title or "")
     assert material is not None
-    example = generate_task(material.title, state.level, rng)
-    for _ in range(6):
-        if example.prompt != draft.prompt:
-            break
-        example = generate_task(material.title, state.level, rng)
+    example = generate_task(material.title, state.level, rng, {*state.seen_prompts, draft.prompt})
+    _remember_prompt(state, example.prompt)
     fresh = _practice(state, material, rng)
     shown = similar_example(state, example.prompt, example.answer)
     return Turn(state, [Reply(shown), *fresh.replies], attempt=draft)
 
 
 def present_turn(turn: Turn, status_line: str | None = None) -> dict:
-    """Lesson payload for the student. Never includes the reference answer."""
+    """Lesson payload for the student. Never includes the reference answer.
+
+    While a task is open, `task` is always its prompt: hints, feedback and notices
+    go to their own fields and never replace the task text."""
     reply = turn.replies[-1] if turn.replies else None
     lead = reply.lead if reply else ""
     explanation = None
@@ -446,22 +462,23 @@ def present_turn(turn: Turn, status_line: str | None = None) -> dict:
     task = None
     feedback = None
     notice = None
+    hint = None
     if STALE_MARK in lead:
         notice = lead
-        if turn.state.step == "check":
-            task = turn.state.pending_prompt
     elif turn.attempt is not None and not lead.startswith(TASK_MARK):
         feedback = lead or None
-        task = turn.attempt.prompt or None
     elif reply is not None and (reply.replaceable_lead or reply.topic_title):
         explanation, example = _explain_parts(reply)
-    elif turn.state.step == "check":
-        if lead.startswith(TASK_MARK):
-            task = lead.split(TASK_MARK, 1)[1].strip() or None
-        else:
-            task = lead or None
+    elif lead.startswith(TASK_MARK):
+        task = lead.split(TASK_MARK, 1)[1].strip() or None
+    elif reply is not None and reply.kind == "hint":
+        hint = lead or None
     else:
         notice = lead or None
+    if turn.state.step == "check" and turn.state.pending_prompt:
+        task = turn.state.pending_prompt
+    elif task is None and turn.attempt is not None:
+        task = turn.attempt.prompt or None
     earlier = next((item for item in turn.replies[:-1] if item.topic_title), None)
     if earlier is not None and explanation is None:
         explanation, example = _explain_parts(earlier)
@@ -477,6 +494,7 @@ def present_turn(turn: Turn, status_line: str | None = None) -> dict:
         "explanation": explanation,
         "example": example,
         "task": task,
+        "hint": hint,
         "feedback": feedback,
         "correct": None if turn.attempt is None else turn.attempt.correct,
         "given": None if turn.attempt is None else turn.attempt.answer,
@@ -510,7 +528,14 @@ def present_state(state: TrainState) -> dict:
         return present_turn(Turn(clone, [_explain_reply(material, clone.example_index)]))
     if state.step == "check" and state.pending_prompt:
         clone = TrainState(**asdict(state))
-        return present_turn(Turn(clone, [Reply(f"{TASK_MARK} {clone.pending_prompt}")]))
+        view = present_turn(
+            Turn(clone, [Reply(f"{TASK_MARK} {clone.pending_prompt}", buttons=_task_buttons())])
+        )
+        if clone.hint_step >= 2:
+            view["hint"] = clone.pending_step
+        elif clone.hint_step == 1:
+            view["hint"] = clone.pending_hint
+        return view
     return _blank_lesson(state)
 
 
@@ -523,6 +548,7 @@ def _blank_lesson(state: TrainState) -> dict:
         "explanation": None,
         "example": None,
         "task": None,
+        "hint": None,
         "feedback": None,
         "correct": None,
         "given": None,

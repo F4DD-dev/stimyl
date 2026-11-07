@@ -1,6 +1,6 @@
 from sqlalchemy import func, select
 
-from app.db.models import LearningSession, Message
+from app.db.models import Attempt, LearningSession, Message
 from tests.support import auth_as
 
 
@@ -96,6 +96,48 @@ async def test_training_checks_the_answer_and_hides_the_question(seeded):
     for secret in ("17+4", "нет-ТАЙНА", "СЕКРЕТ"):
         assert secret not in report.text
     denied = await api.client.get("/api/student/progress")
+    assert denied.status_code == 403
+
+
+async def test_attempts_history_shows_only_own_rows_without_reference(seeded):
+    api = seeded
+    await login(api, 900004, "Кирилл")
+    await api.client.post("/api/student/practice", json={"text": "линейные уравнения"})
+    await api.client.post("/api/student/practice", json={"action": "to_practice"})
+    await api.client.post("/api/student/practice", json={"text": "777001"})
+
+    await login(api, 900002, "Алексей")
+    await api.client.post("/api/student/practice", json={"text": "дроби"})
+    practiced = await api.client.post("/api/student/practice", json={"action": "to_practice"})
+    prompt = practiced.json()["task"]
+    wrong = await api.client.post("/api/student/practice", json={"text": "555/1"})
+    assert wrong.json()["task"] == prompt
+    hinted = await api.client.post(
+        "/api/student/practice", json={"action": "hint", "version": wrong.json()["version"]}
+    )
+    assert hinted.json()["task"] == prompt
+    assert hinted.json()["hint"]
+    assert (await api.client.get("/api/student/lesson")).json()["task"] == prompt
+
+    response = await api.client.get("/api/student/attempts")
+    assert response.status_code == 200, response.text
+    items = response.json()["items"]
+    assert [item["answer"] for item in items] == ["555/1"]
+    assert items[0]["prompt"] == prompt
+    assert items[0]["correct"] is False
+    assert items[0]["topic"] == "Дроби"
+    assert "777001" not in response.text
+    for item in items:
+        assert "expected" not in item
+        assert "reference" not in item
+        assert "feedback" not in item
+    factory = api.app.state.session_factory
+    async with factory() as session:
+        expected = await session.scalar(select(Attempt.expected).where(Attempt.answer == "555/1"))
+    assert f'"{expected}"' not in response.text
+
+    await login(api, 900001, "Марина")
+    denied = await api.client.get("/api/student/attempts")
     assert denied.status_code == 403
 
 

@@ -1,6 +1,6 @@
-import { attachWorkResource, createSubject, createTopic, deleteMaterial, deleteWorkResource, getAssignments, getClass, getMaterials, getNotices, getProgram, getWorkResult, postDraft, publishWork, saveWork, setGroupChat, setNextTopic, uploadMaterial } from "./api.js?v=7";
-import { chatTitle, clearChatPhoto, loadChats, newChat, openChat, sendChat, showChatList } from "./chat.js?v=4";
-import { renderManage } from "./manage.js?v=12";
+import { attachWorkResource, createSubject, createTopic, deleteMaterial, deleteWorkResource, getAssignments, getClass, getMaterials, getNotices, getProgram, getWorkResult, postDraft, publishWork, saveWork, setGroupChat, setNextTopic, uploadMaterial } from "./api.js?v=8";
+import { chatTitle, clearChatPhoto, loadChats, newChat, openChat, sendChat, showChatList } from "./chat.js?v=5";
+import { renderManage } from "./manage.js?v=13";
 import { go, refresh, store } from "./store.js?v=5";
 import { themePref } from "./theme.js?v=1";
 import {

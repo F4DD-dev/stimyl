@@ -144,6 +144,8 @@ export const approveJoin = (studentId) =>
 
 export const getProgress = () => request("/api/student/progress");
 export const getHistory = () => request("/api/student/history");
+export const getAttempts = (before) =>
+  request(before ? `/api/student/attempts?before=${encodeURIComponent(before)}` : "/api/student/attempts");
 export const getLesson = () => request("/api/student/lesson");
 
 const LLM_WAIT = 80000;

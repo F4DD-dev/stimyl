@@ -29,6 +29,7 @@ from app.db.models import (
 )
 from app.domain.account_copy import PHOTO_OFF
 from app.domain.assist import mentions
+from app.domain.attempts import solved_prompts
 from app.domain.curriculum import topic_by_title
 from app.domain.messages_ru import DISCLAIMER, LINES, SUBMISSION_UNAVAILABLE
 from app.domain.progress import STATUS_LABEL, NextStep, TopicProgress, choose_next, streak
@@ -350,6 +351,7 @@ async def _load_state(
         pending_step=row.pending_step,
         pending_prompt=row.pending_prompt,
         pending_text=row.pending_text,
+        seen_prompts=await solved_prompts(session, user.id, title),
     )
 
 
@@ -933,6 +935,7 @@ async def student_turn(
             "explanation": note,
             "example": None,
             "task": None,
+            "hint": None,
             "feedback": None,
             "correct": None,
             "given": None,

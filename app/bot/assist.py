@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Message, Topic
 from app.domain.assist import LessonDraft, TaskDraft, leaks, match_topic, same_problem
+from app.domain.attempts import solved_prompts
 from app.domain.curriculum import topic_by_title
 from app.domain.images import MIME, image_kind, strip_metadata
 from app.domain.library import class_of_student, find_fragments
@@ -121,7 +122,12 @@ async def guide(
         else:
             return guided_notice(state, "unknown_topic", topics=True)
     explanation, example = _safe_text(draft, title)
-    task = await _pick_task(tutor, draft, title, state.level, rng)
+    seen = (
+        set(state.seen_prompts)
+        if title == state.topic_title
+        else set(await solved_prompts(session, user_id, title))
+    )
+    task = await _pick_task(tutor, draft, title, state.level, rng, seen)
     return guided_lesson(state, title, explanation, example, task)
 
 
@@ -150,11 +156,12 @@ async def _pick_task(
     title: str,
     level: str,
     rng: random.Random | None,
+    seen: set[str] | None = None,
 ) -> GeneratedTask | None:
     """Тема из программы — задание из шаблона, эталон считает код, запроса к модели нет.
     Тема вне банка — задание модели, если второе решение дало тот же ответ."""
     if topic_by_title(title) is not None:
-        return generate_task(title, level, rng or random.Random())
+        return generate_task(title, level, rng or random.Random(), seen)
     candidate = draft.task
     if candidate is None or same_problem(candidate, draft.original_answer):
         return None
@@ -169,6 +176,8 @@ async def practice(
     class_id = await class_of_student(session, user_id)
     fragments = await find_fragments(session, class_id, title, limit=2)
     made = await tutor.make_task(title, state.level, fragments)
+    if made is not None and made.prompt in state.seen_prompts:
+        made = await tutor.make_task(title, state.level, fragments) or made
     if made is None:
         return guided_notice(state, "no_task", topics=True)
     return guided_task(state, _as_task(made, state.level))

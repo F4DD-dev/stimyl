@@ -1577,6 +1577,15 @@ button.brand { border: 0; padding: 0; text-align: left; }
 .history-row:last-child { border-bottom: 0; }
 .history-row strong, .history-row span { display: block; }
 .history-row span { margin-top: 4px; color: var(--muted); font-size: 13px; }
+.attempt-row { display: grid; grid-template-columns: 24px 1fr; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.attempt-row:last-child { border-bottom: 0; }
+.attempt-row__mark { font-size: 18px; font-weight: 720; line-height: 1.3; }
+.attempt-row strong, .attempt-row span, .attempt-row small { display: block; }
+.attempt-row strong { font-weight: 600; overflow-wrap: anywhere; }
+.attempt-row span { margin-top: 4px; font-size: 14px; }
+.attempt-row small { margin-top: 2px; color: var(--muted); font-size: 12px; }
+.attempts .btn { margin-top: 10px; }
+.hint-card { border: 1px dashed var(--line); }
 .work-sheet { display: flex; flex-direction: column; gap: 16px; margin-bottom: 16px; }
 .work-sheet section {
   padding: 16px;

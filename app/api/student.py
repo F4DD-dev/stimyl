@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import db_session, user_from_cookie
 from app.bot.service import current_lesson, student_history, student_progress, student_turn
 from app.domain import chats as chat_store
+from app.domain.attempts import HISTORY_LIMIT, student_attempts
 from app.domain.images import image_kind
 from app.domain.messages_ru import SUBMISSION_UNAVAILABLE
 
@@ -22,6 +23,7 @@ _LESSON_PAYLOAD_KEYS = (
     "explanation",
     "example",
     "task",
+    "hint",
     "feedback",
     "correct",
     "given",
@@ -69,6 +71,18 @@ async def history(
 ) -> dict:
     student = await user_from_cookie(request, session, "student")
     return await student_history(session, student)
+
+
+@router.get("/api/student/attempts")
+async def attempts(
+    request: Request,
+    before: int | None = Query(default=None, ge=1),
+    limit: int = Query(default=HISTORY_LIMIT, ge=1, le=50),
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Решённые примеры текущего ученика. Эталон ответа не отдаём."""
+    student = await user_from_cookie(request, session, "student")
+    return await student_attempts(session, student.id, limit=limit, before=before)
 
 
 @router.get("/api/student/lesson")

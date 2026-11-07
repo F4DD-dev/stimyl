@@ -171,6 +171,65 @@ def test_public_view_hides_the_reference():
     assert snapshot["feedback"] is None
 
 
+def test_task_text_survives_wrong_answer_and_hints():
+    numbers = __import__("random").Random(3)
+    opened = reduce_turn(TrainState(), StudentText("дроби"), numbers)
+    practiced = reduce_turn(opened.state, Action("to_practice"), numbers)
+    prompt = practiced.state.pending_prompt
+    assert present_turn(practiced)["task"] == prompt
+    wrong = reduce_turn(practiced.state, StudentText("999"), numbers)
+    wrong_view = present_turn(wrong)
+    assert wrong_view["task"] == prompt
+    assert wrong_view["feedback"]
+    assert wrong_view["awaiting_answer"] is True
+    hinted = reduce_turn(wrong.state, Action("hint"), numbers)
+    hint_view = present_turn(hinted)
+    assert hint_view["task"] == prompt
+    assert hint_view["hint"] and hint_view["hint"] != prompt
+    assert hint_view["feedback"] is None
+    step = reduce_turn(hinted.state, Action("hint"), numbers)
+    assert present_turn(step)["task"] == prompt
+    unsure = reduce_turn(step.state, StudentText("не знаю"), numbers)
+    assert present_turn(unsure)["task"] == prompt
+    stale = reduce_turn(step.state, Action("hint", version=0), numbers)
+    assert present_turn(stale)["task"] == prompt
+    snapshot = present_state(step.state)
+    assert snapshot["task"] == prompt
+    assert snapshot["hint"]
+    for view in (wrong_view, hint_view, snapshot):
+        assert "pending_answer" not in view
+        assert "expected" not in view
+
+
+def test_practice_skips_prompts_the_student_already_solved():
+    from random import Random
+
+    from app.domain.tasks import generate_task
+
+    first = generate_task("Дроби", "easy", Random(5))
+    again = generate_task("Дроби", "easy", Random(5), {first.prompt})
+    assert again.prompt != first.prompt
+    pool = {generate_task("Геометрия", "easy", Random(seed)).prompt for seed in range(400)}
+    fallback = generate_task("Геометрия", "easy", Random(1), pool)
+    assert fallback.prompt and fallback.answer
+
+    opened = reduce_turn(TrainState(), StudentText("дроби"), Random(7))
+    plain = reduce_turn(opened.state, Action("to_practice"), Random(7))
+    seen = TrainState(**{**opened.state.__dict__, "seen_prompts": [plain.state.pending_prompt]})
+    fresh = reduce_turn(seen, Action("to_practice"), Random(7))
+    assert fresh.state.pending_prompt != plain.state.pending_prompt
+    graded = reduce_turn(fresh.state, StudentText("0"), Random(7))
+    assert fresh.state.pending_prompt in graded.state.seen_prompts
+    other = reduce_turn(graded.state, Action("pick", "Геометрия"))
+    assert other.state.seen_prompts == []
+
+
+def test_stimul_draft_has_no_duplicate_prompts():
+    draft = build_stimul_draft("Дроби", "Проверить", 12, "normal", "class", [])
+    prompts = [item["prompt"] for item in draft["items"]]
+    assert len(set(prompts)) == len(prompts)
+
+
 def test_check_draft_comes_from_the_bank_and_is_not_stored():
     draft = build_check_draft("Дроби", "Проверить общий знаменатель", 4, "normal", "class", [])
     assert draft is not None

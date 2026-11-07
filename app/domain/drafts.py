@@ -74,8 +74,10 @@ def build_stimul_draft(
     level = "hard" if difficulty == "hard" else "easy"
     rng = random.Random()
     items = []
+    used: set[str] = set()
     for index in range(count):
-        task = generate_task(family, level, rng)
+        task = generate_task(family, level, rng, used)
+        used.add(task.prompt)
         items.append(
             {
                 "number": index + 1,

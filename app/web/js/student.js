@@ -1,5 +1,5 @@
-import { answerWork, getHistory, getProgress, getStudentWorks, practice, sendPhoto } from "./api.js?v=7";
-import { chatTitle, clearChatPhoto, loadChats, newChat, openChat, sendChat, showChatList } from "./chat.js?v=4";
+import { answerWork, getAttempts, getHistory, getProgress, getStudentWorks, practice, sendPhoto } from "./api.js?v=8";
+import { chatTitle, clearChatPhoto, loadChats, newChat, openChat, sendChat, showChatList } from "./chat.js?v=5";
 import { sampleLesson } from "./preview.js";
 import { go, refresh, store } from "./store.js?v=5";
 import { themePref } from "./theme.js?v=1";
@@ -299,7 +299,7 @@ export function renderLesson() {
   const photoNote = lesson?.photo_received && lesson?.explanation
     ? `<p class="hint">${esc(lesson.photo_note || "Фото получили. Страницу не решаем.")}</p>`
     : "";
-  const answerForm = lesson?.awaiting_answer && !lesson.feedback
+  const answerForm = lesson?.awaiting_answer
     ? `<form id="answer-form" class="stack tight">
         <label class="field-label" for="answer">Твой ответ</label>
         <input id="answer" class="field" value="${esc(store.answer)}" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="send" ${disabled()}>
@@ -324,7 +324,8 @@ export function renderLesson() {
     ${photoNote}
     ${lesson?.explanation ? `<section class="card"><h2>Простыми словами</h2><p>${nl(lesson.explanation)}</p></section>` : ""}
     ${lesson?.example ? `<section class="card card-flat"><h2>Пример</h2><p>${nl(lesson.example)}</p></section>` : ""}
-    ${lesson?.task ? `<section class="card"><h2>Задание</h2><p>${nl(lesson.task)}</p>${answerForm}</section>` : ""}
+    ${lesson?.task ? `<section class="card task-card"><h2>Задание</h2><p>${nl(lesson.task)}</p>${answerForm}</section>` : ""}
+    ${lesson?.hint ? `<section class="card card-flat hint-card" role="status"><h2>Подсказка</h2><p>${nl(lesson.hint)}</p></section>` : ""}
     ${lesson?.feedback ? `<section class="card feedback ${lesson.correct ? "is-ok" : "is-bad"}" role="status">
       <h2>${lesson.correct ? "Верно" : "Есть ошибка"}</h2>
       <p>${nl(lesson.feedback)}</p>
@@ -333,7 +334,7 @@ export function renderLesson() {
     </section>` : ""}
     ${actionButtons(lesson?.actions)}
     ${pickChips(lesson?.actions)}
-    ${lesson?.notice && !(lesson.actions || []).some((item) => item.action === "pick") ? `<div class="chips">${(store.progress?.topics || []).map((topic) => `<button class="chip" type="button" data-act="pick" data-topic="${esc(topic.title)}" ${disabled()}>${esc(topic.title)}</button>`).join("")}</div>` : ""}
+    ${lesson?.notice && !lesson.task && !(lesson.actions || []).some((item) => item.action === "pick") ? `<div class="chips">${(store.progress?.topics || []).map((topic) => `<button class="chip" type="button" data-act="pick" data-topic="${esc(topic.title)}" ${disabled()}>${esc(topic.title)}</button>`).join("")}</div>` : ""}
     ${idleHelp}
     ${lesson?.topic && !lesson.feedback && !(lesson.actions || []).some((item) => item.action === "more_example") ? `<button class="btn btn-ghost" type="button" data-act="lesson-action" data-action="more_example" ${disabled()}>Объясни иначе</button>` : ""}
     <button class="btn btn-ghost" type="button" data-act="exit-lesson">К моему прогрессу</button>
@@ -377,6 +378,7 @@ export function renderMap() {
         ${store.historyError ? `<p class="field-error">${esc(store.historyError.message)}</p>` : ""}
         ${history.length ? `<div class="topic-list">${history.map(historyRow).join("")}</div>` : `<p class="quiet">Проверенных занятий пока нет.</p>`}
       </section>
+      ${attemptsSection()}
     </div>
   </div>`;
 }
@@ -389,6 +391,36 @@ function historyRow(item) {
     <strong>${esc(item.topic || "Тема не выбрана")}</strong>
     <span>${esc(when)} · ${esc(mode)} · ${esc(result)}</span>
   </article>`;
+}
+
+function attemptRow(item) {
+  const meta = [item.topic, formatWhen(item.created_at), item.hinted ? "с подсказкой" : "", item.mode === "submission" ? "сдача" : ""]
+    .filter(Boolean)
+    .join(" · ");
+  return `<article class="attempt-row ${item.correct ? "is-ok" : "is-bad"}">
+    <span class="attempt-row__mark ${item.correct ? "bubble-ok" : "bubble-bad"}" aria-label="${item.correct ? "Верно" : "Ошибка"}">${item.correct ? "✓" : "✗"}</span>
+    <div>
+      <strong>${nl(item.prompt)}</strong>
+      <span>Твой ответ: <b class="${item.correct ? "bubble-ok" : "bubble-bad"}">${esc(item.answer || "—")}</b></span>
+      ${meta ? `<small>${esc(meta)}</small>` : ""}
+    </div>
+  </article>`;
+}
+
+function attemptsSection() {
+  const items = store.attempts?.items || [];
+  const misses = items.filter((item) => !item.correct).length;
+  return `<section class="study-group attempts">
+    <div class="section-heading">
+      <div><span class="eyebrow">Только мои ответы</span><h2>История решённых примеров</h2></div>
+    </div>
+    ${items.length && misses ? `<p class="quiet">Ошибок в списке: ${misses}. Их стоит разобрать ещё раз.</p>` : ""}
+    ${store.attemptsError ? `<p class="field-error">${esc(store.attemptsError.message)}</p>` : ""}
+    ${items.length
+    ? `<div class="topic-list">${items.map(attemptRow).join("")}</div>`
+    : `<p class="quiet">Пока пусто. Реши первое задание, и оно появится здесь.</p>`}
+    ${store.attempts?.more ? `<button class="btn btn-ghost" type="button" data-act="attempts-more" ${store.attemptsBusy ? "disabled" : ""}>Показать ещё</button>` : ""}
+  </section>`;
 }
 
 function formatWhen(iso) {
@@ -460,6 +492,7 @@ export function renderProfile() {
         </div>
         ${icon("chevron")}
       </button>
+      ${attemptsSection()}
       <div class="settings-card" style="margin-top:14px">
         <div class="settings-card__heading">
           <span class="eyebrow">Оформление</span>
@@ -562,6 +595,7 @@ function lessonBubble(payload) {
   if (payload.explanation) parts.push(`<p>${nl(payload.explanation)}</p>`);
   if (payload.example) parts.push(`<p class="hint">Пример: ${nl(payload.example)}</p>`);
   if (payload.task) parts.push(`<p><b>Задание:</b> ${nl(payload.task)}</p>`);
+  if (payload.hint) parts.push(`<p class="hint"><b>Подсказка:</b> ${nl(payload.hint)}</p>`);
   if (payload.feedback) {
     parts.push(`<p class="${payload.correct ? "bubble-ok" : "bubble-bad"}"><b>${payload.correct ? "Верно" : "Есть ошибка"}:</b> ${nl(payload.feedback)}</p>`);
   }
@@ -697,7 +731,7 @@ export async function submitChat() {
     photo,
     onReply: (reply) => {
       if (reply && reply.ok !== false) {
-        store.lesson = reply;
+        store.lesson = keepTask(reply);
         store.openLesson = reply;
         rememberProgress();
       }
@@ -856,7 +890,7 @@ export function openNext() {
 
 export function resume() {
   store.lessonMode = "training";
-  store.lesson = store.openLesson;
+  store.lesson = keepTask(store.openLesson);
   store.lessonError = null;
   go("lesson");
 }
@@ -930,14 +964,43 @@ export function retryLesson() {
   else refresh();
 }
 
+// Пока задание открыто, его текст не пропадает, даже если ответ сервера пришёл без него.
+function keepTask(lesson) {
+  if (!lesson) return lesson;
+  if (lesson.task) store.lastTask = { topic: lesson.topic || null, task: lesson.task };
+  else if (lesson.awaiting_answer && store.lastTask && store.lastTask.topic === (lesson.topic || null)) {
+    lesson.task = store.lastTask.task;
+  } else if (!lesson.awaiting_answer) store.lastTask = null;
+  return lesson;
+}
+
 async function rememberProgress() {
   try {
     store.progress = await getProgress();
     store.progressError = null;
     store.history = await getHistory();
     store.historyError = null;
+    store.attempts = await getAttempts();
+    store.attemptsError = null;
   } catch {
     // The lesson result stays on screen even if the refresh fails.
+  }
+}
+
+export async function loadMoreAttempts() {
+  const items = store.attempts?.items || [];
+  if (!items.length || !store.attempts?.more || store.attemptsBusy) return;
+  store.attemptsBusy = true;
+  refresh();
+  try {
+    const next = await getAttempts(items[items.length - 1].id);
+    store.attempts = { items: [...items, ...(next.items || [])], more: Boolean(next.more) };
+    store.attemptsError = null;
+  } catch (error) {
+    store.attemptsError = error;
+  } finally {
+    store.attemptsBusy = false;
+    refresh();
   }
 }
 
@@ -977,6 +1040,7 @@ export async function flush() {
       lesson.explanation = lesson.explanation || previous.explanation;
       lesson.example = lesson.example || previous.example;
     }
+    keepTask(lesson);
     store.lesson = lesson;
     store.openLesson = lesson;
     store.answer = "";

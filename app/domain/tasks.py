@@ -378,10 +378,22 @@ _STEPS = {
 }
 
 
-def generate_task(title: str, level: str, rng: random.Random) -> GeneratedTask:
+FRESH_TRIES = 10
+
+
+def generate_task(
+    title: str,
+    level: str,
+    rng: random.Random,
+    exclude: set[str] | frozenset[str] | None = None,
+) -> GeneratedTask:
+    """Задание, которого нет в exclude. Пул кончился — отдаём последний вариант."""
     builders = TEMPLATES[title]
-    chosen = builders[rng.randrange(len(builders))]
-    task = chosen(rng, "hard" if level == "hard" else "easy")
+    for _ in range(FRESH_TRIES):
+        chosen = builders[rng.randrange(len(builders))]
+        task = chosen(rng, "hard" if level == "hard" else "easy")
+        if not exclude or task.prompt not in exclude:
+            break
     return GeneratedTask(
         task.prompt,
         task.answer,

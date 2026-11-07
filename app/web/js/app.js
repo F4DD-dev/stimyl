@@ -1,4 +1,4 @@
-import { approveJoin, deleteChat, getHistory, getLesson, getNotices, getProgress, getSession, getStudentWorks, joinClass, openSession, openTicket, pinChat, readNotice, renameMe, setCsrf } from "./api.js?v=7";
+import { approveJoin, deleteChat, getAttempts, getHistory, getLesson, getNotices, getProgress, getSession, getStudentWorks, joinClass, openSession, openTicket, pinChat, readNotice, renameMe, setCsrf } from "./api.js?v=8";
 import { previewRole, studentPreview, teacherPreview } from "./preview.js?v=10";
 import { applyTheme, setThemePref, themePref } from "./theme.js?v=1";
 import {
@@ -6,6 +6,7 @@ import {
   clearPhoto,
   exitLesson,
   flush,
+  loadMoreAttempts,
   openNext,
   openStudentChat,
   openSubmission,
@@ -22,9 +23,9 @@ import {
   submitAnswer,
   submitQuestion,
   takePhoto,
-} from "./student.js?v=16";
+} from "./student.js?v=17";
 import { go, refresh, store, subscribe } from "./store.js?v=5";
-import { clearChatPhoto, loadChats, newChat, openChat, takeChatPhoto } from "./chat.js?v=4";
+import { clearChatPhoto, loadChats, newChat, openChat, takeChatPhoto } from "./chat.js?v=5";
 import {
   addMaterial,
   autosaveDraft,
@@ -78,8 +79,8 @@ import {
   wizardGoto,
   wizardNext,
   writeOwn,
-} from "./teacher.js?v=17";
-import { acceptOne, appoint, changePerson, loadManage, rejectOne } from "./manage.js?v=12";
+} from "./teacher.js?v=18";
+import { acceptOne, appoint, changePerson, loadManage, rejectOne } from "./manage.js?v=13";
 import { brand, confirmDialog, esc, icon, mark, skeleton, toast } from "./ui.js?v=5";
 
 const TITLES = {
@@ -223,17 +224,20 @@ async function settle(fn) {
 }
 
 async function loadStudent() {
-  const [progress, history, lesson, works, notices] = await Promise.all([
+  const [progress, history, lesson, works, notices, attempts] = await Promise.all([
     settle(getProgress),
     settle(getHistory),
     settle(getLesson),
     settle(getStudentWorks),
     settle(getNotices),
+    settle(getAttempts),
   ]);
   store.progress = progress.value;
   store.progressError = progress.error;
   store.history = history.value;
   store.historyError = history.error;
+  store.attempts = attempts.value;
+  store.attemptsError = attempts.error;
   store.openLesson = lesson.value;
   store.works = works.value;
   store.worksError = works.error;
@@ -1104,6 +1108,10 @@ async function onAction(act, button) {
       store.loading = false;
       refresh();
     }
+    return;
+  }
+  if (act === "attempts-more") {
+    await loadMoreAttempts();
     return;
   }
   if (store.busy && !["exit-lesson", "wizard-back"].includes(act)) return;
