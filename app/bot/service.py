@@ -832,6 +832,9 @@ async def student_turn(
     title_to_id = {item.title: item.id for item in topics}
     id_to_title = {item.id: item.title for item in topics}
     row, state = await _load_state(session, user, id_to_title)
+    if row is not None and row.mode == "submission" and row.step == "done":
+        row.mode = "training"
+        state.mode = "training"
     custom = _custom_topic(topics, action, topic)
     if custom is not None and (row is None or row.mode != "submission"):
         if row is None:
