@@ -2121,3 +2121,9 @@ body.is-chat .ai-fab { display: none; }
   max-width: 100%;
 }
 .chat-tool, .chat-head__actions { flex-shrink: 0; }
+
+/* ===== Список чатов: закреп и удаление ===== */
+.chat-row { display: flex; align-items: stretch; gap: 6px; }
+.chat-row__main { flex: 1; min-width: 0; }
+.chat-row .icon-button { flex-shrink: 0; align-self: center; }
+.chat-row__pin.is-on { color: var(--accent-strong); }

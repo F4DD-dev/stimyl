@@ -716,6 +716,7 @@ async def chats(
             {
                 "id": chat.id,
                 "title": chat.title,
+                "pinned": chat.pinned,
                 "updated_at": chat.updated_at.isoformat(),
             }
             for chat in items
@@ -746,16 +747,31 @@ async def chat_messages(
     return chat_store.chat_view(chat, await chat_store.messages_of(session, chat.id))
 
 
-@router.delete("/api/teacher/chats/{chat_id}")
-async def chat_clear(
+@router.post("/api/teacher/chats/{chat_id}/pin")
+async def chat_pin(
     chat_id: int,
     request: Request,
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    """Полный сброс истории чата — для тестов и нового диалога."""
+    """Закрепить или открепить разговор."""
+    teacher = await user_from_cookie(request, session, "teacher")
+    chat = await _teacher_chat(session, teacher, chat_id)
+    chat.pinned = not chat.pinned
+    await session.commit()
+    return {"ok": True, "pinned": chat.pinned}
+
+
+@router.delete("/api/teacher/chats/{chat_id}")
+async def chat_delete(
+    chat_id: int,
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Удалить разговор со всей историей."""
     teacher = await user_from_cookie(request, session, "teacher")
     chat = await _teacher_chat(session, teacher, chat_id)
     await chat_store.clear_messages(session, chat.id)
+    await session.delete(chat)
     await session.commit()
     return {"ok": True}
 

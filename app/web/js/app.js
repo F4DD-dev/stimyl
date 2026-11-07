@@ -1,4 +1,4 @@
-import { approveJoin, getHistory, getLesson, getNotices, getProgress, getSession, getStudentWorks, openSession, openTicket, readNotice, renameMe, setCsrf } from "./api.js?v=7";
+import { approveJoin, deleteChat, getHistory, getLesson, getNotices, getProgress, getSession, getStudentWorks, openSession, openTicket, pinChat, readNotice, renameMe, setCsrf } from "./api.js?v=7";
 import { previewRole, studentPreview, teacherPreview } from "./preview.js?v=10";
 import { applyTheme, setThemePref, themePref } from "./theme.js?v=1";
 import {
@@ -708,6 +708,33 @@ async function onAction(act, button) {
     const id = Number(button.dataset.id);
     if (store.role === "teacher") await openChat(id);
     else await openStudentChat(id);
+    return;
+  }
+  if (act === "assistant-pin") {
+    const kind = store.role === "teacher" ? "teacher" : "student";
+    try {
+      await pinChat(kind, button.dataset.id);
+      await loadChats();
+    } catch { /* ignore */ }
+    return;
+  }
+  if (act === "assistant-delete") {
+    const ok = await confirmDialog({
+      title: "Удалить разговор?",
+      text: "Вся история этого чата будет стёрта.",
+      confirm: "Удалить",
+      cancel: "Отмена",
+    });
+    if (!ok) return;
+    const kind = store.role === "teacher" ? "teacher" : "student";
+    try {
+      await deleteChat(kind, button.dataset.id);
+      if (Number(store.chatId) === Number(button.dataset.id)) {
+        store.chatId = null;
+        store.chatMessages = [];
+      }
+      await loadChats();
+    } catch { /* ignore */ }
     return;
   }
   if (act === "assistant-back") {

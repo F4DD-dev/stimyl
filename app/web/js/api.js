@@ -228,6 +228,10 @@ export const askAssistant = (text, classId) =>
 const chatBase = (kind) => `/api/${kind}/chats`;
 
 export const getChats = (kind) => request(chatBase(kind));
+export const pinChat = (kind, id) =>
+  request(`${chatBase(kind)}/${id}/pin`, { method: "POST" });
+export const deleteChat = (kind, id) =>
+  request(`${chatBase(kind)}/${id}`, { method: "DELETE" });
 export const getChat = (kind, id) => request(`${chatBase(kind)}/${id}`);
 export const createChat = (kind, title) =>
   request(chatBase(kind), {

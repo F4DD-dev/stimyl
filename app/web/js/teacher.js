@@ -557,11 +557,15 @@ function chatList() {
     ${store.chatsError ? `<p class="field-error">${esc(store.chatsError)}</p>` : ""}
     <button class="btn btn-primary" type="button" data-act="assistant-new">Новый разговор</button>
     <div class="topic-preview" style="margin-top:14px">
-      ${items.length ? items.map((item) => `<button class="study-row" type="button" data-act="assistant-open" data-id="${item.id}">
-        <span class="topic-number topic-number--violet">✦</span>
-        <span><strong>${esc(item.title || "Без названия")}</strong><small>${esc(new Date(item.updated_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }))}</small></span>
-        <span class="topic-preview__arrow">${icon("arrow")}</span>
-      </button>`).join("") : `<p class="quiet">Разговоров пока нет.</p>`}
+      ${items.length ? items.map((item) => `<div class="chat-row">
+        <button class="study-row chat-row__main" type="button" data-act="assistant-open" data-id="${item.id}">
+          <span class="topic-number topic-number--violet">${item.pinned ? "📌" : "✦"}</span>
+          <span><strong>${esc(item.title || "Без названия")}</strong><small>${esc(new Date(item.updated_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }))}</small></span>
+          <span class="topic-preview__arrow">${icon("arrow")}</span>
+        </button>
+        <button class="icon-button chat-row__pin ${item.pinned ? "is-on" : ""}" type="button" data-act="assistant-pin" data-id="${item.id}" aria-label="Закрепить" title="${item.pinned ? "Открепить" : "Закрепить"}">📌</button>
+        <button class="icon-button chat-row__del" type="button" data-act="assistant-delete" data-id="${item.id}" aria-label="Удалить" title="Удалить">${icon("close")}</button>
+      </div>`).join("") : `<p class="quiet">Разговоров пока нет.</p>`}
     </div>`;
 }
 

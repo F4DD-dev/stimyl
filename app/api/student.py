@@ -207,6 +207,7 @@ async def chats(
             {
                 "id": chat.id,
                 "title": chat.title,
+                "pinned": chat.pinned,
                 "updated_at": chat.updated_at.isoformat(),
             }
             for chat in items
@@ -295,6 +296,35 @@ async def _student_chat_turn(
             chat, await chat_store.messages_of(session, chat.id)
         )["messages"],
     }
+
+
+@router.post("/api/student/chats/{chat_id}/pin")
+async def chat_pin(
+    chat_id: int,
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Закрепить или открепить разговор."""
+    student = await user_from_cookie(request, session, "student")
+    chat = await _owned_chat(session, student, chat_id)
+    chat.pinned = not chat.pinned
+    await session.commit()
+    return {"ok": True, "pinned": chat.pinned}
+
+
+@router.delete("/api/student/chats/{chat_id}")
+async def chat_delete(
+    chat_id: int,
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Удалить разговор со всей историей."""
+    student = await user_from_cookie(request, session, "student")
+    chat = await _owned_chat(session, student, chat_id)
+    await chat_store.clear_messages(session, chat.id)
+    await session.delete(chat)
+    await session.commit()
+    return {"ok": True}
 
 
 @router.post("/api/student/chats/{chat_id}/messages")

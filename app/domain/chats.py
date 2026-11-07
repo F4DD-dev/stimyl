@@ -24,10 +24,31 @@ async def list_chats(
     rows = await session.scalars(
         select(AssistantChat)
         .where(AssistantChat.user_id == user_id, AssistantChat.kind == kind)
-        .order_by(AssistantChat.updated_at.desc())
+        .order_by(AssistantChat.pinned.desc(), AssistantChat.updated_at.desc())
         .limit(limit)
     )
     return list(rows)
+
+
+async def set_pinned(
+    session: AsyncSession, user_id: int, kind: str, chat_id: int, pinned: bool
+) -> bool:
+    chat = await get_chat(session, user_id, kind, chat_id)
+    if chat is None:
+        return False
+    chat.pinned = pinned
+    return True
+
+
+async def delete_chat(session: AsyncSession, user_id: int, kind: str, chat_id: int) -> bool:
+    chat = await get_chat(session, user_id, kind, chat_id)
+    if chat is None:
+        return False
+    await session.execute(
+        delete(AssistantMessage).where(AssistantMessage.chat_id == chat.id)
+    )
+    await session.delete(chat)
+    return True
 
 
 async def get_chat(
