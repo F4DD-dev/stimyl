@@ -6,14 +6,35 @@
 
 ## Запуск
 
-Нужны Docker и публичный HTTPS только для боевого webhook. Локально сервис ходит в PostgreSQL из Compose.
+Нужны Docker и публичный HTTPS только для боевого webhook. Локально сервис ходит в PostgreSQL из Compose. Зависимости зафиксированы в `requirements.txt` — Dockerfile ставит их через `pip install -r requirements.txt`.
+
+Сборка образа:
+
+```bash
+docker build -t stimul .
+```
+
+Запуск приложения и PostgreSQL вместе через Compose:
+
+```bash
+copy .env.example .env
+docker compose up --build
+```
+
+Только контейнер приложения (нужна доступная база по `DATABASE_URL`, например `docker compose up -d db` и хост `host.docker.internal`):
+
+```bash
+docker run -d --name stimul -p 8000:8000 --env-file .env stimul
+```
+
+Локальная разработка без Docker:
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
-pip install -e ".[dev]"
+pip install -r requirements.txt
+pip install -e .
 copy .env.example .env
-docker compose up --build
 ```
 
 В другом процессе, когда база уже поднята:

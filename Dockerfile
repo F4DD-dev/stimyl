@@ -4,13 +4,16 @@ WORKDIR /app
 
 RUN useradd --create-home --uid 10001 appuser
 
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
 COPY pyproject.toml README.md alembic.ini main.py ./
 COPY app ./app
 COPY alembic ./alembic
 COPY certs ./certs
 COPY docker/entrypoint.sh /entrypoint.sh
 
-RUN pip install --no-cache-dir . \
+RUN pip install --no-deps --no-cache-dir . \
     && chmod +x /entrypoint.sh \
     && chown -R appuser:appuser /app
 
