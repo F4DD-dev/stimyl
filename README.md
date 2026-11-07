@@ -82,7 +82,7 @@ Webhook для боя: `POST /webhook` на `https://<домен>/webhook`. Ес
 
 ## Timeweb App Platform
 
-Вкладка «Приложение», ветка `main`, фреймворк FastAPI. Команда сборки: `pip install .`. Команда запуска: `sh docker/entrypoint.sh`. Проверка состояния: `/health`.
+Вкладка «Приложение», ветка `feature/accounts`, фреймворк FastAPI. Команда сборки: `pip install .`. Команда запуска: `sh docker/entrypoint.sh`. Проверка состояния: `/health`.
 
 В переменные положите `DATABASE_URL` (для облачной PostgreSQL с TLS добавьте в конец `?ssl=require`), `MAX_TOKEN`, `MAX_WEBHOOK_SECRET`, `SESSION_SECRET`, `COOKIE_SECURE=true`, `APP_TIMEZONE=Asia/Vladivostok`, `TEACHER_MAX_USER_ID`, `MAX_ROOT_CA_PATH=certs/russian_trusted_root_ca.pem`.
 
